@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Vibra — iOS Home</title>
+<script src="./vendor/react.js"></script>
+<script src="./vendor/react-dom.js"></script>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;700&amp;family=DM+Sans:wght@400;500;700&amp;display=swap">
+<style>
+body{margin:0;background:#0B0A12}
+.ph{font-family:'DM Sans',sans-serif;color:#F2F0FA;background:#14121F;width:390px;height:844px;box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden}
+.i{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.fi{fill:currentColor;stroke:none}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;padding:0}
+button:focus-visible{outline:2px solid #A78BFA;outline-offset:2px}
+h1,h2{font-family:'Bricolage Grotesque',sans-serif;margin:0}
+.cv{border-radius:8px;flex:none;position:relative;overflow:hidden}
+.cv:after{content:"";position:absolute;width:52%;height:52%;border-radius:50%;right:-10%;bottom:-10%;background:rgba(255,255,255,.22)}
+.chip{height:36px;padding:0 16px;border-radius:18px;background:#1F1B30;font-size:14px;font-weight:500;white-space:nowrap}
+.chip.on{background:#F2F0FA;color:#0B0A12}
+.qa{display:flex;align-items:center;gap:10px;background:#1F1B30;border-radius:8px;overflow:hidden;height:56px;padding-right:8px;text-align:left;font-weight:700;font-size:14px;min-width:0}
+.mut{color:#A9A6BD}.sm{font-size:14px}
+.row{display:flex;align-items:center;gap:12px;height:60px}
+.tab{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11px;font-weight:500;color:#A9A6BD;padding-top:8px}
+.tab.on{color:#A78BFA}
+</style>
+</helmet>
+<div class="ph">
+<div style="flex:1;overflow:hidden;padding:64px 16px 0;display:flex;flex-direction:column;gap:20px">
+<div style="display:flex;align-items:center;justify-content:space-between">
+<div><div class="mut sm">Monday, September 26</div><h1 style="font-size:30px;line-height:1.1;margin-top:2px">Good evening,<br>Samuel</h1></div>
+<span style="width:44px;height:44px;border-radius:50%;background:#A78BFA;color:#0B0A12;display:grid;place-items:center;font-weight:700">SN</span>
+</div>
+<div style="display:flex;gap:8px;overflow:hidden"><button class="chip on">All</button><button class="chip">Music</button><button class="chip">Made for you</button><button class="chip">New</button></div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+<button class="qa"><div class="cv" style="width:56px;height:56px;background:#5B3FD0;border-radius:0"></div>Liked Songs</button>
+<button class="qa"><div class="cv" style="width:56px;height:56px;background:#1F4E5F;border-radius:0"></div>Chill Vibes</button>
+<button class="qa"><div class="cv" style="width:56px;height:56px;background:#8A3A1F;border-radius:0"></div>Workout</button>
+<button class="qa"><div class="cv" style="width:56px;height:56px;background:#2F5A3A;border-radius:0"></div>Focus</button>
+<button class="qa"><div style="width:56px;height:56px;background:#2C2842;display:grid;place-items:center;flex:none"><svg class="i" viewBox="0 0 24 24"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"></path></svg></div>Offline</button>
+<button class="qa"><div class="cv" style="width:56px;height:56px;background:#A78BFA;border-radius:0"></div>Your mix</button>
+</div>
+<section>
+<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px"><h2 style="font-size:22px">Recently played</h2><span class="mut sm" style="font-weight:700">History</span></div>
+<div style="display:flex;gap:12px;overflow:hidden">
+<div style="width:132px;flex:none"><div class="cv" style="width:132px;height:132px;background:#4A3280"></div><div style="font-weight:700;margin-top:8px">Snooze</div><div class="mut sm">SZA</div></div>
+<div style="width:132px;flex:none"><div class="cv" style="width:132px;height:132px;background:#1F4E5F"></div><div style="font-weight:700;margin-top:8px">Saturn</div><div class="mut sm">SZA</div></div>
+<div style="width:132px;flex:none"><div class="cv" style="width:132px;height:132px;background:#7A2438"></div><div style="font-weight:700;margin-top:8px">Die For You</div><div class="mut sm">The Weeknd</div></div>
+<div style="width:132px;flex:none"><div class="cv" style="width:132px;height:132px;background:#B0587A"></div><div style="font-weight:700;margin-top:8px">Pink + White</div><div class="mut sm">Frank Ocean</div></div>
+</div>
+</section>
+<section>
+<h2 style="font-size:22px;margin-bottom:6px">Your rotation</h2>
+<div class="row"><div class="cv" style="width:48px;height:48px;background:#2C4A5E"></div><div style="flex:1;min-width:0"><div style="font-weight:700">Space Song</div><div class="mut sm">Beach House · Depression Cherry</div></div><span class="mut sm">5:20</span></div>
+<div class="row"><div class="cv" style="width:48px;height:48px;background:#3A3A3A"></div><div style="flex:1;min-width:0"><div style="font-weight:700">Nothing's Gonna Hurt You Baby</div><div class="mut sm">Cigarettes After Sex</div></div><span class="mut sm">4:46</span></div>
+</section>
+</div>
+
+<!-- mini player -->
+<div style="margin:0 8px 6px;background:#262139;border-radius:12px;padding:8px 8px 10px;position:relative;flex:none">
+<div style="display:flex;align-items:center;gap:12px"><div class="cv" style="width:44px;height:44px;background:#4A3280"></div><div style="flex:1;min-width:0"><div style="font-weight:700">Snooze</div><div class="mut sm">SZA</div></div>
+<button aria-label="Unlike" style="width:44px;height:44px;display:grid;place-items:center;color:#A78BFA"><svg class="i fi" viewBox="0 0 24 24"><path d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.5A4 4 0 0 1 19 10c0 5.5-7 10-7 10z"></path></svg></button>
+<button aria-label="Pause" style="width:44px;height:44px;display:grid;place-items:center"><svg class="i fi" viewBox="0 0 24 24"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z"></path></svg></button></div>
+<div style="position:absolute;left:12px;right:12px;bottom:4px;height:2px;background:#3B3556;border-radius:1px"><div style="width:51%;height:100%;background:#A78BFA;border-radius:1px"></div></div>
+</div>
+
+<!-- tab bar -->
+<nav style="display:flex;height:83px;box-sizing:border-box;padding-bottom:26px;background:#14121F;border-top:1px solid #26223A;flex:none">
+<button class="tab on"><svg class="i" viewBox="0 0 24 24"><path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"></path></svg>Home</button>
+<button class="tab"><svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4"></path></svg>Search</button>
+<button class="tab"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M15.5 8.5l-2 5-5 2 2-5z"></path></svg>Discover</button>
+<button class="tab"><svg class="i" viewBox="0 0 24 24"><path d="M4 4v16M9 4v16M14 5l5 15"></path></svg>Library</button>
+</nav>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

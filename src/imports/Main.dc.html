@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Vibra — Home</title>
+<script src="./vendor/react.js"></script>
+<script src="./vendor/react-dom.js"></script>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;700&amp;family=DM+Sans:wght@400;500;700&amp;display=swap">
+<style>
+body{margin:0;background:#0B0A12}
+.app{font-family:'DM Sans',sans-serif;color:#F2F0FA;background:#0B0A12;height:100vh;min-height:760px;display:grid;grid-template-columns:300px minmax(0,1fr) 320px;grid-template-rows:minmax(0,1fr) 88px;gap:8px;padding:8px;box-sizing:border-box}
+.pane{background:#14121F;border-radius:14px;overflow:auto;min-width:0}
+.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.fi{fill:currentColor;stroke:none}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;padding:0}
+button:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid #A78BFA;outline-offset:2px}
+h1,h2,h3{font-family:'Bricolage Grotesque',sans-serif;margin:0}
+.nav{display:flex;align-items:center;gap:16px;height:44px;padding:0 12px;border-radius:10px;color:#A9A6BD;font-weight:500;width:100%;text-align:left}
+.nav:hover{color:#F2F0FA}.nav.on{color:#F2F0FA;background:#1F1B30}
+.chip{height:34px;padding:0 14px;border-radius:17px;background:#1F1B30;font-size:14px;font-weight:500;white-space:nowrap}
+.chip.on{background:#F2F0FA;color:#0B0A12}
+.lib{display:flex;align-items:center;gap:12px;width:100%;padding:8px;border-radius:10px;text-align:left}
+.lib:hover,.qa:hover,.card:hover,.row:hover{background:#1F1B30}
+.cv{border-radius:8px;flex:none;position:relative;overflow:hidden}
+.cv:after{content:"";position:absolute;width:52%;height:52%;border-radius:50%;right:-10%;bottom:-10%;background:rgba(255,255,255,.22)}
+.qa{display:flex;align-items:center;gap:12px;background:#1B1829;border-radius:10px;overflow:hidden;height:64px;padding-right:12px;text-align:left;font-weight:700}
+.shelf{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:8px}
+.card{display:block;padding:12px;border-radius:12px;text-align:left}
+.row{display:grid;grid-template-columns:32px minmax(0,3fr) minmax(0,2fr) 48px 40px;align-items:center;gap:12px;padding:6px 12px;border-radius:8px;height:56px}
+.mut{color:#A9A6BD}.sm{font-size:14px}
+.play{width:36px;height:36px;border-radius:50%;background:#A78BFA;color:#0B0A12;display:grid;place-items:center}
+.ic{width:36px;height:36px;display:grid;place-items:center;color:#A9A6BD;border-radius:50%}.ic:hover{color:#F2F0FA}
+@media (max-width:1180px){.app{grid-template-columns:240px minmax(0,1fr)}.rp{display:none}}
+@media (max-width:760px){.app{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) 72px}.lp,.pr{display:none}.row{grid-template-columns:32px minmax(0,1fr) 40px}.row .al,.row .du{display:none}.qgrid{grid-template-columns:1fr!important}}
+</style>
+</helmet>
+<div class="app">
+
+<!-- LEFT: nav + library -->
+<aside class="lp" style="display:flex;flex-direction:column;gap:8px;min-height:0">
+<nav class="pane" style="padding:12px;flex:none">
+<div style="display:flex;align-items:center;gap:10px;padding:4px 12px 14px"><div style="width:32px;height:32px;border-radius:10px;background:#A78BFA;color:#0B0A12;display:grid;place-items:center"><svg class="i" viewBox="0 0 24 24"><path d="M9 18V5l11-2v13"></path><circle cx="6.5" cy="18" r="2.5"></circle><circle cx="17.5" cy="16" r="2.5"></circle></svg></div><h2 style="font-size:24px">Vibra</h2></div>
+<button class="nav on"><svg class="i" viewBox="0 0 24 24"><path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"></path></svg>Home</button>
+<button class="nav"><svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4"></path></svg><span style="flex:1">Search</span><span class="sm" style="background:#1F1B30;padding:2px 8px;border-radius:6px">⌘K</span></button>
+<button class="nav"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M15.5 8.5l-2 5-5 2 2-5z"></path></svg>Discover</button>
+</nav>
+<section class="pane" style="flex:1;padding:12px;min-height:0;display:flex;flex-direction:column;gap:12px">
+<div style="display:flex;align-items:center;justify-content:space-between;padding:0 4px"><h3 style="font-size:17px;display:flex;align-items:center;gap:10px"><svg class="i" viewBox="0 0 24 24"><path d="M4 4v16M9 4v16M14 5l5 15"></path></svg>Your Library</h3><button class="ic" aria-label="Create playlist"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"></path></svg></button></div>
+<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="chip on">Playlists</button><button class="chip">Artists</button><button class="chip">Albums</button><button class="chip">Downloaded</button></div>
+<div style="display:flex;flex-direction:column;overflow:auto;flex:1">
+<button class="lib"><div class="cv" style="width:48px;height:48px;background:#5B3FD0"></div><div><div style="font-weight:700">Liked Songs</div><div class="mut sm">Playlist</div></div></button>
+<button class="lib"><div class="cv" style="width:48px;height:48px;background:#1F4E5F"></div><div><div style="font-weight:700">Chill Vibes</div><div class="mut sm">Playlist</div></div></button>
+<button class="lib"><div class="cv" style="width:48px;height:48px;background:#8A3A1F"></div><div><div style="font-weight:700">Workout</div><div class="mut sm">Playlist</div></div></button>
+<button class="lib"><div class="cv" style="width:48px;height:48px;background:#2F5A3A"></div><div><div style="font-weight:700">Focus</div><div class="mut sm">Playlist</div></div></button>
+<button class="lib" style="margin-top:8px"><div style="width:48px;height:48px;border-radius:8px;background:#1F1B30;display:grid;place-items:center"><svg class="i" viewBox="0 0 24 24"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"></path></svg></div><div style="font-weight:700">Offline</div></button>
+<button class="lib"><div style="width:48px;height:48px;border-radius:8px;background:#1F1B30;display:grid;place-items:center"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg></div><div style="font-weight:700">History</div></button>
+</div>
+</section>
+</aside>
+
+<!-- CENTER -->
+<main class="pane" style="padding:0 0 24px">
+<header style="position:sticky;top:0;z-index:2;background:#14121F;display:flex;align-items:center;gap:16px;padding:16px 24px">
+<label style="flex:1;max-width:520px;display:flex;align-items:center;gap:12px;height:44px;border-radius:22px;background:#1F1B30;padding:0 16px;color:#A9A6BD"><svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4"></path></svg><input placeholder="Search songs, artists, albums…" aria-label="Search" style="flex:1;background:none;border:0;color:#F2F0FA;font:inherit;outline-offset:6px"></label>
+<div style="flex:1"></div>
+<button class="ic" aria-label="Notifications"><svg class="i" viewBox="0 0 24 24"><path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4zM10 21h4"></path></svg></button>
+<button style="display:flex;align-items:center;gap:10px;font-weight:500"><span style="width:36px;height:36px;border-radius:50%;background:#A78BFA;color:#0B0A12;display:grid;place-items:center;font-weight:700;font-size:13px">SN</span><span class="pr">Samuel</span></button>
+</header>
+
+<div style="padding:8px 24px 0;display:flex;flex-direction:column;gap:28px">
+<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap">
+<div><div class="mut sm" style="letter-spacing:.08em;text-transform:uppercase">Monday, September 26</div><h1 style="font-size:40px;line-height:1.1;margin-top:6px">Good evening, Samuel</h1></div>
+<div style="display:flex;gap:8px"><button class="chip on">All</button><button class="chip">Music</button><button class="chip">Made for you</button><button class="chip">New releases</button></div>
+</div>
+
+<!-- Quick access -->
+<div class="qgrid" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px">
+<button class="qa"><div class="cv" style="width:64px;height:64px;background:#5B3FD0;border-radius:0"></div>Liked Songs</button>
+<button class="qa"><div class="cv" style="width:64px;height:64px;background:#1F4E5F;border-radius:0"></div>Chill Vibes</button>
+<button class="qa"><div class="cv" style="width:64px;height:64px;background:#8A3A1F;border-radius:0"></div>Workout</button>
+<button class="qa"><div class="cv" style="width:64px;height:64px;background:#2F5A3A;border-radius:0"></div>Focus</button>
+<button class="qa"><div class="cv" style="width:64px;height:64px;background:#A78BFA;border-radius:0"></div>Your mix</button>
+<button class="qa"><div class="cv" style="width:64px;height:64px;background:#9B3B63;border-radius:0"></div>Explore new music</button>
+<button class="qa"><div style="width:64px;height:64px;background:#1F1B30;display:grid;place-items:center"><svg class="i" viewBox="0 0 24 24"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"></path></svg></div>Offline</button>
+<button class="qa"><div style="width:64px;height:64px;background:#1F1B30;display:grid;place-items:center"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg></div>History</button>
+</div>
+
+<!-- Recently played -->
+<section>
+<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px"><div><div class="mut sm" style="letter-spacing:.08em;text-transform:uppercase">Keep the feeling going</div><h2 style="font-size:26px">Recently played</h2></div><a href="#" class="mut sm" style="font-weight:700;text-decoration:none">Open listening history</a></div>
+<div class="shelf">
+<button class="card"><div class="cv" style="width:100%;aspect-ratio:1;background:#4A3280"></div><div style="font-weight:700;margin-top:12px">Snooze</div><div class="mut sm">SZA</div></button>
+<button class="card"><div class="cv" style="width:100%;aspect-ratio:1;background:#1F4E5F"></div><div style="font-weight:700;margin-top:12px">Saturn</div><div class="mut sm">SZA</div></button>
+<button class="card"><div class="cv" style="width:100%;aspect-ratio:1;background:#7A2438"></div><div style="font-weight:700;margin-top:12px">Die For You</div><div class="mut sm">The Weeknd</div></button>
+<button class="card"><div class="cv" style="width:100%;aspect-ratio:1;background:#B0587A"></div><div style="font-weight:700;margin-top:12px">Pink + White</div><div class="mut sm">Frank Ocean</div></button>
+</div>
+</section>
+
+<!-- Rotation -->
+<section>
+<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px"><div><div class="mut sm" style="letter-spacing:.08em;text-transform:uppercase">A little bit of everything</div><h2 style="font-size:26px">Your rotation</h2></div><a href="#" class="mut sm" style="font-weight:700;text-decoration:none">Browse collection</a></div>
+<div class="row mut sm" style="height:36px;border-bottom:1px solid #26223A;border-radius:0"><span>#</span><span>Title</span><span class="al">Album</span><span class="du">Time</span><span></span></div>
+<div class="row"><span class="mut">1</span><div style="display:flex;align-items:center;gap:12px;min-width:0"><div class="cv" style="width:40px;height:40px;background:#2C4A5E"></div><div style="min-width:0"><div style="font-weight:700">Space Song</div><div class="mut sm">Beach House</div></div></div><span class="al mut sm">Depression Cherry</span><span class="du mut sm">5:20</span><button class="ic" aria-label="Like"><svg class="i" viewBox="0 0 24 24"><path d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.5A4 4 0 0 1 19 10c0 5.5-7 10-7 10z"></path></svg></button></div>
+<div class="row"><span class="mut">2</span><div style="display:flex;align-items:center;gap:12px;min-width:0"><div class="cv" style="width:40px;height:40px;background:#3A3A3A"></div><div style="min-width:0"><div style="font-weight:700">Nothing's Gonna Hurt You Baby</div><div class="mut sm">Cigarettes After Sex</div></div></div><span class="al mut sm">Cigarettes After Sex</span><span class="du mut sm">4:46</span><button class="ic" aria-label="Like"><svg class="i" viewBox="0 0 24 24"><path d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.5A4 4 0 0 1 19 10c0 5.5-7 10-7 10z"></path></svg></button></div>
+<div class="row"><span class="mut">3</span><div style="display:flex;align-items:center;gap:12px;min-width:0"><div class="cv" style="width:40px;height:40px;background:#8A3A1F"></div><div style="min-width:0"><div style="font-weight:700">Not Like Us</div><div class="mut sm">Kendrick Lamar</div></div></div><span class="al mut sm">GNX</span><span class="du mut sm">4:34</span><button class="ic" aria-label="Like"><svg class="i" viewBox="0 0 24 24"><path d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.5A4 4 0 0 1 19 10c0 5.5-7 10-7 10z"></path></svg></button></div>
+<div class="row"><span class="mut">4</span><div style="display:flex;align-items:center;gap:12px;min-width:0"><div class="cv" style="width:40px;height:40px;background:#6E2A2A"></div><div style="min-width:0"><div style="font-weight:700">Euphoria</div><div class="mut sm">Kendrick Lamar</div></div></div><span class="al mut sm">DAMN.</span><span class="du mut sm">3:30</span><button class="ic" aria-label="Like"><svg class="i" viewBox="0 0 24 24"><path d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.5A4 4 0 0 1 19 10c0 5.5-7 10-7 10z"></path></svg></button></div>
+</section>
+</div>
+</main>
+
+<!-- RIGHT: now playing + queue -->
+<aside class="pane rp" style="padding:20px;display:flex;flex-direction:column;gap:20px">
+<div style="display:flex;justify-content:space-between;align-items:center"><h3 style="font-size:17px">Now playing</h3><span class="mut sm">From Recently played</span></div>
+<div class="cv" style="width:100%;aspect-ratio:1;background:#4A3280;border-radius:14px"></div>
+<div style="display:flex;align-items:center;justify-content:space-between;gap:12px"><div><h2 style="font-size:26px">Snooze</h2><div class="mut">SZA</div></div><button class="ic" aria-label="Unlike" style="color:#A78BFA"><svg class="i fi" viewBox="0 0 24 24"><path d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.5A4 4 0 0 1 19 10c0 5.5-7 10-7 10z"></path></svg></button></div>
+<div style="border-top:1px solid #26223A;padding-top:16px;display:flex;flex-direction:column;gap:4px">
+<div style="display:flex;justify-content:space-between;margin-bottom:8px"><h3 style="font-size:17px">Next in queue</h3><button class="mut sm" style="font-weight:700">Clear</button></div>
+<button class="lib"><div class="cv" style="width:44px;height:44px;background:#2C4A5E"></div><div style="min-width:0"><div style="font-weight:700">Space Song</div><div class="mut sm">Beach House</div></div></button>
+<button class="lib"><div class="cv" style="width:44px;height:44px;background:#3A3A3A"></div><div style="min-width:0"><div style="font-weight:700">Nothing's Gonna Hurt You Baby</div><div class="mut sm">Cigarettes After Sex</div></div></button>
+<button class="lib"><div class="cv" style="width:44px;height:44px;background:#8A3A1F"></div><div style="min-width:0"><div style="font-weight:700">Not Like Us</div><div class="mut sm">Kendrick Lamar</div></div></button>
+</div>
+</aside>
+
+<!-- PLAYER -->
+<footer style="grid-column:1/-1;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr) minmax(0,1fr);align-items:center;gap:16px;padding:0 16px;background:#14121F;border-radius:14px">
+<div style="display:flex;align-items:center;gap:12px;min-width:0"><div class="cv" style="width:56px;height:56px;background:#4A3280"></div><div style="min-width:0"><div style="font-weight:700">Snooze</div><div class="mut sm">SZA</div></div><button class="ic pr" aria-label="Unlike" style="color:#A78BFA"><svg class="i fi" viewBox="0 0 24 24"><path d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.5A4 4 0 0 1 19 10c0 5.5-7 10-7 10z"></path></svg></button></div>
+<div style="display:flex;flex-direction:column;align-items:center;gap:6px">
+<div style="display:flex;align-items:center;gap:12px">
+<button class="ic" aria-label="Shuffle"><svg class="i" viewBox="0 0 24 24"><path d="M3 7h4l10 10h4M17 7h4M3 17h4l2-2"></path></svg></button>
+<button class="ic" aria-label="Previous"><svg class="i fi" viewBox="0 0 24 24"><path d="M19 5L9 12l10 7zM6 5h2v14H6z"></path></svg></button>
+<button class="play" aria-label="Pause" style="width:40px;height:40px"><svg class="i fi" viewBox="0 0 24 24"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z"></path></svg></button>
+<button class="ic" aria-label="Next"><svg class="i fi" viewBox="0 0 24 24"><path d="M5 5l10 7-10 7zM16 5h2v14h-2z"></path></svg></button>
+<button class="ic" aria-label="Repeat"><svg class="i" viewBox="0 0 24 24"><path d="M17 3l4 4-4 4M3 11V9a2 2 0 0 1 2-2h16M7 21l-4-4 4-4M21 13v2a2 2 0 0 1-2 2H3"></path></svg></button>
+</div>
+<div style="display:flex;align-items:center;gap:10px;width:100%;max-width:640px"><span class="mut sm" style="width:36px;text-align:right">1:42</span><div style="flex:1;height:4px;border-radius:2px;background:#2C2842"><div style="width:51%;height:100%;border-radius:2px;background:#A78BFA;position:relative"><span style="position:absolute;right:-6px;top:-4px;width:12px;height:12px;border-radius:50%;background:#F2F0FA"></span></div></div><span class="mut sm" style="width:36px">3:20</span></div>
+</div>
+<div class="pr" style="display:flex;align-items:center;justify-content:flex-end;gap:4px">
+<button class="ic" aria-label="Lyrics"><svg class="i" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0M12 18v3"></path></svg></button>
+<button class="ic" aria-label="Queue"><svg class="i" viewBox="0 0 24 24"><path d="M4 6h16M4 11h16M4 16h8"></path></svg></button>
+<button class="ic" aria-label="Devices"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="5" width="14" height="10" rx="2"></rect><path d="M8 19h4"></path><rect x="17" y="9" width="4" height="10" rx="1"></rect></svg></button>
+<button class="ic" aria-label="Volume"><svg class="i" viewBox="0 0 24 24"><path d="M4 10v4h4l5 4V6L8 10zM16 9a4 4 0 0 1 0 6"></path></svg></button>
+<div style="width:90px;height:4px;border-radius:2px;background:#2C2842"><div style="width:70%;height:100%;border-radius:2px;background:#A78BFA"></div></div>
+</div>
+</footer>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+renderVals() { return {}; }
+}
+</script>
+</body>
+</html>
