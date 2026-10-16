@@ -26,7 +26,12 @@ export interface SafeFetchOptions extends Omit<RequestInit, "signal"> {
 // ─── Connection store ─────────────────────────────────────────────────────────
 type ConnectionListener = (status: ConnectionStatus) => void;
 
+/** The banner stays hidden until this many consecutive pings fail. */
+export const FAILURE_THRESHOLD = 3;
+const PING_INTERVAL_MS = 30_000;
+
 let connectionStatus: ConnectionStatus = "online";
+let consecutiveFailures = 0;
 const connectionListeners = new Set<ConnectionListener>();
 
 export function getConnectionStatus(): ConnectionStatus {
@@ -52,8 +57,35 @@ function setConnectionStatus(next: ConnectionStatus): void {
   });
 }
 
+/** A successful response clears the streak and restores "online". */
+function noteSuccess(): void {
+  consecutiveFailures = 0;
+  setConnectionStatus("online");
+}
+
+/**
+ * A failed response only degrades the status after FAILURE_THRESHOLD
+ * consecutive failures — single blips and idle background pings never flip
+ * the banner. Active timeouts on user-facing requests degrade immediately.
+ */
+function noteFailure(isTimeout: boolean, quiet: boolean): void {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    consecutiveFailures += 1;
+    setConnectionStatus("offline");
+    return;
+  }
+  consecutiveFailures += 1;
+  const activeTimeout = isTimeout && !quiet;
+  if (activeTimeout || consecutiveFailures >= FAILURE_THRESHOLD) {
+    setConnectionStatus("degraded");
+  }
+}
+
 if (typeof window !== "undefined") {
-  window.addEventListener("online", () => setConnectionStatus("online"));
+  window.addEventListener("online", () => {
+    consecutiveFailures = 0;
+    setConnectionStatus("online");
+  });
   window.addEventListener("offline", () => setConnectionStatus("offline"));
 }
 
@@ -80,7 +112,7 @@ export async function safeFetch(
   const { timeoutMs = SAFE_FETCH_TIMEOUT_MS, quiet, fallback: _fallback, ...init } = options;
 
   if (typeof navigator !== "undefined" && navigator.onLine === false) {
-    setConnectionStatus("offline");
+    noteFailure(false, quiet);
     if (!quiet) warn(url, "offline — device reports no network connection");
     return null;
   }
@@ -92,19 +124,18 @@ export async function safeFetch(
     const response = await fetch(url, { ...init, signal: controller.signal });
 
     if (!response.ok) {
-      setConnectionStatus("degraded");
+      noteFailure(false, quiet);
       if (!quiet) {
         warn(url, `HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""}`);
       }
       return null;
     }
 
-    setConnectionStatus("online");
+    noteSuccess();
     return response;
   } catch (err) {
     const aborted = err instanceof DOMException && err.name === "AbortError";
-    const offline = typeof navigator !== "undefined" && navigator.onLine === false;
-    setConnectionStatus(offline ? "offline" : "degraded");
+    noteFailure(aborted, quiet);
     if (!quiet) {
       warn(url, aborted ? `timed out after ${timeoutMs}ms` : shortReason(err));
     }
@@ -126,7 +157,7 @@ export async function safeJson<T>(url: string, options: SafeFetchOptions = {}): 
   try {
     return (await response.json()) as T;
   } catch (err) {
-    setConnectionStatus("degraded");
+    noteFailure(false, options.quiet);
     if (!options.quiet) {
       warn(url, `response was not valid JSON (${err instanceof Error ? err.message : "parse error"})`);
     }
@@ -138,4 +169,28 @@ export async function safeJson<T>(url: string, options: SafeFetchOptions = {}): 
 export async function safeList<T>(url: string, options: SafeFetchOptions = {}): Promise<T[]> {
   const data = await safeJson<unknown>(url, options);
   return Array.isArray(data) ? (data as T[]) : [];
+}
+
+// ─── Background connection monitor ────────────────────────────────────────────
+/**
+ * Quiet background pings keep the connection status fresh without flashing
+ * the banner: a single failed ping is tolerated, the "Connecting to audio
+ * nodes…" pill only appears after FAILURE_THRESHOLD consecutive failures (or
+ * an active request timeout), and any success clears it again.
+ */
+export function startConnectionMonitor(baseUrl: string, intervalMs = PING_INTERVAL_MS): () => void {
+  if (typeof window === "undefined" || !baseUrl) return () => {};
+  const w = window as Window & { __vibraPingTimer?: number };
+  if (w.__vibraPingTimer) window.clearInterval(w.__vibraPingTimer);
+
+  const ping = () => {
+    void safeJson(baseUrl, { quiet: true, timeoutMs: SAFE_FETCH_TIMEOUT_MS, fallback: {} });
+  };
+  ping();
+  w.__vibraPingTimer = window.setInterval(ping, intervalMs);
+
+  return () => {
+    if (w.__vibraPingTimer) window.clearInterval(w.__vibraPingTimer);
+    w.__vibraPingTimer = undefined;
+  };
 }

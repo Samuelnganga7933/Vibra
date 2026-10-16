@@ -11,8 +11,32 @@ import {
 import { toast, Toaster } from "sonner";
 import { ErrorBoundary, installRuntimeGuards } from "./components/ErrorBoundary";
 import { ConnectionBanner } from "./components/ConnectionBanner";
-import { safeJson, getConnectionStatus, subscribeConnection, type ConnectionStatus } from "./services/safeFetch";
+import { safeJson, getConnectionStatus, subscribeConnection, startConnectionMonitor, type ConnectionStatus } from "./services/safeFetch";
+import {
+  YTAudioEngine,
+  describePlaybackFailure,
+  failureFromError,
+  type PlaybackHandle,
+  type PlaybackFailure,
+} from "./services/playbackEngine";
 import { addOfflineTrack, readOfflineTracks, clearOfflineTracks, unmarkOfflineCleared, wasOfflineCleared, type OfflineTrack } from "./services/offlineStorage";
+import {
+  getUserProfile,
+  updateUserProfile,
+  getHistory,
+  addHistoryTrack,
+  mergeHistory,
+  getPlaylists as getStoredPlaylists,
+  savePlaylist,
+  createCustomPlaylist,
+  addTrackToPlaylist as addTrackToStoredPlaylist,
+  getDevices,
+  getActiveDevice,
+  setActiveDevice as setActiveStoredDevice,
+  type StoredPlaylist,
+  type StoredTrack,
+  type StoredDevice,
+} from "./services/store";
 import {
   API_BASE,
   searchTracks,
@@ -23,6 +47,7 @@ import {
 import { ImageWithFallback } from "./components/ui/ImageWithFallback";
 import { EmptyStateCard } from "./components/ui/EmptyStateCard";
 import { UiThemeContext } from "./components/ui/ui-theme";
+import { TrackCard, AlbumCard, PlaylistItemCard } from "./components/ui/cards";
 import { DownloadsView } from "./components/vibra/DownloadsView";
 import { NotFound } from "./components/vibra/NotFound";
 
@@ -194,6 +219,10 @@ interface AppCtxType {
   // Modals
   openTrackOptions: (t: Track) => void;
   openCreatePlaylist: () => void;
+  // Persistent client state engines (services/store.ts)
+  addPlaylist: (p: PlaylistItem) => void;
+  addTrackToPlaylist: (playlistId: string, track: Track) => void;
+  updateProfile: (patch: Partial<{ name: string; username: string; initials: string; email: string; avatarUrl: string; subscription: "premium" | "free" }>) => void;
 }
 
 // ─── Color themes ──────────────────────────────────────────────────────────────
@@ -494,7 +523,7 @@ function HomeScreen() {
         </div>
       ) : playlists.length > 0 ? (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, padding: "0 28px" }}>
-          {playlists.slice(0, 6).map(pl => (
+          {(playlists || []).slice(0, 6).map(pl => (
             <PlaylistItemCard
               key={pl.id}
               playlist={pl}
@@ -545,13 +574,13 @@ function HomeScreen() {
               </div>
             ) : recentTracks.length > 0 ? (
               <div style={{ display: "flex", gap: 14, overflowX: "auto", scrollbarWidth: "none", paddingBottom: 4 }}>
-                {recentTracks.map(track => (
+                {(recentTracks || []).map(track => (
                   <TrackCard
                     key={track.id}
                     track={track}
                     size={140}
                     radius={16}
-                    onClick={() => playTrack(track, recentTracks)}
+                    onPlay={() => playTrack(track, recentTracks)}
                   />
                 ))}
               </div>
@@ -565,7 +594,7 @@ function HomeScreen() {
             {discoveryLoading
               ? [...Array(4)].map((_, i) => <TrackSkeleton key={i} />)
               : discoveryTracks.length > 0
-                ? discoveryTracks.map((t, i) => <TrackRow key={t.id} track={t} index={i} queue={discoveryTracks} />)
+                ? (discoveryTracks || []).map((t, i) => <TrackRow key={t.id} track={t} index={i} queue={discoveryTracks} />)
                 : <EmptyState title="Nothing to play" sub="Your rotation fills in as you listen — play a few tracks to get started." />
             }
           </div>
@@ -701,7 +730,7 @@ function DiscoverScreen() {
         {discoveryLoading
           ? [...Array(5)].map((_, i) => <TrackSkeleton key={i} />)
           : trendingTracks.length > 0
-            ? trendingTracks.slice(0, 8).map((t, i) => <TrackRow key={t.id} track={t} index={i} queue={trendingTracks} />)
+            ? (trendingTracks || []).slice(0, 8).map((t, i) => <TrackRow key={t.id} track={t} index={i} queue={trendingTracks} />)
             : <EmptyState title="Loading trending tracks…" sub="Connecting to music catalogue." />
         }
       </div>
@@ -717,7 +746,7 @@ function DiscoverScreen() {
           </div>
         ) : newReleases.length > 0 ? (
           <div style={{ display: "flex", gap: 14, overflowX: "auto", scrollbarWidth: "none", paddingBottom: 4 }}>
-            {newReleases.map(a => (
+            {(newReleases || []).map(a => (
               <AlbumCard
                 key={a.id}
                 album={a}
@@ -737,7 +766,7 @@ function DiscoverScreen() {
             <button onClick={() => navigate({ id: "library" })} style={{ fontSize: 13, fontWeight: 600, color: C.muted, background: "none", border: "none", cursor: "pointer" }}>See all</button>
           </div>
           <div style={{ display: "flex", gap: 14, overflowX: "auto", scrollbarWidth: "none", paddingBottom: 4 }}>
-            {playlists.slice(1, 6).map(pl => (
+            {(playlists || []).slice(1, 6).map(pl => (
               <PlaylistItemCard
                 key={pl.id}
                 playlist={pl}
@@ -809,7 +838,7 @@ function LibraryScreen({ tab: initTab = "playlists" }: { tab?: LibTab }) {
             </div>
           ) : playlists.length > 0 ? (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-              {playlists.map(pl => (
+              {(playlists || []).map(pl => (
                 <PlaylistItemCard
                   key={pl.id}
                   playlist={pl}
@@ -830,14 +859,14 @@ function LibraryScreen({ tab: initTab = "playlists" }: { tab?: LibTab }) {
 
         {tab === "liked" && (
           likedTracks.length > 0
-            ? likedTracks.map((t, i) => <TrackRow key={t.id} track={t} index={i} queue={likedTracks} showLike />)
+            ? (likedTracks || []).map((t, i) => <TrackRow key={t.id} track={t} index={i} queue={likedTracks} showLike />)
             : <EmptyState icon={Heart} title="No liked songs" sub="Songs you heart will appear here." />
         )}
 
         {tab === "albums" && (
           newReleases.length > 0 ? (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-              {newReleases.map(a => (
+              {(newReleases || []).map(a => (
                 <AlbumCard
                   key={a.id}
                   album={a}
@@ -852,7 +881,7 @@ function LibraryScreen({ tab: initTab = "playlists" }: { tab?: LibTab }) {
         {tab === "artists" && (
           artists.length > 0 ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-              {artists.map(a => (
+              {(artists || []).map(a => (
                 <div key={a.id}
                   style={{ display: "flex", alignItems: "center", gap: 14, padding: 10, borderRadius: 12, cursor: "pointer" }}
                   onMouseEnter={e => (e.currentTarget.style.background = C.surf)}
@@ -876,7 +905,7 @@ function LibraryScreen({ tab: initTab = "playlists" }: { tab?: LibTab }) {
 
         {tab === "downloaded" && (
           <DownloadsView
-            tracks={downloadedTracks.map(toOfflineTrack)}
+            tracks={(downloadedTracks || []).map(toOfflineTrack)}
             onPlay={(t, q) => playTrack({ ...t, bg: t.bg ?? BG_PALETTE[0] } as Track, q as Track[])}
             onSync={async () => { await refreshDownloads(); toast("Offline cache synced"); }}
           />
@@ -904,7 +933,7 @@ function PlaylistScreen({ item }: { item: PlaylistItem }) {
     });
   }, [item.id]);
 
-  const tracks = fullPlaylist.tracks;
+  const tracks = fullPlaylist.tracks || [];
 
   return (
     <div style={{ flex: 1, overflowY: "auto", scrollbarWidth: "none", paddingBottom: 32 }}>
@@ -978,7 +1007,7 @@ function PlaylistScreen({ item }: { item: PlaylistItem }) {
 // ─── SettingsScreen ────────────────────────────────────────────────────────────
 function SettingsScreen() {
   const {
-    C, canGoBack, goBack, user, refreshDownloads,
+    C, canGoBack, goBack, user, refreshDownloads, updateProfile,
     theme, setTheme, accent, setAccent,
     audioQuality, setAudioQuality,
     normalizeVolume, setNormalizeVolume,
@@ -995,6 +1024,30 @@ function SettingsScreen() {
   const [cachedCount, setCachedCount] = useState(0);
   useEffect(() => subscribeConnection(setConn), []);
   useEffect(() => { setCachedCount(readOfflineTracks().length); }, []);
+
+  // Persistent engines: profile name editing + connected devices.
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+  const [devices, setDevices] = useState<StoredDevice[]>(() => getDevices());
+  const [activeDeviceId, setActiveDeviceId] = useState(() => getActiveDevice().id);
+
+  const saveName = () => {
+    const next = nameDraft.trim();
+    if (!next) return;
+    updateProfile({
+      name: next,
+      initials: next.split(/\s+/).map(w => w[0]).join("").toUpperCase().slice(0, 2),
+    });
+    setEditingName(false);
+    toast("Profile updated");
+  };
+
+  const switchDevice = (id: string) => {
+    const active = setActiveStoredDevice(id);
+    setActiveDeviceId(active.id);
+    setDevices(getDevices());
+    toast(`Output → ${active.name}`);
+  };
 
   const saveSettings = async (patch: Record<string, unknown>) => {
     await api("/settings", { method: "PUT", body: JSON.stringify(patch) });
@@ -1040,17 +1093,44 @@ function SettingsScreen() {
 
       <div style={{ padding: "0 28px" }}>
         <Section title="Account">
-          <Row
-            label={user?.name ?? "Not signed in"}
-            sub={user?.email ?? "Sign in to sync your listening history"}
-            onClick={() => toast("Edit profile")}
-            right={
-              user ? (
-                user.avatarUrl
-                  ? <img src={user.avatarUrl} alt="" style={{ width: 40, height: 40, borderRadius: "50%", objectFit: "cover" }} />
-                  : <div style={{ width: 40, height: 40, borderRadius: "50%", background: C.accent, color: C.bg, display: "grid", placeItems: "center", fontWeight: 700, fontSize: 14, flexShrink: 0 }}>{user.initials}</div>
-              ) : <div style={{ width: 40, height: 40, borderRadius: "50%", background: C.surf, display: "grid", placeItems: "center", flexShrink: 0, color: C.muted }}><Settings size={18} /></div>
-            } />
+          {editingName ? (
+            <div style={{ display: "flex", gap: 8, padding: "14px 16px", borderBottom: `1px solid ${C.border}`, alignItems: "center" }}>
+              <input
+                autoFocus
+                value={nameDraft}
+                onChange={e => setNameDraft(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === "Enter") saveName();
+                  if (e.key === "Escape") setEditingName(false);
+                }}
+                placeholder="Display name"
+                style={{ flex: 1, minWidth: 0, height: 38, borderRadius: 10, border: `1px solid ${C.accent}`, background: C.surf, color: C.text, padding: "0 12px", fontSize: 14, outline: "none" }}
+              />
+              <button
+                onClick={saveName}
+                disabled={!nameDraft.trim()}
+                style={{ height: 34, padding: "0 14px", borderRadius: 17, border: "none", background: nameDraft.trim() ? C.accent : C.surf, color: nameDraft.trim() ? C.bg : C.muted, fontSize: 13, fontWeight: 700, cursor: nameDraft.trim() ? "pointer" : "not-allowed" }}>
+                Save
+              </button>
+              <button
+                onClick={() => setEditingName(false)}
+                style={{ height: 34, padding: "0 14px", borderRadius: 17, border: `1px solid ${C.border}`, background: "transparent", color: C.muted, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <Row
+              label={user?.name ?? "Not signed in"}
+              sub={user?.email ?? "Sign in to sync your listening history"}
+              onClick={() => { setNameDraft(user?.name ?? ""); setEditingName(true); }}
+              right={
+                user ? (
+                  user.avatarUrl
+                    ? <img src={user.avatarUrl} alt="" style={{ width: 40, height: 40, borderRadius: "50%", objectFit: "cover" }} />
+                    : <div style={{ width: 40, height: 40, borderRadius: "50%", background: C.accent, color: C.bg, display: "grid", placeItems: "center", fontWeight: 700, fontSize: 14, flexShrink: 0 }}>{user.initials}</div>
+                ) : <div style={{ width: 40, height: 40, borderRadius: "50%", background: C.surf, display: "grid", placeItems: "center", flexShrink: 0, color: C.muted }}><Settings size={18} /></div>
+              } />
+          )}
           <Row label="Subscription"
             sub={user ? `${user.subscription === "premium" ? "Vibra Premium" : "Free"} plan` : "No account connected"}
             onClick={() => toast("Manage subscription")} last
@@ -1077,7 +1157,7 @@ function SettingsScreen() {
             <div style={{ fontSize: 15, color: C.text, fontWeight: 500, marginBottom: 12 }}>Accent colour</div>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
               {ACCENT_OPTIONS.map(opt => (
-                <button key={opt.value} onClick={() => { setAccent(opt.value); saveSettings({ accent: opt.value }); toast(`Accent → ${opt.label}`); }} title={opt.label}
+                <button key={opt.value} onClick={() => { setAccent(opt.value); updateProfile({ accentColor: opt.value }); saveSettings({ accent: opt.value }); toast(`Accent → ${opt.label}`); }} title={opt.label}
                   style={{ width: 36, height: 36, borderRadius: "50%", background: opt.value, border: `3px solid ${accent === opt.value ? C.text : "transparent"}`, cursor: "pointer", position: "relative", transition: "border .15s" }}>
                   {accent === opt.value && <Check size={14} color="#fff" style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)" }} />}
                 </button>
@@ -1091,7 +1171,7 @@ function SettingsScreen() {
             <div style={{ fontSize: 15, color: C.text, fontWeight: 500, marginBottom: 12 }}>Audio quality</div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {["Low", "Normal", "High", "Lossless"].map(q => (
-                <button key={q} onClick={() => { setAudioQuality(q.toLowerCase()); saveSettings({ audioQuality: q.toLowerCase() }); toast(`Quality → ${q}`); }}
+                <button key={q} onClick={() => { setAudioQuality(q.toLowerCase()); updateProfile({ audioQuality: q.toLowerCase() }); saveSettings({ audioQuality: q.toLowerCase() }); toast(`Quality → ${q}`); }}
                   style={{ height: 34, padding: "0 14px", borderRadius: 17, border: `1px solid ${audioQuality === q.toLowerCase() ? C.accent : C.border}`, background: audioQuality === q.toLowerCase() ? C.accent + "1A" : "transparent", color: audioQuality === q.toLowerCase() ? C.accent : C.muted, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
                   {q}
                 </button>
@@ -1158,6 +1238,23 @@ function SettingsScreen() {
             last
             right={<RefreshCw size={16} color={C.muted} />}
           />
+        </Section>
+
+        <Section title="Connected Devices">
+          {devices.map((d, i) => (
+            <Row
+              key={d.id}
+              label={d.name}
+              sub={`${d.type === "browser" ? "Web player" : d.type === "phone" ? "Phone" : d.type === "desktop" ? "Desktop" : "Speaker"}${d.id === activeDeviceId ? " · Active output" : ""}`}
+              onClick={() => switchDevice(d.id)}
+              last={i === devices.length - 1}
+              right={
+                d.id === activeDeviceId
+                  ? <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#34C759", flexShrink: 0 }} />
+                  : <ChevronRight size={16} color={C.muted} />
+              }
+            />
+          ))}
         </Section>
 
         <Section title="About">
@@ -1281,7 +1378,7 @@ function ProfileScreen() {
       {recentTracks.length > 0 && (
         <div style={{ padding: "24px 28px 0" }}>
           <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: "0 0 12px" }}>Recently played</h2>
-          {recentTracks.slice(0, 5).map((t, i) => <TrackRow key={t.id} track={t} index={i} queue={recentTracks} />)}
+            {(recentTracks || []).slice(0, 5).map((t, i) => <TrackRow key={t.id} track={t} index={i} queue={recentTracks} />)}
         </div>
       )}
     </div>
@@ -1681,12 +1778,27 @@ function FollowButton({ id, size = "md" }: { id: string; size?: "sm" | "md" }) {
 
 // ─── TrackOptionsSheet ─────────────────────────────────────────────────────────
 function TrackOptionsSheet({ track, onClose }: { track: Track; onClose: () => void }) {
-  const { C, toggleLike, likedTrackIds, navigate, playlists } = useApp();
+  const { C, toggleLike, likedTrackIds, navigate, playlists, addTrackToPlaylist } = useApp();
   const isLiked = likedTrackIds.has(track.id);
 
   const options: { icon: React.ReactNode; label: string; action: () => void; danger?: boolean }[] = [
     { icon: <Heart size={18} fill={isLiked ? C.accent : "none"} />, label: isLiked ? "Remove from liked" : "Add to liked", action: () => { toggleLike(track.id); onClose(); } },
-    { icon: <Plus size={18} />, label: "Add to playlist", action: () => { onClose(); /* POST /playlists/:id/tracks */ toast("Select a playlist to add to"); } },
+    {
+      icon: <Plus size={18} />,
+      label: "Add to playlist",
+      action: () => {
+        onClose();
+        // Prefer the newest locally created playlist, then any real playlist.
+        const custom = getStoredPlaylists();
+        const target = custom[0] ?? playlists.find(p => p.id !== "liked");
+        if (!target) {
+          toast("Create a playlist first — tap + in the sidebar");
+          return;
+        }
+        addTrackToPlaylist(target.id, track);
+        toast(`Added to "${target.name}"`);
+      },
+    },
     { icon: <Download size={18} />, label: "Download", action: () => { addOfflineTrack(toOfflineTrack(track)); onClose(); toast("Saved for offline playback"); } },
     { icon: <Compass size={18} />, label: `More from ${track.artist}`, action: () => { onClose(); /* GET /artists/:id/tracks */ toast(`Loading ${track.artist}…`); } },
     { icon: <MoreHorizontal size={18} />, label: "Share track", action: () => { onClose(); /* navigator.share or copy link */ toast("Link copied"); } },
@@ -1720,7 +1832,7 @@ function TrackOptionsSheet({ track, onClose }: { track: Track; onClose: () => vo
 
 // ─── CreatePlaylistModal ───────────────────────────────────────────────────────
 function CreatePlaylistModal({ onClose }: { onClose: () => void }) {
-  const { C } = useApp();
+  const { C, addPlaylist } = useApp();
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
   const [loading, setLoading] = useState(false);
@@ -1734,8 +1846,17 @@ function CreatePlaylistModal({ onClose }: { onClose: () => void }) {
       body: JSON.stringify({ name: name.trim(), description: desc.trim() }),
     });
     setLoading(false);
-    if (result) toast(`"${name}" created`);
-    else toast("Couldn't create the playlist. Check your connection and try again.");
+    if (result) {
+      const created = mapAPIPlaylist(result);
+      savePlaylist({ ...(created as unknown as StoredPlaylist), createdAt: Date.now() });
+      addPlaylist(created);
+      toast(`"${created.name}" created`);
+    } else {
+      // Offline / no backend: create locally so it still lands in the sidebar.
+      const local = createCustomPlaylist(name, desc);
+      addPlaylist(local as unknown as PlaylistItem);
+      toast(`"${local.name}" saved locally`);
+    }
     onClose();
   };
 
@@ -1856,7 +1977,7 @@ function LeftSidebar() {
               No playlists yet — tap + to create one
             </div>
           )}
-          {playlists.map(pl => (
+          {(playlists || []).map(pl => (
             <button key={pl.id} onClick={() => navigate({ id: "playlist", item: pl })}
               style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, height: 52, padding: "0 10px", borderRadius: 10, border: "none", cursor: "pointer", background: activePl === pl.id ? C.surf : "transparent", transition: "background .15s", textAlign: "left" }}
               onMouseEnter={e => (e.currentTarget.style.background = C.surf)}
@@ -2198,7 +2319,10 @@ export default function App() {
   const [progress, setProgress]           = useState(0);
   const [elapsed, setElapsed]             = useState(0);
   const [audioDuration, setAudioDuration] = useState(0);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioRef = useRef<PlaybackHandle | null>(null);
+  const ytEngineRef = useRef<YTAudioEngine | null>(null);
+  const playSessionRef = useRef(0);
+  const handleTrackEndRef = useRef<() => void>(() => {});
   const timerRef = useRef<number | undefined>(undefined);
 
   // Queue & controls
@@ -2218,7 +2342,7 @@ export default function App() {
   // User & library
   const [user, setUser]                             = useState<User | null>(null);
   const [userLoading, setUserLoading]               = useState(true);
-  const [playlists, setPlaylists]                   = useState<PlaylistItem[]>([]);
+  const [playlists, setPlaylists]                   = useState<PlaylistItem[]>(() => getStoredPlaylists() as unknown as PlaylistItem[]);
   const [playlistsLoading, setPlaylistsLoading]     = useState(false);
   const [likedTrackIds, setLikedTrackIds]           = useState<Set<string | number>>(new Set());
   const [likedTracks, setLikedTracks]               = useState<Track[]>([]);
@@ -2227,7 +2351,7 @@ export default function App() {
 
   // Discovery
   const [discoveryTracks, setDiscoveryTracks]   = useState<Track[]>([]);
-  const [recentTracks, setRecentTracks]         = useState<Track[]>([]);
+  const [recentTracks, setRecentTracks]         = useState<Track[]>(() => getHistory() as unknown as Track[]);
   const [trendingTracks, setTrendingTracks]     = useState<Track[]>([]);
   const [newReleases, setNewReleases]           = useState<AlbumItem[]>([]);
   const [discoveryLoading, setDiscoveryLoading] = useState(true);
@@ -2241,8 +2365,8 @@ export default function App() {
 
   // Settings
   const [theme, setTheme]                               = useState("dark");
-  const [accent, setAccent]                             = useState("#E8354D");
-  const [audioQuality, setAudioQuality]                 = useState("high");
+  const [accent, setAccent]                             = useState(() => getUserProfile()?.accentColor ?? "#E8354D");
+  const [audioQuality, setAudioQuality]                 = useState(() => getUserProfile()?.audioQuality ?? "high");
   const [normalizeVolume, setNormalizeVolume]           = useState(true);
   const [autoplay, setAutoplay]                         = useState(true);
   const [crossfade, setCrossfade]                       = useState(false);
@@ -2269,14 +2393,30 @@ export default function App() {
     });
     if (result) {
       setUser(result);
+      updateUserProfile({
+        name: result.name,
+        username: result.username,
+        initials: result.initials,
+        email: result.email,
+        avatarUrl: result.avatarUrl,
+        subscription: result.subscription === "premium" ? "premium" : "free",
+      });
     } else if (data.name) {
       // Optimistic local user until backend is connected
-      setUser({
+      const local: User = {
         id: "local",
         name: data.name,
         email: data.email,
         username: data.email.split("@")[0],
         initials: data.name.split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2),
+        subscription: "free",
+      };
+      setUser(local);
+      updateUserProfile({
+        name: local.name,
+        username: local.username,
+        initials: local.initials,
+        email: local.email,
         subscription: "free",
       });
     }
@@ -2289,7 +2429,34 @@ export default function App() {
   // ── Bootstrap user ────────────────────────────────────────────────────────────
   useEffect(() => {
     if (showOnboarding) { setUserLoading(false); return; }
-    api<User>("/auth/me").then(u => { setUser(u); setUserLoading(false); });
+    api<User>("/auth/me").then(u => {
+      if (u) {
+        setUser(u);
+        updateUserProfile({
+          name: u.name,
+          username: u.username,
+          initials: u.initials,
+          email: u.email,
+          avatarUrl: u.avatarUrl,
+          subscription: u.subscription === "premium" ? "premium" : "free",
+        });
+      } else {
+        // Offline / no session: fall back to the persisted local profile.
+        const p = getUserProfile();
+        if (p && p.name) {
+          setUser({
+            id: "local",
+            name: p.name,
+            email: p.email,
+            username: p.username,
+            initials: p.initials,
+            avatarUrl: p.avatarUrl,
+            subscription: p.subscription,
+          });
+        }
+      }
+      setUserLoading(false);
+    });
   }, [showOnboarding]);
 
   // ── Bootstrap library ─────────────────────────────────────────────────────────
@@ -2305,9 +2472,17 @@ export default function App() {
       // GET /users/me/following → { ids: string[] }
       api<{ ids: string[] }>("/users/me/following"),
     ]).then(([pls, liked, recent, arts, dl, followingData]) => {
-      if (pls)           setPlaylists(pls.map(mapAPIPlaylist));
+      if (pls) {
+        // Backend playlists first, then locally created ones (deduped by id).
+        const backendPls = pls.map(mapAPIPlaylist);
+        const stored = getStoredPlaylists() as unknown as PlaylistItem[];
+        setPlaylists([
+          ...backendPls,
+          ...stored.filter(s => !backendPls.some(b => b.id === s.id)),
+        ]);
+      }
       if (liked)         setLikedTrackIds(new Set(liked.ids));
-      if (recent)        setRecentTracks(recent.map(mapAPITrack));
+      if (recent)        setRecentTracks(mergeHistory(recent.map(mapAPITrack) as unknown as StoredTrack[]) as unknown as Track[]);
       if (arts)          setArtists(arts.map(mapAPIArtist));
       if (dl)            setDownloadedTracks(dl.map(mapAPITrack));
       if (followingData) setFollowing(new Set(followingData.ids));
@@ -2392,11 +2567,101 @@ export default function App() {
     return () => { cancelled = true; };
   }, [currentTrack?.id]);
 
-  // ── Track ended ───────────────────────────────────────────────────────────────
+  // ── Playback engines ─────────────────────────────────────────────────────────
+  /** Engine-level failures: only report them when the failing engine is the live one. */
+  const handleEngineFailure = useCallback((failure: PlaybackFailure) => {
+    if (audioRef.current !== ytEngineRef.current) return;
+    setIsPlaying(false);
+    toast(describePlaybackFailure(failure));
+  }, []);
+
+  /**
+   * Starts a track on the best available engine:
+   *   1. direct stream URL via <audio> (used whenever the backend serves bytes);
+   *   2. hidden YouTube IFrame fallback the moment the stream errors out.
+   * Play-state flips to true immediately and only reverts — with a calm toast —
+   * once every engine has genuinely failed. No silent "playing".
+   */
+  const beginPlayback = useCallback((t: Track) => {
+    const session = ++playSessionRef.current;
+    setIsPlaying(true);
+
+    const fail = (failure: PlaybackFailure) => {
+      if (playSessionRef.current !== session) return;
+      setIsPlaying(false);
+      toast(describePlaybackFailure(failure));
+    };
+
+    const startYouTube = async () => {
+      const videoId = t.videoId ?? (typeof t.id === "string" && t.id ? t.id : undefined);
+      if (!videoId) {
+        fail({ kind: "track", message: "This track has no playable audio source." });
+        return;
+      }
+      try {
+        const engine = ytEngineRef.current ?? await YTAudioEngine.create({
+          onEnded: () => {
+            if (audioRef.current === ytEngineRef.current) handleTrackEndRef.current();
+          },
+          onFailure: handleEngineFailure,
+        });
+        if (playSessionRef.current !== session) return;
+        ytEngineRef.current = engine;
+        engine.volume = volume;
+        audioRef.current?.pause();
+        audioRef.current = engine;
+        await engine.load(videoId, volume);
+        if (playSessionRef.current !== session) { engine.pause(); return; }
+        setIsPlaying(true);
+      } catch (err) {
+        fail(failureFromError(err));
+      }
+    };
+
+    audioRef.current?.pause();
+
+    const url = audioUrlFor(t);
+    if (!url) { void startYouTube(); return; }
+
+    const a = new Audio(url);
+    a.volume = volume;
+    let streamFailed = false;
+    let everPlayed = false;
+    const fallBackToYouTube = () => {
+      if (streamFailed) return;
+      streamFailed = true;
+      clearTimeout(watchdog);
+      a.pause();
+      if (playSessionRef.current === session) void startYouTube();
+    };
+    a.addEventListener("error", fallBackToYouTube);
+    a.addEventListener("playing", () => {
+      everPlayed = true;
+      clearTimeout(watchdog);
+      if (streamFailed || playSessionRef.current !== session) return;
+      setIsPlaying(true);
+    });
+    a.addEventListener("ended", () => {
+      if (playSessionRef.current === session) handleTrackEndRef.current();
+    });
+    audioRef.current = a;
+    // Watchdog: if the stream neither errors nor actually plays within 5s
+    // (the backend sometimes answers 200 with an empty body), switch engines.
+    const watchdog = window.setTimeout(() => {
+      if (!streamFailed && !everPlayed) fallBackToYouTube();
+    }, 5000);
+    a.play().catch((err: unknown) => {
+      const failure = failureFromError(err);
+      if (failure.kind === "blocked") { fail(failure); return; }
+      fallBackToYouTube();
+    });
+  }, [volume, handleEngineFailure]);
+
   const handleTrackEnd = useCallback(() => {
     if (repeatMode === "one") {
       setProgress(0); setElapsed(0);
-      if (audioRef.current) { audioRef.current.currentTime = 0; audioRef.current.play().catch(() => {}); }
+      const a = audioRef.current;
+      if (a) { a.currentTime = 0; a.play().catch(() => {}); }
       return;
     }
     if (queue.length === 0) { setIsPlaying(false); return; }
@@ -2408,38 +2673,25 @@ export default function App() {
     const t = queue[next];
     setCurrentTrack(t);
     setProgress(0); setElapsed(0);
-    const url = audioUrlFor(t);
-    if (url) {
-      audioRef.current?.pause();
-      const a = new Audio(url);
-      a.volume = volume;
-      a.addEventListener("ended", handleTrackEnd);
-      a.play().catch(() => {});
-      audioRef.current = a;
-    }
-  }, [queue, queueIdx, shuffleOn, repeatMode, volume]);
+    beginPlayback(t);
+  }, [queue, queueIdx, shuffleOn, repeatMode, beginPlayback]);
+  handleTrackEndRef.current = handleTrackEnd;
 
   // ── playTrack ─────────────────────────────────────────────────────────────────
-  const playTrack = useCallback((t: Track, newQueue?: Track[]) => {
+    const playTrack = useCallback((t: Track, newQueue?: Track[]) => {
     if (currentTrack && currentTrack.id !== t.id) {
       setHistory(h => [...h.slice(-19), currentTrack]);
     }
+    // Persist to vibra_history (deduped, capped at 50) and refresh the rail.
+    setRecentTracks(addHistoryTrack(t as StoredTrack) as unknown as Track[]);
     setCurrentTrack(t);
-    setProgress(0); setElapsed(0); setIsPlaying(true);
+    setProgress(0); setElapsed(0);
     if (newQueue) {
       setQueue(newQueue);
       setQueueIdx(newQueue.findIndex(x => x.id === t.id));
     }
-    const url = audioUrlFor(t);
-    if (url) {
-      audioRef.current?.pause();
-      const a = new Audio(url);
-      a.volume = volume;
-      a.addEventListener("ended", handleTrackEnd);
-      a.play().catch(() => {});
-      audioRef.current = a;
-    }
-  }, [currentTrack, volume, handleTrackEnd]);
+    beginPlayback(t);
+  }, [currentTrack, beginPlayback]);
 
   // ── playNext ──────────────────────────────────────────────────────────────────
   const playNext = useCallback(() => {
@@ -2453,16 +2705,8 @@ export default function App() {
     setQueueIdx(next);
     setCurrentTrack(t);
     setProgress(0); setElapsed(0);
-    const url = audioUrlFor(t);
-    if (url) {
-      audioRef.current?.pause();
-      const a = new Audio(url);
-      a.volume = volume;
-      a.addEventListener("ended", handleTrackEnd);
-      a.play().catch(() => {});
-      audioRef.current = a;
-    }
-  }, [queue, queueIdx, shuffleOn, currentTrack, volume, handleTrackEnd]);
+    beginPlayback(t);
+  }, [queue, queueIdx, shuffleOn, currentTrack, beginPlayback]);
 
   // ── playPrev ──────────────────────────────────────────────────────────────────
   const playPrev = useCallback(() => {
@@ -2476,26 +2720,31 @@ export default function App() {
       setHistory(h => h.slice(0, -1));
       setCurrentTrack(prev);
       setProgress(0); setElapsed(0);
-      const url = prev.previewUrl ?? prev.streamUrl;
-      if (url) {
-        audioRef.current?.pause();
-        const a = new Audio(url);
-        a.volume = volume;
-        a.addEventListener("ended", handleTrackEnd);
-        a.play().catch(() => {});
-        audioRef.current = a;
-      }
+      beginPlayback(prev);
     }
-  }, [elapsed, history, volume, handleTrackEnd]);
+  }, [elapsed, history, beginPlayback]);
 
   // ── togglePlay ────────────────────────────────────────────────────────────────
   const togglePlay = useCallback(() => {
-    setIsPlaying(p => {
-      const next = !p;
-      if (audioRef.current) { next ? audioRef.current.play().catch(() => {}) : audioRef.current.pause(); }
-      return next;
-    });
-  }, []);
+    const current = audioRef.current;
+    if (!current) {
+      if (currentTrack) beginPlayback(currentTrack);
+      return;
+    }
+    if (isPlaying) {
+      playSessionRef.current++; // cancel any in-flight engine hand-off
+      current.pause();
+      setIsPlaying(false);
+    } else {
+      current.play()
+        .then(() => { if (audioRef.current === current) setIsPlaying(true); })
+        .catch((err: unknown) => {
+          if (audioRef.current !== current) return;
+          setIsPlaying(false);
+          toast(describePlaybackFailure(failureFromError(err)));
+        });
+    }
+  }, [isPlaying, currentTrack, beginPlayback]);
 
   // ── handleSeek ────────────────────────────────────────────────────────────────
   const handleSeek = useCallback((pct: number) => {
@@ -2539,6 +2788,46 @@ export default function App() {
     if (dl) setDownloadedTracks(dl.map(mapAPITrack));
   }, []);
 
+  // ── Persistent store actions (services/store.ts) ─────────────────────────────
+  /** Appends a playlist to the sidebar immediately (local or backend-made). */
+  const addPlaylist = useCallback((p: PlaylistItem) => {
+    setPlaylists(prev => (prev.some(x => x.id === p.id) ? prev : [p, ...prev]));
+  }, []);
+
+  /** Persists a track into a playlist (vibra_playlists) and updates state. */
+  const addTrackToPlaylist = useCallback((playlistId: string, track: Track) => {
+    addTrackToStoredPlaylist(playlistId, track as unknown as StoredTrack);
+    setPlaylists(prev => prev.map(pl => {
+      if (pl.id !== playlistId) return pl;
+      if (pl.tracks.some(t => String(t.id) === String(track.id))) return pl;
+      return { ...pl, tracks: [track, ...pl.tracks], trackCount: pl.trackCount + 1 };
+    }));
+  }, []);
+
+  /** Writes profile edits to vibra_user_profile and mirrors them into UI state. */
+  const updateProfile = useCallback((
+    patch: Partial<{ name: string; username: string; initials: string; email: string; avatarUrl: string; subscription: "premium" | "free" }>,
+  ) => {
+    updateUserProfile(patch);
+    setUser(prev => {
+      if (prev) return { ...prev, ...patch };
+      if (!patch.name) return prev;
+      return {
+        id: "local",
+        name: patch.name,
+        email: patch.email ?? "",
+        username: patch.username ?? "",
+        initials: patch.initials ?? patch.name.slice(0, 2).toUpperCase(),
+        avatarUrl: patch.avatarUrl,
+        subscription: patch.subscription ?? "free",
+      };
+    });
+  }, []);
+
+  // Quiet background pings — the banner only appears after 3 consecutive
+  // failures or an active request timeout (see services/safeFetch.ts).
+  useEffect(() => startConnectionMonitor(API_BASE), []);
+
   const ctxValue: AppCtxType = {
     C, navigate, goBack, canGoBack: navStack.length > 1, screen,
     currentTrack, isPlaying, progress, elapsed, audioDuration,
@@ -2565,6 +2854,9 @@ export default function App() {
     following, toggleFollow,
     openTrackOptions: setTrackOptionsTrack,
     openCreatePlaylist: () => setCreatePlaylistOpen(true),
+    addPlaylist,
+    addTrackToPlaylist,
+    updateProfile,
   };
 
   if (showOnboarding) {

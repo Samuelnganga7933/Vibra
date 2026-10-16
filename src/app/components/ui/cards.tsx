@@ -165,6 +165,7 @@ export function TrackCard({
   variant = "bare",
   layout = "stack",
   onClick,
+  onPlay,
 }: {
   track: TrackCardData;
   size?: number;
@@ -172,6 +173,8 @@ export function TrackCard({
   variant?: "pane" | "bare";
   layout?: "stack" | "row";
   onClick?: () => void;
+  /** Fired with the card's track whenever it is clicked. */
+  onPlay?: (track: TrackCardData) => void;
 }) {
   return (
     <MediaCard
@@ -184,7 +187,10 @@ export function TrackCard({
       radius={radius}
       variant={variant}
       layout={layout}
-      onClick={onClick}
+      onClick={() => {
+        onPlay?.(track);
+        onClick?.();
+      }}
     />
   );
 }
