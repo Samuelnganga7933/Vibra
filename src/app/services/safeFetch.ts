@@ -21,6 +21,12 @@ export interface SafeFetchOptions extends Omit<RequestInit, "signal"> {
   fallback?: unknown;
   /** Suppress the console warning (use for expected background probes). */
   quiet?: boolean;
+  /**
+   * Returns the response to the caller for specific non-2xx statuses instead
+   * of the usual null (used to inspect 401 session expiry). Accepted responses
+   * skip the failure bookkeeping — they are not connection problems.
+   */
+  accept?: (response: Response) => boolean;
 }
 
 // ─── Connection store ─────────────────────────────────────────────────────────
@@ -109,7 +115,7 @@ export async function safeFetch(
   url: string,
   options: SafeFetchOptions = {},
 ): Promise<Response | null> {
-  const { timeoutMs = SAFE_FETCH_TIMEOUT_MS, quiet, fallback: _fallback, ...init } = options;
+  const { timeoutMs = SAFE_FETCH_TIMEOUT_MS, quiet, fallback: _fallback, accept, ...init } = options;
 
   if (typeof navigator !== "undefined" && navigator.onLine === false) {
     noteFailure(false, quiet);
@@ -124,6 +130,7 @@ export async function safeFetch(
     const response = await fetch(url, { ...init, signal: controller.signal });
 
     if (!response.ok) {
+      if (accept && accept(response)) return response;
       noteFailure(false, quiet);
       if (!quiet) {
         warn(url, `HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""}`);

@@ -94,12 +94,22 @@ def _ensure_default_user(db: Session) -> User:
 
 def get_current_user(
     db: Session = Depends(get_db),
+    authorization: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None),
 ) -> User:
-    """Cookie-session friendly: defaults to a single provisioned user.
+    """Bearer session first, then X-User-Id, then the provisioned default user.
 
-    Pass an `X-User-Id` header to act as a specific user (multi-user ready).
+    Every account/library route uses this: a signed-in user always operates on
+    their own rows, anonymous traffic falls back to the dev default. A bearer
+    token that matches no live session is an expired login — 401, never the
+    default user's data.
     """
+    token = _bearer(authorization)
+    if token:
+        user = db.scalar(select(User).where(User.session_token == token))
+        if user is None:
+            raise HTTPException(status_code=401, detail="Session expired")
+        return user
     if x_user_id:
         user = db.get(User, x_user_id)
         if user is not None:
@@ -579,7 +589,7 @@ def _artist_out(name: str, followers: int | None = None) -> ArtistOut:
 
 
 @app.get("/library/artists", response_model=list[ArtistOut])
-def list_artists(user: User = Depends(get_token_user), db: Session = Depends(get_db)):
+def list_artists(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Followed artists first, then affinity-ranked artists from listening."""
     followed = db.scalars(
         select(FollowedArtist).where(FollowedArtist.user_id == user.id)
@@ -600,13 +610,13 @@ def list_artists(user: User = Depends(get_token_user), db: Session = Depends(get
 
 
 @app.get("/library/downloaded", response_model=list[TrackOut])
-def list_downloads(user: User = Depends(get_token_user)):
+def list_downloads(user: User = Depends(get_current_user)):
     """Tracks downloaded for offline playback (kept in the client offline cache)."""
     return []
 
 
 @app.get("/users/me/following", response_model=LikedIdsOut)
-def list_following(user: User = Depends(get_token_user), db: Session = Depends(get_db)):
+def list_following(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ids = db.scalars(
         select(FollowedArtist.artist).where(FollowedArtist.user_id == user.id)
     ).all()
@@ -614,7 +624,7 @@ def list_following(user: User = Depends(get_token_user), db: Session = Depends(g
 
 
 @app.post("/users/{artist_id}/follow", status_code=204)
-def follow_artist(artist_id: str, payload: FollowIn, user: User = Depends(get_token_user), db: Session = Depends(get_db)):
+def follow_artist(artist_id: str, payload: FollowIn, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     artist_id = artist_id.strip()
     row = db.scalar(select(FollowedArtist).where(
         FollowedArtist.user_id == user.id,

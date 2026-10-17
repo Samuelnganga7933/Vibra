@@ -7,7 +7,7 @@
  * BFF degrades to `null`/`false` quietly — never a crash.
  */
 
-import { safeJson, safeFetch } from "./safeFetch";
+import { safeFetch } from "./safeFetch";
 
 const RAW_BFF: string =
   ((import.meta.env.VITE_BFF_BASE_URL as string | undefined) ?? "").trim() ||
@@ -39,6 +39,29 @@ export function isSignedIn(): boolean {
   return getSessionToken() !== null;
 }
 
+// ─── Session expiry ───────────────────────────────────────────────────────────
+// A 401 means the stored token no longer matches a live server session
+// (rotated elsewhere, or logged out on another device). We drop the dead
+// token and let the app fall back to signed-out.
+type SessionExpiredListener = () => void;
+const expiredListeners = new Set<SessionExpiredListener>();
+
+export function onSessionExpired(listener: SessionExpiredListener): () => void {
+  expiredListeners.add(listener);
+  return () => { expiredListeners.delete(listener); };
+}
+
+function dropDeadSession(response: Response): boolean {
+  if (response.status !== 401) return false;
+  if (getSessionToken() !== null) {
+    setSessionToken(null);
+    expiredListeners.forEach(listener => {
+      try { listener(); } catch { /* a broken listener must not break the request */ }
+    });
+  }
+  return true;
+}
+
 function headers(init?: RequestInit): Record<string, string> {
   const token = getSessionToken();
   const extra: Record<string, string> = {};
@@ -62,12 +85,20 @@ function headers(init?: RequestInit): Record<string, string> {
 /** JSON GET against the BFF. Returns `null` on any failure. */
 export async function bffJson<T>(path: string, init?: RequestInit): Promise<T | null> {
   if (!BFF_BASE) return null;
-  return safeJson<T>(`${BFF_BASE}${path}`, {
+  const response = await safeFetch(`${BFF_BASE}${path}`, {
     ...init,
     quiet: true,
     credentials: "include",
     headers: headers(init),
+    accept: r => r.status === 401,
   });
+  if (!response) return null;
+  if (dropDeadSession(response)) return null;
+  try {
+    return (await response.json()) as T;
+  } catch {
+    return null;
+  }
 }
 
 /** Fire-and-forget request; resolves `true` only on a 2xx. Never throws. */
@@ -78,6 +109,8 @@ export async function bffSend(path: string, init?: RequestInit): Promise<boolean
     quiet: true,
     timeoutMs: 6000,
     headers: headers(init),
+    accept: r => r.status === 401,
   });
-  return response !== null;
+  if (response === null) return false;
+  return !dropDeadSession(response) && response.ok;
 }

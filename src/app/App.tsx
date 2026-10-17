@@ -43,7 +43,7 @@ import {
   searchTracks,
   fetchLyrics as fetchLyricsFromApi,
 } from "./services/api";
-import { bffJson, BFF_BASE, isSignedIn } from "./services/bff";
+import { bffJson, BFF_BASE, isSignedIn, onSessionExpired } from "./services/bff";
 import { sendEvent, isHistoryPaused, setHistoryPaused as persistHistoryPaused } from "./services/events";
 import { sanitizeMusicItems } from "./services/smartQueue";
 import { fetchHome, type HomeShelf, type HomeItem } from "./services/home";
@@ -2461,7 +2461,8 @@ export default function App() {
       if (followingData) setFollowing(new Set(followingData.ids));
       setPlaylistsLoading(false);
     });
-  }, []);
+    // Re-runs on login/logout so the library always reflects the active session.
+  }, [authVersion]);
 
   // ── Home feed — server-driven shelves (re-fetches when auth changes) ─────────
   useEffect(() => { refreshHome(); }, [refreshHome, authVersion]);
@@ -2707,6 +2708,17 @@ export default function App() {
     }
     // Persist to vibra_history (deduped, capped at 50) and refresh the rail.
     setRecentTracks(addHistoryTrack(t as StoredTrack) as unknown as Track[]);
+    // Mirror to the BFF so weekly minutes and recent plays survive the device.
+    if (user) {
+      void api("/library/recent", {
+        method: "POST",
+        body: JSON.stringify({
+          trackId: String(t.id),
+          artistId: t.artist,
+          durationMs: t.durationSec ? Math.round(t.durationSec * 1000) : 0,
+        }),
+      });
+    }
     setCurrentTrack(t);
     setProgress(0); setElapsed(0);
     if (newQueue) {
@@ -2719,7 +2731,7 @@ export default function App() {
     sendEvent({ type: "play", trackId: t.id, title: t.title, image: t.imageUrl, positionMs: 0, sourceShelfId, artist: t.artist });
     // …and the feed itself should learn: refresh Home once the event lands.
     scheduleHomeRefresh();
-  }, [currentTrack, beginPlayback, scheduleHomeRefresh]);
+  }, [currentTrack, beginPlayback, scheduleHomeRefresh, user]);
 
   // ── addToQueue / playNextInQueue ──────────────────────────────────────────────
   const addToQueue = useCallback((t: Track) => {
@@ -3017,11 +3029,13 @@ export default function App() {
     return null;
   }, [applySessionUser]);
 
-  const logout = useCallback(async () => {
+  const logout = useCallback(async (reason?: "idle") => {
     await logoutUser();
     setUser(null);
     setAuthVersion(v => v + 1);
-    toast("Signed out");
+    toast(reason === "idle"
+      ? "Signed out — you were inactive for 30 minutes"
+      : "Signed out");
   }, []);
 
   // ── Home feedback & privacy ───────────────────────────────────────────────────
@@ -3054,6 +3068,13 @@ export default function App() {
   // failures or an active request timeout (see services/safeFetch.ts).
   useEffect(() => startConnectionMonitor(BFF_BASE), []);
 
+  // Dead session (rotated/expired token) — drop to signed-out with a clear message.
+  useEffect(() => onSessionExpired(() => {
+    setUser(null);
+    setAuthVersion(v => v + 1);
+    toast("Your session expired — sign in again");
+  }), []);
+
   // ── uiState — the single derivation every conditional render reads ────────────
   const uiState: UiState = useMemo(() => ({
     hasPlayback,
@@ -3066,6 +3087,27 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [authVersion, hasPlayback, queue.length, lyrics.length, plainLyrics,
        recentTracks.length, history.length, isPlaying, devices.length]);
+
+  // ── Inactivity logout ────────────────────────────────────────────────────────
+  // 30 minutes with no pointer/keyboard/touch input signs the user out.
+  // Playback counts as presence — nobody gets signed out mid-song.
+  const lastActivityRef = useRef(Date.now());
+  useEffect(() => {
+    if (!uiState.signedIn) return;
+    lastActivityRef.current = Date.now();
+    const markActive = () => { lastActivityRef.current = Date.now(); };
+    const events: (keyof WindowEventMap)[] = ["pointerdown", "keydown", "wheel", "touchstart"];
+    events.forEach(ev => window.addEventListener(ev, markActive, { passive: true }));
+    const timer = window.setInterval(() => {
+      if (Date.now() - lastActivityRef.current >= 30 * 60 * 1000 && !isPlaying) {
+        void logout("idle");
+      }
+    }, 60 * 1000);
+    return () => {
+      events.forEach(ev => window.removeEventListener(ev, markActive));
+      window.clearInterval(timer);
+    };
+  }, [uiState.signedIn, isPlaying, logout]);
 
   const ctxValue: AppCtxType = {
     C, navigate, goBack, canGoBack: navStack.length > 1, screen,

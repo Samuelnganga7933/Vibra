@@ -187,7 +187,7 @@ export interface AppCtxType {
   userLoading: boolean;
   login: (email: string, password: string) => Promise<string | null>;
   register: (name: string, email: string, password: string) => Promise<string | null>;
-  logout: () => Promise<void>;
+  logout: (reason?: "idle") => Promise<void>;
   playlists: PlaylistItem[];
   playlistsLoading: boolean;
   likedTrackIds: Set<string | number>;
