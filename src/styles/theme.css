@@ -119,13 +119,58 @@
   --color-sidebar-ring: var(--sidebar-ring);
 }
 
+/* ── Vibra design tokens ─────────────────────────────────────────────────────
+   Declared after the shadcn block so these names win. The app never reads the
+   shadcn semantic aliases directly — screens use var(--…) or the Colors object. */
+:root {
+  --bg: #0b0a10;
+  --panel: #14131c;
+  --raised: #1f1e2b;
+  --hover: #1d1c29;
+  --border: #2c2a3e;
+  --text: #f4f3f8;
+  --muted: #a9a7bd;
+  --dim: #8886a0;
+  --accent: #e8334f;
+  --accent2: #7a4ae8;
+  --online: #3ad07a;
+
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+
+  --radius-panel: 18px;
+  --radius-card: 14px;
+  --radius-thumb: 10px;
+  --radius-pill: 999px;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
 
+  html,
   body {
-    @apply bg-background text-foreground;
+    background: var(--bg);
+    color: var(--text);
+  }
+
+  body {
+    font-family: var(--font-sans);
+    font-weight: 400;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1, h2, h3, h4, button {
+    font-family: var(--font-sans);
+  }
+
+  button {
+    font-weight: 600;
+  }
+
+  b, strong {
+    font-weight: 800;
   }
 
   /**
