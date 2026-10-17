@@ -148,3 +148,15 @@ class BlockedItem(Base):
     kind: Mapped[str] = mapped_column(String(8))  # "track" | "artist"
     value: Mapped[str] = mapped_column(String(200))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class FollowedArtist(Base):
+    """Explicit artist follows (artist is the stable name-key, same id space as /library/artists)."""
+
+    __tablename__ = "followed_artists"
+    __table_args__ = (UniqueConstraint("user_id", "artist", name="uq_user_followed_artist"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    artist: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

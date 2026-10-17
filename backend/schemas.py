@@ -49,6 +49,31 @@ class LikedIdsOut(BaseModel):
     ids: list[str] = []
 
 
+class FollowIn(BaseModel):
+    follow: bool
+
+
+class ArtistOut(BaseModel):
+    """Artist in the library id space (id == artist name key)."""
+
+    id: str
+    name: str
+    genre: Optional[str] = None
+    coverColor: str = "#2C4A5E"
+    imageUrl: Optional[str] = None
+    followers: Optional[int] = None
+
+
+class NewReleaseOut(BaseModel):
+    id: str
+    title: str
+    artist: Optional[str] = None
+    year: Optional[str] = None
+    coverColor: str = "#2C4A5E"
+    coverUrl: Optional[str] = None
+    trackCount: int = 1
+
+
 class LikeToggle(BaseModel):
     liked: bool
 

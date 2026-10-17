@@ -24,6 +24,7 @@ from database import Base, SessionLocal, engine, get_db
 from models import (
     ArtistScore,
     BlockedItem,
+    FollowedArtist,
     LikedTrack,
     PlayEvent as PlayEventRow,
     PlayHistory,
@@ -32,7 +33,9 @@ from models import (
     User,
 )
 from schemas import (
+    ArtistOut,
     AuthOut,
+    FollowIn,
     HistoryPauseIn,
     HomeItemOut,
     HomeOut,
@@ -41,6 +44,7 @@ from schemas import (
     LikeToggleOut,
     LikedIdsOut,
     LoginIn,
+    NewReleaseOut,
     PlayEvent,
     PlaylistCreate,
     PlaylistCreator,
@@ -443,6 +447,89 @@ def update_settings(
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/")
+def root_ping():
+    """Root ping — load balancers and uptime checks hit / first."""
+    return {"status": "ok", "service": "vibra-bff"}
+
+
+# ── Library: artists, downloads, following ────────────────────────────────────
+
+
+def _artist_out(name: str, followers: int | None = None) -> ArtistOut:
+    """Artists are name-keyed (same id space as telemetry and follow routes)."""
+    return ArtistOut(id=name, name=name, followers=followers)
+
+
+@app.get("/library/artists", response_model=list[ArtistOut])
+def list_artists(user: User = Depends(get_token_user), db: Session = Depends(get_db)):
+    """Followed artists first, then affinity-ranked artists from listening."""
+    followed = db.scalars(
+        select(FollowedArtist).where(FollowedArtist.user_id == user.id)
+        .order_by(FollowedArtist.created_at.desc())
+    ).all()
+    seen = {f.artist for f in followed}
+    out = [_artist_out(f.artist) for f in followed]
+
+    scores = db.scalars(
+        select(ArtistScore).where(ArtistScore.user_id == user.id)
+        .order_by(ArtistScore.score.desc()).limit(20)
+    ).all()
+    for s in scores:
+        if s.artist in seen or s.score <= 0:
+            continue
+        out.append(_artist_out(s.artist, followers=None))
+    return out
+
+
+@app.get("/library/downloaded", response_model=list[TrackOut])
+def list_downloads(user: User = Depends(get_token_user)):
+    """Tracks downloaded for offline playback (kept in the client offline cache)."""
+    return []
+
+
+@app.get("/users/me/following", response_model=LikedIdsOut)
+def list_following(user: User = Depends(get_token_user), db: Session = Depends(get_db)):
+    ids = db.scalars(
+        select(FollowedArtist.artist).where(FollowedArtist.user_id == user.id)
+    ).all()
+    return LikedIdsOut(ids=list(ids))
+
+
+@app.post("/users/{artist_id}/follow", status_code=204)
+def follow_artist(artist_id: str, payload: FollowIn, user: User = Depends(get_token_user), db: Session = Depends(get_db)):
+    artist_id = artist_id.strip()
+    row = db.scalar(select(FollowedArtist).where(
+        FollowedArtist.user_id == user.id,
+        FollowedArtist.artist == artist_id,
+    ))
+    if payload.follow and row is None:
+        db.add(FollowedArtist(user_id=user.id, artist=artist_id))
+    elif not payload.follow and row is not None:
+        db.delete(row)
+    db.commit()
+    return Response(status_code=204)
+
+
+# ── Discovery ─────────────────────────────────────────────────────────────────
+
+
+@app.get("/discover/new-releases", response_model=list[NewReleaseOut])
+def new_releases():
+    """Fresh tracks from the live engine, shaped as single-track releases."""
+    rows = search_catalogue("new releases", 12)
+    return [
+        NewReleaseOut(
+            id=str(r["id"]),
+            title=r["title"],
+            artist=r.get("artist"),
+            year=str(datetime.now(timezone.utc).year),
+            coverUrl=r.get("imageUrl"),
+        )
+        for r in rows
+    ]
 
 
 # ── Telemetry ─────────────────────────────────────────────────────────────────
