@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { ChevronDown, Heart, ListMusic, Mic2, MoreHorizontal } from "lucide-react";
 import { useApp, fmtSec } from "../../context";
 import { LyricsPanel } from "./LyricsPanel";
@@ -15,8 +15,10 @@ export function PlayerPage() {
     likedTrackIds, toggleLike, queue, playTrack,
     panelTab, openPanel, setPlayerPageOpen,
     lyrics, plainLyrics, lyricsLoading, uiState, openTrackOptions,
+    isPlaying, togglePlay,
   } = useApp();
   const scrubRef = useRef<HTMLDivElement | null>(null);
+  const [mediaMode, setMediaMode] = useState<"song" | "video">("song");
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setPlayerPageOpen(false); };
@@ -52,7 +54,23 @@ export function PlayerPage() {
           <ChevronDown size={18} />
         </button>
         <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: 1 }}>
-          Now playing
+          {/* Song/Video toggle — video hands the canvas to the YouTube embed */}
+          <div style={{ display: "flex", background: C.surf, borderRadius: 999, padding: 3, fontWeight: 600, fontSize: 12.5, textTransform: "none", letterSpacing: 0 }}>
+            {(["song", "video"] as const).map(mode => (
+              <button key={mode} onClick={() => {
+                if (mode === "video" && isPlaying) togglePlay(); // audio hands off to the embed
+                setMediaMode(mode);
+              }}
+                style={{
+                  border: "none", borderRadius: 999, padding: "6px 22px", cursor: "pointer", fontFamily: "inherit",
+                  background: mediaMode === mode ? C.text : "transparent",
+                  color: mediaMode === mode ? C.pane : C.muted,
+                  fontSize: 12.5, fontWeight: 700, textTransform: "capitalize",
+                }}>
+                {mode}
+              </button>
+            ))}
+          </div>
         </div>
         <button onClick={() => openTrackOptions(currentTrack)} aria-label="Track options"
           style={{ width: 36, height: 36, borderRadius: "50%", background: C.surf, border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.muted }}>
@@ -69,10 +87,20 @@ export function PlayerPage() {
             background: currentTrack.bg, overflow: "hidden", flexShrink: 0,
             boxShadow: `0 28px 80px ${currentTrack.bg}66`, border: `1px solid ${C.border}`,
           }}>
-            {currentTrack.imageUrl && (
-              <img src={currentTrack.imageUrl} alt="" loading="lazy"
-                style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", aspectRatio: "1 / 1" }}
-                onError={e => { (e.currentTarget as HTMLImageElement).style.visibility = "hidden"; }} />
+            {mediaMode === "video" ? (
+              <iframe
+                src={`https://www.youtube-nocookie.com/embed/${currentTrack.videoId}?autoplay=1&playsinline=1`}
+                title={currentTrack.title}
+                allow="autoplay; encrypted-media; picture-in-picture"
+                allowFullScreen
+                style={{ width: "100%", height: "100%", border: "none", display: "block" }}
+              />
+            ) : (
+              currentTrack.imageUrl && (
+                <img src={currentTrack.imageUrl} alt="" loading="lazy"
+                  style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", aspectRatio: "1 / 1" }}
+                  onError={e => { (e.currentTarget as HTMLImageElement).style.visibility = "hidden"; }} />
+              )
             )}
           </div>
 
