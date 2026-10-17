@@ -12,3 +12,7 @@ npm-debug.log*
 .idea/
 
 coverage/
+
+backend/__pycache__/
+backend/.venv/
+backend/*.db
