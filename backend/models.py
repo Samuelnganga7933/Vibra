@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -29,12 +29,16 @@ class User(Base):
     avatar_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     subscription: Mapped[str] = mapped_column(String(16), default="free")
 
+    password_hash: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    session_token: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    history_paused: Mapped[bool] = mapped_column(Boolean, default=False)
+
     following: Mapped[int] = mapped_column(Integer, default=0)
     followers: Mapped[int] = mapped_column(Integer, default=0)
     top_artists: Mapped[int] = mapped_column(Integer, default=0)
 
     theme: Mapped[str] = mapped_column(String(16), default="dark")
-    accent: Mapped[str] = mapped_column(String(16), default="#E8354D")
+    accent: Mapped[str] = mapped_column(String(16), default="#E8334F")
     audio_quality: Mapped[str] = mapped_column(String(16), default="high")
     normalize_volume: Mapped[bool] = mapped_column(Boolean, default=True)
     autoplay: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -98,3 +102,49 @@ class PlayHistory(Base):
     artist_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     duration_ms: Mapped[int] = mapped_column(Integer, default=0)
     played_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+
+
+class PlayEvent(Base):
+    """One telemetry row per user action (play/skip/complete/…/not_interested)."""
+
+    __tablename__ = "play_events"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    type: Mapped[str] = mapped_column(String(24), index=True)
+    track_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    title: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    artist: Mapped[Optional[str]] = mapped_column(String(200), nullable=True, index=True)
+    image_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    position_ms: Mapped[int] = mapped_column(Integer, default=0)
+    source_shelf_id: Mapped[Optional[str]] = mapped_column(String(80), nullable=True, index=True)
+    device_type: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    device_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+
+
+class ArtistScore(Base):
+    """Recency-weighted artist affinity, scored from play/complete/skip signals."""
+
+    __tablename__ = "artist_scores"
+    __table_args__ = (UniqueConstraint("user_id", "artist", name="uq_user_artist_score"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    artist: Mapped[str] = mapped_column(String(200), index=True)
+    score: Mapped[float] = mapped_column(Float, default=0.0)
+    plays: Mapped[int] = mapped_column(Integer, default=0)
+    last_played_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class BlockedItem(Base):
+    """Feedback removals: not_interested tracks and hidden artists."""
+
+    __tablename__ = "blocked_items"
+    __table_args__ = (UniqueConstraint("user_id", "kind", "value", name="uq_user_blocked"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(8))  # "track" | "artist"
+    value: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
