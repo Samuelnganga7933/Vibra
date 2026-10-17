@@ -8,17 +8,19 @@ export interface UiColors {
   accent: string;
   text: string;
   muted: string;
+  dim?: string;
   border: string;
 }
 
 export const defaultUiColors: UiColors = {
-  bg: "#0B0A12",
-  pane: "#14121F",
-  surf: "#1F1B30",
-  accent: "#E8354D",
-  text: "#F2F0FA",
-  muted: "#A9A6BD",
-  border: "#26223A",
+  bg: "#0b0a10",
+  pane: "#14131c",
+  surf: "#1f1e2b",
+  accent: "#e8334f",
+  text: "#f4f3f8",
+  muted: "#a9a7bd",
+  dim: "#8886a0",
+  border: "#2c2a3e",
 };
 
 export const UiThemeContext = createContext<UiColors>(defaultUiColors);

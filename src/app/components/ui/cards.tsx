@@ -61,7 +61,7 @@ function MediaCard({
         ...(pane && !row ? { width: "100%", height: "auto" } : null),
       }}
     >
-      <ImageWithFallback src={imageUrl} coverColor={coverColor} alt={title} highlight />
+      <ImageWithFallback src={imageUrl} coverColor={coverColor} alt={title} />
     </div>
   );
 
