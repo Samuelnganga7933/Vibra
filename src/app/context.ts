@@ -241,6 +241,7 @@ export interface AppCtxType {
   openTrackOptions: (t: Track) => void;
   addPlaylist: (p: PlaylistItem) => void;
   addTrackToPlaylist: (playlistId: string, track: Track) => void;
+  reorderPlaylist: (playlistId: string, from: number, to: number) => void;
   updateProfile: (patch: Partial<{ name: string; username: string; initials: string; email: string; avatarUrl: string; subscription: "premium" | "free"; accentColor: string; audioQuality: string }>) => void;
 }
 

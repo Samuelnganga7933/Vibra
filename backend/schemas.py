@@ -38,6 +38,33 @@ class PlaylistOut(BaseModel):
     coverUrl: Optional[str] = None
     trackCount: int = 0
     creator: Optional[PlaylistCreator] = None
+    tracks: list["PlaylistTrackOut"] = []
+
+
+class PlaylistTrackOut(BaseModel):
+    id: str
+    title: Optional[str] = None
+    artist: Optional[str] = None
+    imageUrl: Optional[str] = None
+    coverColor: str = "#2C4A5E"
+    durationMs: int = 0
+    videoId: Optional[str] = None
+
+
+class PlaylistTrackIn(BaseModel):
+    track_id: str = Field(min_length=1, max_length=64)
+    title: Optional[str] = Field(default=None, max_length=300)
+    artist: Optional[str] = Field(default=None, max_length=200)
+    imageUrl: Optional[str] = Field(default=None, max_length=512)
+    coverColor: Optional[str] = Field(default=None, max_length=16)
+    durationMs: Optional[int] = None
+    videoId: Optional[str] = Field(default=None, max_length=64)
+
+
+class PlaylistTrackOrderIn(BaseModel):
+    """New track-id order for the playlist (drag-and-drop reorder)."""
+
+    track_ids: list[str] = Field(min_length=1, max_length=500)
 
 
 class PlaylistCreate(BaseModel):

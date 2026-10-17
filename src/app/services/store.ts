@@ -230,6 +230,20 @@ export function removeTrackFromPlaylist(playlistId: string, trackId: string | nu
   return updated;
 }
 
+/** Rewrites track order (drag-and-drop) and persists it. */
+export function reorderPlaylistTracks(playlistId: string, from: number, to: number): StoredPlaylist | null {
+  const playlists = getPlaylists();
+  const playlist = playlists.find(p => p.id === playlistId);
+  if (!playlist) return null;
+  if (from === to || from < 0 || to < 0 || from >= playlist.tracks.length || to >= playlist.tracks.length) return playlist;
+  const tracks = [...playlist.tracks];
+  const [moved] = tracks.splice(from, 1);
+  tracks.splice(to, 0, moved);
+  const updated: StoredPlaylist = { ...playlist, tracks };
+  savePlaylist(updated);
+  return updated;
+}
+
 export function deletePlaylist(playlistId: string): void {
   writeJSON(PLAYLISTS_KEY, getPlaylists().filter(p => p.id !== playlistId));
 }

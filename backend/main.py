@@ -49,6 +49,9 @@ from schemas import (
     PlaylistCreate,
     PlaylistCreator,
     PlaylistOut,
+    PlaylistTrackIn,
+    PlaylistTrackOrderIn,
+    PlaylistTrackOut,
     RegisterIn,
     SettingsUpdate,
     Stats,
@@ -191,8 +194,34 @@ def get_optional_user(
 
 
 @asynccontextmanager
+def _migrate_playlist_tracks() -> None:
+    """Add track-metadata columns to pre-existing SQLite installs."""
+    import sqlite3
+    from database import BASE_DIR
+    db_path = BASE_DIR / "vibra_users.db"
+    if not db_path.exists():
+        return
+    conn = sqlite3.connect(db_path)
+    try:
+        existing = {row[1] for row in conn.execute("PRAGMA table_info(playlist_tracks)")}
+        for column, ddl in [
+            ("title", "ALTER TABLE playlist_tracks ADD COLUMN title TEXT"),
+            ("artist", "ALTER TABLE playlist_tracks ADD COLUMN artist TEXT"),
+            ("image_url", "ALTER TABLE playlist_tracks ADD COLUMN image_url TEXT"),
+            ("cover_color", "ALTER TABLE playlist_tracks ADD COLUMN cover_color TEXT"),
+            ("duration_ms", "ALTER TABLE playlist_tracks ADD COLUMN duration_ms INTEGER"),
+            ("video_id", "ALTER TABLE playlist_tracks ADD COLUMN video_id TEXT"),
+        ]:
+            if column not in existing:
+                conn.execute(ddl)
+        conn.commit()
+    finally:
+        conn.close()
+
+
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    _migrate_playlist_tracks()
     db = SessionLocal()
     try:
         _ensure_default_user(db)
@@ -267,18 +296,32 @@ def logout(user: User = Depends(get_token_user), db: Session = Depends(get_db)):
     return Response(status_code=204)
 
 
-def _playlist_out(db: Session, playlist: Playlist) -> PlaylistOut:
-    track_count = db.scalar(
-        select(func.count()).select_from(PlaylistTrack).where(PlaylistTrack.playlist_id == playlist.id)
+def _playlist_track_out(row: PlaylistTrack) -> PlaylistTrackOut:
+    return PlaylistTrackOut(
+        id=row.track_id,
+        title=row.title,
+        artist=row.artist,
+        imageUrl=row.image_url,
+        coverColor=row.cover_color or COVER_COLOR_FALLBACK,
+        durationMs=row.duration_ms or 0,
+        videoId=row.video_id,
     )
+
+
+def _playlist_out(db: Session, playlist: Playlist, with_tracks: bool = False) -> PlaylistOut:
+    track_rows = db.scalars(
+        select(PlaylistTrack).where(PlaylistTrack.playlist_id == playlist.id)
+        .order_by(PlaylistTrack.position)
+    ).all()
     return PlaylistOut(
         id=playlist.id,
         name=playlist.name,
         description=playlist.description,
         coverColor=playlist.cover_color,
         coverUrl=playlist.cover_url,
-        trackCount=track_count or 0,
+        trackCount=len(track_rows),
         creator=PlaylistCreator(id=playlist.user_id, name=playlist.owner.name) if playlist.owner else None,
+        tracks=[_playlist_track_out(r) for r in track_rows] if with_tracks else [],
     )
 
 
@@ -359,6 +402,74 @@ def create_playlist(
     db.commit()
     db.refresh(playlist)
     return _playlist_out(db, playlist)
+
+
+def _get_owned_playlist(db: Session, playlist_id: str, user: User) -> Playlist:
+    playlist = db.scalar(select(Playlist).where(
+        Playlist.id == playlist_id, Playlist.user_id == user.id
+    ))
+    if playlist is None:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    return playlist
+
+
+@app.get("/library/playlists/{playlist_id}", response_model=PlaylistOut)
+def get_playlist(playlist_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return _playlist_out(db, _get_owned_playlist(db, playlist_id, user), with_tracks=True)
+
+
+@app.post("/library/playlists/{playlist_id}/tracks", response_model=PlaylistOut, status_code=201)
+def add_playlist_track(
+    playlist_id: str,
+    payload: PlaylistTrackIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    playlist = _get_owned_playlist(db, playlist_id, user)
+    existing = db.scalar(select(PlaylistTrack).where(
+        PlaylistTrack.playlist_id == playlist.id,
+        PlaylistTrack.track_id == payload.track_id,
+    ))
+    if existing is not None:
+        return _playlist_out(db, playlist, with_tracks=True)
+    max_pos = db.scalar(
+        select(func.coalesce(func.max(PlaylistTrack.position), -1)).where(PlaylistTrack.playlist_id == playlist.id)
+    )
+    db.add(PlaylistTrack(
+        playlist_id=playlist.id,
+        track_id=payload.track_id,
+        position=(max_pos or -1) + 1,
+        title=payload.title,
+        artist=payload.artist,
+        image_url=payload.imageUrl,
+        cover_color=payload.coverColor or COVER_COLOR_FALLBACK,
+        duration_ms=payload.durationMs,
+        video_id=payload.videoId,
+    ))
+    db.commit()
+    return _playlist_out(db, playlist, with_tracks=True)
+
+
+@app.put("/library/playlists/{playlist_id}/tracks", response_model=PlaylistOut)
+def reorder_playlist_tracks(
+    playlist_id: str,
+    payload: PlaylistTrackOrderIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Drag-and-drop: rewrite positions from the submitted id order."""
+    playlist = _get_owned_playlist(db, playlist_id, user)
+    rows = db.scalars(
+        select(PlaylistTrack).where(PlaylistTrack.playlist_id == playlist.id)
+    ).all()
+    by_id = {r.track_id: r for r in rows}
+    # Unknown ids are ignored; existing ids not in the payload keep their tail order.
+    ordered = [by_id.pop(tid) for tid in payload.track_ids if tid in by_id]
+    ordered.extend(sorted(by_id.values(), key=lambda r: r.position))
+    for position, row in enumerate(ordered):
+        row.position = position
+    db.commit()
+    return _playlist_out(db, playlist, with_tracks=True)
 
 
 @app.get("/library/liked", response_model=LikedIdsOut)

@@ -11,6 +11,7 @@ import {
   AlertCircle, Copy, ListPlus, MinusCircle, PauseCircle, RotateCcw,
   HelpCircle, ChevronUp, Maximize2, CalendarDays, Mic, ListStart,
   Moon, Sun, Contrast, WifiOff, Lock,
+  Share2, Link2, MessageCircle, Send, Mail,
 } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import { ErrorBoundary, installRuntimeGuards } from "./components/ErrorBoundary";
@@ -33,6 +34,7 @@ import {
   savePlaylist,
   createCustomPlaylist,
   addTrackToPlaylist as addTrackToStoredPlaylist,
+  reorderPlaylistTracks as reorderStoredPlaylistTracks,
   clearHistory as clearStoredHistory,
   type StoredPlaylist,
   type StoredTrack,
@@ -808,9 +810,11 @@ function LibraryScreen({ tab: initTab = "playlists" }: { tab?: LibTab }) {
 
 // ─── PlaylistScreen ────────────────────────────────────────────────────────────
 function PlaylistScreen({ item }: { item: PlaylistItem }) {
-  const { C, playTrack, canGoBack, goBack, discoveryTracks } = useApp();
+  const { C, playTrack, canGoBack, goBack, discoveryTracks, reorderPlaylist } = useApp();
   const [fullPlaylist, setFullPlaylist] = useState<PlaylistItem>(item);
   const [loading, setLoading] = useState(item.tracks.length === 0);
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
 
   useEffect(() => {
     if (item.tracks.length > 0) { setFullPlaylist(item); setLoading(false); return; }
@@ -888,7 +892,45 @@ function PlaylistScreen({ item }: { item: PlaylistItem }) {
         {loading
           ? [...Array(6)].map((_, i) => <TrackSkeleton key={i} />)
           : tracks.length > 0
-            ? tracks.map((t, i) => <TrackRow key={`${t.id}-${i}`} track={t} index={i} queue={queueRest(tracks, t)} showLike />)
+            ? tracks.map((t, i) => {
+                const dropTarget = dragOverIdx === i && dragIdx !== null && dragIdx !== i;
+                return (
+                  <div key={`${t.id}-${i}`}
+                    draggable
+                    onDragStart={e => {
+                      setDragIdx(i);
+                      e.dataTransfer.effectAllowed = "move";
+                      e.dataTransfer.setData("text/plain", String(i));
+                    }}
+                    onDragEnd={() => { setDragIdx(null); setDragOverIdx(null); }}
+                    onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDragOverIdx(i); }}
+                    onDragLeave={() => setDragOverIdx(prev => (prev === i ? null : prev))}
+                    onDrop={e => {
+                      e.preventDefault();
+                      const from = dragIdx ?? Number(e.dataTransfer.getData("text/plain"));
+                      if (Number.isFinite(from) && from !== i) {
+                        reorderPlaylist(fullPlaylist.id, from, i);
+                        setFullPlaylist(prev => {
+                          const nextTracks = [...prev.tracks];
+                          const [moved] = nextTracks.splice(from, 1);
+                          nextTracks.splice(i, 0, moved);
+                          return { ...prev, tracks: nextTracks };
+                        });
+                      }
+                      setDragIdx(null);
+                      setDragOverIdx(null);
+                    }}
+                    style={{
+                      opacity: dragIdx === i ? 0.5 : 1,
+                      boxShadow: dropTarget ? `inset 0 2px 0 ${C.accent}` : "none",
+                      borderRadius: 8,
+                      cursor: dragIdx === i ? "grabbing" : "grab",
+                      transition: "box-shadow .12s",
+                    }}>
+                    <TrackRow track={t} index={i} queue={queueRest(tracks, t)} showLike />
+                  </div>
+                );
+              })
             : <EmptyState title="No tracks" sub="This playlist is empty." />
         }
       </div>
@@ -1318,9 +1360,39 @@ function TrackOptionsSheet({ track, onClose }: { track: Track; onClose: () => vo
     hideItem, refreshHome, playTrack, addToQueue, playNextInQueue,
     openCreatePlaylist, uiState,
   } = useApp();
-  const [view, setView] = useState<"root" | "playlists">("root");
+  const [view, setView] = useState<"root" | "playlists" | "share">("root");
   const isLiked = likedTrackIds.has(track.id);
   const signedIn = uiState.signedIn;
+
+  const shareLink = track.videoId ? `https://www.youtube.com/watch?v=${track.videoId}` : window.location.href;
+  const shareText = `${track.title} — ${track.artist}`;
+
+  const shareTargets = [
+    {
+      label: "Copy link",
+      icon: <Link2 size={18} />,
+      action: () => {
+        void navigator.clipboard?.writeText(shareLink)
+          .then(() => toast("Link copied"))
+          .catch(() => toast.error("Couldn't copy the link"));
+      },
+    },
+    {
+      label: "WhatsApp",
+      icon: <MessageCircle size={18} />,
+      action: () => window.open(`https://wa.me/?text=${encodeURIComponent(`${shareText} ${shareLink}`)}`, "_blank", "noopener"),
+    },
+    {
+      label: "Telegram",
+      icon: <Send size={18} />,
+      action: () => window.open(`https://t.me/share/url?url=${encodeURIComponent(shareLink)}&text=${encodeURIComponent(shareText)}`, "_blank", "noopener"),
+    },
+    {
+      label: "Email",
+      icon: <Mail size={18} />,
+      action: () => { window.location.href = `mailto:?subject=${encodeURIComponent(shareText)}&body=${encodeURIComponent(shareLink)}`; },
+    },
+  ];
 
   const option = (icon: React.ReactNode, label: string, action: () => void, danger?: boolean) => ({
     icon, label, action, danger,
@@ -1340,12 +1412,15 @@ function TrackOptionsSheet({ track, onClose }: { track: Track; onClose: () => vo
           option(<Heart size={18} />, "Sign in to like and save", () => { onClose(); navigate({ id: "auth", mode: "login" }); }),
         ]),
     option(<Compass size={18} />, `More from ${track.artist}`, () => { onClose(); navigate({ id: "search", q: track.artist }); }),
-    option(<MoreHorizontal size={18} />, "Share track", () => {
-      onClose();
-      const link = track.videoId ? `https://www.youtube.com/watch?v=${track.videoId}` : window.location.href;
-      void navigator.clipboard?.writeText(link)
-        .then(() => toast("Link copied"))
-        .catch(() => toast.error("Couldn't copy the link"));
+    option(<Share2 size={18} />, "Share track", () => {
+      // Prefer the OS share sheet when the browser offers one.
+      if (navigator.share) {
+        void navigator.share({ title: track.title, text: shareText, url: shareLink })
+          .catch(() => { /* user dismissed — stay quiet */ });
+        onClose();
+        return;
+      }
+      setView("share");
     }),
     option(<MinusCircle size={18} />, "Not interested", () => {
       hideItem({ id: String(track.id), kind: "track", artist: track.artist, title: track.title });
@@ -1373,7 +1448,7 @@ function TrackOptionsSheet({ track, onClose }: { track: Track; onClose: () => vo
       <div style={{ position: "relative", background: C.pane, borderRadius: "20px 20px 0 0", padding: "8px 0 32px", animation: "slideUp .22s ease", maxHeight: "80vh", overflowY: "auto" }}>
         <div style={{ width: 40, height: 4, borderRadius: 2, background: C.border, margin: "8px auto 16px" }} />
         <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "0 20px 16px", borderBottom: `1px solid ${C.border}` }}>
-          {view === "playlists" && (
+          {view !== "root" && (
             <button onClick={() => setView("root")} aria-label="Back"
               style={{ width: 30, height: 30, borderRadius: "50%", background: C.surf, border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.text, flexShrink: 0 }}>
               <ChevronLeft size={16} />
@@ -1387,6 +1462,21 @@ function TrackOptionsSheet({ track, onClose }: { track: Track; onClose: () => vo
         </div>
 
         {view === "root" && renderButtons(rootOptions)}
+
+        {view === "share" && (
+          <div>
+            <div style={{ padding: "4px 20px 8px", fontSize: 12.5, color: C.muted }}>Share “{track.title}”</div>
+            {shareTargets.map(t => (
+              <button key={t.label} onClick={() => { t.action(); onClose(); }}
+                style={{ width: "100%", display: "flex", alignItems: "center", gap: 16, padding: "14px 20px", background: "none", border: "none", cursor: "pointer", color: C.text, fontSize: 15, fontWeight: 500, textAlign: "left" }}
+                onMouseEnter={e => (e.currentTarget.style.background = C.surf)}
+                onMouseLeave={e => (e.currentTarget.style.background = "none")}>
+                <span style={{ color: C.muted, display: "grid", placeItems: "center", flexShrink: 0 }}>{t.icon}</span>
+                {t.label}
+              </button>
+            ))}
+          </div>
+        )}
 
         {view === "playlists" && (
           <div>
@@ -1676,6 +1766,8 @@ function RightPanel() {
     moveQueueItem, removeFromQueue, openTrackOptions,
     panelTab, openPanel, uiState, setPlayerPageOpen,
   } = useApp();
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
 
   const tab: PanelTab = panelTab === "lyrics" && uiState.hasLyrics ? "lyrics" : (panelTab ?? "nowplaying");
   const isLiked = currentTrack ? likedTrackIds.has(currentTrack.id) : false;
@@ -1791,12 +1883,36 @@ function RightPanel() {
                   width: 22, height: 22, background: "none", border: "none", cursor: "pointer",
                   display: "grid", placeItems: "center", color: C.muted, opacity: 0, transition: "opacity .15s", flexShrink: 0,
                 };
+                const dropTarget = dragOverIdx === i && dragIdx !== null && dragIdx !== i;
                 return (
                   <div key={`${t.id}-${i}`} role="button" tabIndex={0}
+                    draggable
+                    onDragStart={e => {
+                      setDragIdx(i);
+                      e.dataTransfer.effectAllowed = "move";
+                      e.dataTransfer.setData("text/plain", String(i));
+                    }}
+                    onDragEnd={() => { setDragIdx(null); setDragOverIdx(null); }}
+                    onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDragOverIdx(i); }}
+                    onDragLeave={() => setDragOverIdx(prev => (prev === i ? null : prev))}
+                    onDrop={e => {
+                      e.preventDefault();
+                      const from = dragIdx ?? Number(e.dataTransfer.getData("text/plain"));
+                      if (Number.isFinite(from) && from !== i) moveQueueItem(from, i);
+                      setDragIdx(null);
+                      setDragOverIdx(null);
+                    }}
                     onClick={() => playTrack(t, queue)}
                     onKeyDown={e => e.key === "Enter" && playTrack(t, queue)}
                     {...reveal}
-                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 6px", borderRadius: 8, cursor: "pointer", background: isActive ? C.surf : "transparent" }}>
+                    style={{
+                      display: "flex", alignItems: "center", gap: 10, padding: "6px 6px", borderRadius: 8,
+                      cursor: dragIdx === i ? "grabbing" : "pointer",
+                      background: isActive ? C.surf : "transparent",
+                      boxShadow: dropTarget ? `inset 0 2px 0 ${C.accent}` : "none",
+                      opacity: dragIdx === i ? 0.5 : 1,
+                      transition: "box-shadow .12s",
+                    }}>
                     <span style={{ fontSize: 11, color: isActive ? C.accent : C.muted, width: 14, textAlign: "center", flexShrink: 0 }}>
                       {isActive && isPlaying ? <Pause size={11} fill={C.accent} color={C.accent} /> : i + 1}
                     </span>
@@ -2817,6 +2933,40 @@ export default function App() {
         bg: track.bg || pl.bg,
       };
     }));
+    // Mirror to the BFF (silently keeps local-only playlists working).
+    if (!playlistId.startsWith("local_")) {
+      void api<any>(`/library/playlists/${playlistId}/tracks`, {
+        method: "POST",
+        body: JSON.stringify({
+          track_id: String(track.id),
+          title: track.title,
+          artist: track.artist,
+          imageUrl: track.imageUrl,
+          coverColor: track.bg,
+          durationMs: track.durationSec ? Math.round(track.durationSec * 1000) : undefined,
+          videoId: track.videoId,
+        }),
+      });
+    }
+  }, []);
+
+  /** Drag-and-drop playlist reorder — local first, then the BFF order. */
+  const reorderPlaylist = useCallback((playlistId: string, from: number, to: number) => {
+    if (from === to || from < 0 || to < 0) return;
+    reorderStoredPlaylistTracks(playlistId, from, to);
+    setPlaylists(prev => prev.map(pl => {
+      if (pl.id !== playlistId) return pl;
+      const tracks = [...pl.tracks];
+      const [moved] = tracks.splice(from, 1);
+      tracks.splice(to, 0, moved);
+      if (!playlistId.startsWith("local_")) {
+        void api<any>(`/library/playlists/${playlistId}/tracks`, {
+          method: "PUT",
+          body: JSON.stringify({ track_ids: tracks.map(t => String(t.id)) }),
+        });
+      }
+      return { ...pl, tracks };
+    }));
   }, []);
 
   /** Writes profile edits to vibra_user_profile and mirrors them into UI state. */
@@ -2952,6 +3102,7 @@ export default function App() {
     openTrackOptions: setTrackOptionsTrack,
     addPlaylist,
     addTrackToPlaylist,
+    reorderPlaylist,
     updateProfile,
   };
 
