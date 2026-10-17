@@ -2313,8 +2313,10 @@ export default function App() {
     return () => window.removeEventListener("hashchange", applyHash);
   }, [navigate]);
 
-  // Playback state
-  const [currentTrack, setCurrentTrack]   = useState<Track | null>(null);
+  // Playback state — the player always opens on the most recently played song.
+  const [currentTrack, setCurrentTrack]   = useState<Track | null>(
+    () => (getHistory()[0] as unknown as Track) ?? null,
+  );
   const [isPlaying, setIsPlaying]         = useState(false);
   const [progress, setProgress]           = useState(0);
   const [elapsed, setElapsed]             = useState(0);
