@@ -52,7 +52,7 @@ import {
 } from "./services/devices";
 import { loginUser, registerUser, logoutUser } from "./services/auth";
 import {
-  useApp, AppCtx, makeColors, fmtSec, cleanTitle, audioUrlFor, toTrackItem,
+  useApp, AppCtx, makeColors, fmtSec, fmtDur, cleanTitle, audioUrlFor, toTrackItem,
   fromApiTrack, mapAPITrack, mapAPIPlaylist, mapAPIAlbum, mapAPIArtist,
   ACCENT_OPTIONS, BROWSE_CATEGORIES, BG_PALETTE,
   type Screen, type Track, type PlaylistItem, type AlbumItem, type ArtistItem,
@@ -825,6 +825,7 @@ function PlaylistScreen({ item }: { item: PlaylistItem }) {
   }, [item.id]);
 
   const tracks = fullPlaylist.tracks || [];
+  const totalSec = tracks.reduce((sum, t) => sum + (t.durationSec ?? 0), 0);
 
   return (
     <div style={{ flex: 1, overflowY: "auto", scrollbarWidth: "none", paddingBottom: 32 }}>
@@ -848,7 +849,7 @@ function PlaylistScreen({ item }: { item: PlaylistItem }) {
           {fullPlaylist.description && <p style={{ fontSize: 13, color: C.muted, margin: "0 0 6px" }}>{fullPlaylist.description}</p>}
           <div style={{ fontSize: 12, color: C.muted }}>
             {fullPlaylist.creator && <span>{fullPlaylist.creator} · </span>}
-            <span>{fullPlaylist.trackCount} songs</span>
+            <span>{fullPlaylist.trackCount} songs{totalSec > 0 ? ` · ${fmtDur(totalSec)}` : ""}</span>
           </div>
         </div>
       </div>
@@ -1262,9 +1263,9 @@ function ProfileScreen() {
             <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: "0 0 12px" }}>Listening stats</h2>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
               {[
-                [String(recentTracks.length), "Recent plays"],
-                [String(uniqueArtists),       "Artists heard"],
-                [String(likedTrackIds.size),  "Liked tracks"],
+                [user.stats?.weeklyMinutes ?? "0m",  "Listened this week"],
+                [String(uniqueArtists),              "Artists discovered"],
+                [String(likedTrackIds.size),         "Liked tracks"],
               ].map(([val, label]) => (
                 <div key={label} style={{ background: C.pane, border: `1px solid ${C.border}`, borderRadius: 12, padding: "16px 14px", textAlign: "center" }}>
                   <div style={{ fontSize: 22, fontWeight: 700, color: C.accent }}>{val}</div>

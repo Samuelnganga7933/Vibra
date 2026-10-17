@@ -105,9 +105,9 @@ export function DownloadsView({ tracks = [], onPlay, onSync, colors }: Downloads
         <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 180 }}>
           <HardDrive size={16} color={C.accent} aria-hidden />
           <div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Offline Storage</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Downloads</div>
             <div style={{ fontSize: 12, color: C.muted }}>
-              {items.length} track{items.length === 1 ? "" : "s"} in Cached Audio
+              {items.length} track{items.length === 1 ? "" : "s"} on this device
             </div>
           </div>
         </div>
@@ -153,7 +153,7 @@ export function DownloadsView({ tracks = [], onPlay, onSync, colors }: Downloads
               opacity: items.length > 0 ? 1 : 0.5,
             }}
           >
-            <Trash2 size={13} aria-hidden /> Clear Offline Cache
+            <Trash2 size={13} aria-hidden /> Clear downloads
           </button>
         </div>
       </div>
@@ -279,7 +279,7 @@ export function DownloadsView({ tracks = [], onPlay, onSync, colors }: Downloads
         <div
           role="dialog"
           aria-modal="true"
-          aria-label="Clear offline cache"
+          aria-label="Clear downloads"
           style={{
             position: "fixed",
             inset: 0,
@@ -328,7 +328,7 @@ export function DownloadsView({ tracks = [], onPlay, onSync, colors }: Downloads
               </div>
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 17, fontWeight: 700, color: C.text }}>
-                  Clear offline cache?
+                  Clear downloads?
                 </div>
                 <div style={{ fontSize: 13, color: C.muted, lineHeight: 1.6, marginTop: 6 }}>
                   This removes all {items.length} locally stored track
@@ -390,7 +390,7 @@ export function DownloadsView({ tracks = [], onPlay, onSync, colors }: Downloads
                   cursor: "pointer",
                 }}
               >
-                Clear cache
+                Clear downloads
               </button>
             </div>
           </div>

@@ -7,7 +7,7 @@ class Stats(BaseModel):
     following: int = 0
     followers: int = 0
     playlists: int = 0
-    weeklyHours: str = "0h"
+    weeklyMinutes: str = "0m"
     tracksLiked: int = 0
     topArtists: int = 0
 

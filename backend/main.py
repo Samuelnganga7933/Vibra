@@ -282,7 +282,7 @@ def _playlist_out(db: Session, playlist: Playlist) -> PlaylistOut:
     )
 
 
-def _weekly_hours(db: Session, user_id: str) -> str:
+def _weekly_minutes(db: Session, user_id: str) -> str:
     since = datetime.now(timezone.utc) - timedelta(days=7)
     total_ms = db.scalar(
         select(func.coalesce(func.sum(PlayHistory.duration_ms), 0)).where(
@@ -290,12 +290,16 @@ def _weekly_hours(db: Session, user_id: str) -> str:
             PlayHistory.played_at >= since,
         )
     )
-    hours = (total_ms or 0) / 3_600_000
+    minutes = (total_ms or 0) / 60_000
+    if minutes == 0:
+        return "0m"
+    if minutes < 1:
+        return "<1m"
+    total_min = int(round(minutes))
+    hours, mins = divmod(total_min, 60)
     if hours == 0:
-        return "0h"
-    if hours < 1:
-        return "<1h"
-    return f"{hours:.0f}h"
+        return f"{mins}m"
+    return f"{hours}h {mins}m" if mins else f"{hours}h"
 
 
 @app.get("/auth/me", response_model=UserOut)
@@ -316,7 +320,7 @@ def read_me(user: User = Depends(get_token_user), db: Session = Depends(get_db))
         following=user.following,
         followers=user.followers,
         playlists=playlist_count or 0,
-        weeklyHours=_weekly_hours(db, user.id),
+        weeklyMinutes=_weekly_minutes(db, user.id),
         tracksLiked=liked_count or 0,
         topArtists=top_artists or 0,
     )

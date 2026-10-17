@@ -23,7 +23,7 @@ export interface User {
     following: number;
     followers: number;
     playlists: number;
-    weeklyHours: string;
+    weeklyMinutes: string;
     tracksLiked: number;
     topArtists: number;
   };
@@ -288,6 +288,16 @@ export const useApp = () => useContext(AppCtx);
 
 // ─── Mappers ──────────────────────────────────────────────────────────────────
 export const fmtSec = (s: number) => `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, "0")}`;
+
+/** Long-form duration — "73m" under an hour, "1h 13m" after. */
+export const fmtDur = (totalSec: number): string => {
+  if (!Number.isFinite(totalSec) || totalSec <= 0) return "0m";
+  const totalMin = Math.round(totalSec / 60);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  if (h === 0) return `${m}m`;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
+};
 
 /**
  * Strips noisy catalogue suffixes — "(Official Video)", "(Official Audio)",
