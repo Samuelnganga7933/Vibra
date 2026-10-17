@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { AlertCircle, ArrowRight, Eye, EyeOff, Heart } from "lucide-react";
+import { toast } from "sonner";
 import { useApp } from "../context";
 
 /**
@@ -60,7 +61,7 @@ export function AuthScreen({ mode }: { mode: "login" | "signup" }) {
           <div style={{ fontSize: 14, color: C.muted, textAlign: "center", lineHeight: 1.55 }}>
             {isSignup
               ? "Save your music, keep your queue, play on any device."
-              : "Sign in to pick up your playlists and listening history."}
+              : "Log in to pick up where you left off."}
           </div>
         </div>
 
@@ -102,6 +103,15 @@ export function AuthScreen({ mode }: { mode: "login" | "signup" }) {
             </div>
           </label>
 
+          {!isSignup && (
+            <div style={{ textAlign: "right", marginTop: -4 }}>
+              <button type="button" onClick={() => toast.info("Password reset isn't set up yet — create a new account if you've lost access.")}
+                style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: C.muted, fontSize: 12.5, fontWeight: 600, fontFamily: "inherit" }}>
+                Forgot password?
+              </button>
+            </div>
+          )}
+
           {error && (
             <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: C.accent }}>
               <AlertCircle size={15} style={{ flexShrink: 0 }} />
@@ -139,6 +149,10 @@ export function AuthScreen({ mode }: { mode: "login" | "signup" }) {
           }}>
             Keep browsing without an account
           </button>
+        </div>
+
+        <div style={{ textAlign: "center", marginTop: 28, fontSize: 12, color: C.dim, letterSpacing: 0.2 }}>
+          Your music, wherever you play.
         </div>
       </div>
     </div>
