@@ -38,7 +38,7 @@ class User(Base):
     top_artists: Mapped[int] = mapped_column(Integer, default=0)
 
     theme: Mapped[str] = mapped_column(String(16), default="dark")
-    accent: Mapped[str] = mapped_column(String(16), default="#E8334F")
+    accent: Mapped[str] = mapped_column(String(16), default="#1ED760")
     audio_quality: Mapped[str] = mapped_column(String(16), default="high")
     normalize_volume: Mapped[bool] = mapped_column(Boolean, default=True)
     autoplay: Mapped[bool] = mapped_column(Boolean, default=True)

@@ -17,7 +17,7 @@ export function AuthScreen({ mode }: { mode: "login" | "signup" }) {
   const [error, setError] = useState<string | null>(null);
 
   const isSignup = mode === "signup";
-  const canSubmit = email.trim().length > 3 && password.length >= 6 && (!isSignup || name.trim().length > 1);
+  const canSubmit = email.trim().length > 3 && password.length >= 8 && (!isSignup || name.trim().length > 1);
 
   const switchMode = () => {
     setError(null);
@@ -86,7 +86,7 @@ export function AuthScreen({ mode }: { mode: "login" | "signup" }) {
                 type={reveal ? "text" : "password"}
                 value={password}
                 onChange={e => setPassword(e.target.value)}
-                placeholder={isSignup ? "At least 6 characters" : "Your password"}
+                placeholder={isSignup ? "At least 8 characters" : "Your password"}
                 autoComplete={isSignup ? "new-password" : "current-password"}
                 style={{ ...inputStyle, paddingRight: 46 }}
               />

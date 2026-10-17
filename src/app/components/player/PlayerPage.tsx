@@ -1,11 +1,10 @@
 import React, { useEffect, useRef } from "react";
-import { ChevronDown, Heart, ListMusic, Mic2, MoreHorizontal } from "lucide-react";
+import { ChevronDown, Heart, ListMusic, MoreHorizontal } from "lucide-react";
 import { useApp, fmtSec } from "../../context";
-import { LyricsPanel } from "./LyricsPanel";
 import { CoverArt } from "../CoverArt";
 
 /**
- * Full-screen player — artwork, metadata, seek and context (queue/lyrics).
+ * Full-screen player — artwork, metadata, seek and queue context.
  * Transport controls live only in the bottom bar, which stays visible below
  * this overlay, so nothing is duplicated here.
  */
@@ -13,8 +12,8 @@ export function PlayerPage() {
   const {
     C, currentTrack, progress, elapsed, audioDuration, handleSeek,
     likedTrackIds, toggleLike, queue, playTrack,
-    panelTab, openPanel, setPlayerPageOpen,
-    lyrics, plainLyrics, lyricsLoading, uiState, openTrackOptions,
+    openPanel, setPlayerPageOpen,
+    openTrackOptions,
   } = useApp();
   const scrubRef = useRef<HTMLDivElement | null>(null);
 
@@ -26,7 +25,6 @@ export function PlayerPage() {
 
   if (!currentTrack) return null;
   const isLiked = likedTrackIds.has(currentTrack.id);
-  const tab: "queue" | "lyrics" = panelTab === "lyrics" ? "lyrics" : "queue";
   const total = audioDuration > 0 ? audioDuration : currentTrack.durationSec ?? 0;
 
   const seekFromEvent = (clientX: number) => {
@@ -114,21 +112,10 @@ export function PlayerPage() {
             }}>
               <ListMusic size={14} /> Queue
             </button>
-            {uiState.hasLyrics && (
-              <button onClick={() => openPanel("lyrics")} style={{
-                flex: 1, height: 34, borderRadius: 9, border: "none", cursor: "pointer",
-                background: tab === "lyrics" ? C.surf : "transparent",
-                color: tab === "lyrics" ? C.text : C.muted, fontSize: 12.5, fontWeight: 700,
-                display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7,
-              }}>
-                <Mic2 size={14} /> Lyrics
-              </button>
-            )}
           </div>
 
           <div style={{ flex: 1, minHeight: 0, overflowY: "auto", scrollbarWidth: "none", padding: "12px 14px 16px" }}>
-            {tab === "queue" ? (
-              queue.length > 0 ? (
+            {queue.length > 0 ? (
                 queue.map((t, i) => (
                   <div key={`${t.id}-${i}`} role="button" tabIndex={0}
                     onClick={() => playTrack(t, queue)}
@@ -153,10 +140,7 @@ export function PlayerPage() {
                 <div style={{ textAlign: "center", color: C.muted, fontSize: 13.5, padding: "28px 8px", lineHeight: 1.6 }}>
                   Play an album or playlist to fill your queue.
                 </div>
-              )
-            ) : (
-              <LyricsPanel lyrics={lyrics} plain={plainLyrics} loading={lyricsLoading} elapsed={elapsed} />
-            )}
+              )}
           </div>
         </div>
       </div>

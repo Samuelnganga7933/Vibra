@@ -4,7 +4,7 @@ import React, {
 import {
   Home, Search, Compass, Library, Heart,
   Shuffle, SkipBack, SkipForward, Repeat2, Repeat1, Volume2, VolumeX,
-  Mic2, Play, Pause, Settings, ChevronLeft, ChevronRight, ChevronDown,
+  Play, Pause, Settings, ChevronLeft, ChevronRight, ChevronDown,
   MoreHorizontal, Plus, Download, Check, X, LogOut, Music2,
   Eye, EyeOff, ArrowRight, Sparkles, HardDrive, RefreshCw,
   ListMusic, Headphones, MonitorSpeaker, Smartphone, Speaker,
@@ -39,7 +39,6 @@ import {
 } from "./services/store";
 import {
   searchTracks,
-  fetchLyrics as fetchLyricsFromApi,
 } from "./services/api";
 import { bffJson, BFF_BASE, isSignedIn } from "./services/bff";
 import { sendEvent, isHistoryPaused, setHistoryPaused as persistHistoryPaused } from "./services/events";
@@ -56,7 +55,7 @@ import {
   fromApiTrack, mapAPITrack, mapAPIPlaylist, mapAPIAlbum, mapAPIArtist,
   ACCENT_OPTIONS, BROWSE_CATEGORIES, BG_PALETTE,
   type Screen, type Track, type PlaylistItem, type AlbumItem, type ArtistItem,
-  type LyricLine, type LibTab, type Colors, type User, type RepeatMode,
+  type LibTab, type Colors, type User, type RepeatMode,
   type PanelTab, type AppError, type AppCtxType, type UiState,
 } from "./context";
 import { ImageWithFallback } from "./components/ui/ImageWithFallback";
@@ -65,7 +64,6 @@ import { UiThemeContext } from "./components/ui/ui-theme";
 import { TrackCard, AlbumCard, PlaylistItemCard } from "./components/ui/cards";
 import { DownloadsView } from "./components/vibra/DownloadsView";
 import { CoverArt } from "./components/CoverArt";
-import { LyricsPanel } from "./components/player/LyricsPanel";
 import { PlayerPage } from "./components/player/PlayerPage";
 import { ErrorScreen } from "./screens/ErrorScreen";
 import { AuthScreen } from "./screens/AuthScreen";
@@ -216,6 +214,8 @@ function TrackRow({ track, index, queue, showLike = false, sourceShelfId }: { tr
 // ─── HomeScreen ───────────────────────────────────────────────────────────────
 function HomeScreen() {
   const { C, navigate, playTrack, shelves, homeLoading, hiddenIds, hideItem, user, openTrackOptions } = useApp();
+  const [category, setCategory] = useState("All");
+  const categories = ["All", "Music", "Podcasts", "Audiobooks"];
 
   const now = new Date();
   const h = now.getHours();
@@ -330,11 +330,36 @@ function HomeScreen() {
 
   return (
     <div style={{ flex: 1, overflowY: "auto", scrollbarWidth: "none", paddingBottom: 32 }}>
-      <div style={{ padding: "28px 28px 0" }}>
+      <div style={{ position: "sticky", top: 0, zIndex: 3, display: "flex", alignItems: "center", gap: 14, padding: "14px 28px", background: `${C.pane}f2`, borderBottom: `1px solid ${C.border}`, backdropFilter: "blur(14px)" }}>
+        <button onClick={() => navigate({ id: "search" })} aria-label="Search music"
+          style={{ flex: 1, maxWidth: 520, height: 42, display: "flex", alignItems: "center", gap: 10, padding: "0 14px", borderRadius: 999, border: `1px solid ${C.border}`, background: C.surf, color: C.muted, cursor: "pointer", textAlign: "left", fontSize: 13.5, fontWeight: 500 }}>
+          <Search size={17} />
+          <span style={{ flex: 1 }}>What do you want to play?</span>
+          <span style={{ fontSize: 11, color: C.dim, border: `1px solid ${C.border}`, borderRadius: 6, padding: "2px 6px" }}>⌘ShiftL</span>
+        </button>
+        <div style={{ flex: 1 }} />
+        {user && <button onClick={() => navigate({ id: "profile" })} aria-label="Open profile"
+          style={{ display: "flex", alignItems: "center", gap: 9, border: "none", background: "transparent", color: C.text, cursor: "pointer", minWidth: 0 }}>
+          <span style={{ width: 32, height: 32, borderRadius: "50%", display: "grid", placeItems: "center", background: C.accent, color: C.bg, fontSize: 11, fontWeight: 800, overflow: "hidden" }}>
+            {user.avatarUrl ? <img src={user.avatarUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : user.initials}
+          </span>
+          <span style={{ maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 13, fontWeight: 700 }}>{user.name}</span>
+        </button>}
+      </div>
+
+      <div style={{ padding: "26px 28px 0" }}>
         <div style={{ fontSize: 12, fontWeight: 500, color: C.muted, marginBottom: 4 }}>{dayStr}</div>
         <h1 style={{ fontSize: 28, fontWeight: 800, color: C.text, margin: 0, lineHeight: 1.2, letterSpacing: -0.5 }}>
           {greeting}{user ? `, ${user.name.split(" ")[0]}` : ""}
         </h1>
+        <div style={{ display: "flex", gap: 8, overflowX: "auto", scrollbarWidth: "none", marginTop: 18, paddingBottom: 2 }}>
+          {categories.map(item => (
+            <button key={item} onClick={() => setCategory(item)}
+              style={{ height: 34, padding: "0 15px", borderRadius: 999, border: `1px solid ${category === item ? "transparent" : C.border}`, background: category === item ? C.text : "transparent", color: category === item ? C.bg : C.muted, cursor: "pointer", whiteSpace: "nowrap", fontSize: 13, fontWeight: 700 }}>
+              {item}
+            </button>
+          ))}
+        </div>
       </div>
 
       {homeLoading ? (
@@ -935,7 +960,7 @@ function SettingsScreen() {
               } />
           )}
           <Row label="Subscription"
-            sub={user ? `${user.subscription === "premium" ? "Vibra Premium" : "Free"} plan` : "No account connected"}
+            sub={user ? `${user.subscription === "premium" ? "Vibra Premium" : "Free"} plan` : "Sign in to manage your plan"}
             onClick={() => toast("Manage subscription")} last
             right={user?.subscription === "premium"
               ? <div style={{ height: 24, padding: "0 10px", borderRadius: 12, background: C.accent + "33", color: C.accent, fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center" }}>PREMIUM</div>
@@ -1081,7 +1106,7 @@ function SettingsScreen() {
 
         <Section title="About">
           <Row label="Connection"
-            sub={conn === "online" ? "Audio nodes online" : conn === "degraded" ? "Weak signal — using cached content" : "Offline — downloaded tracks still play"}
+            sub={conn === "online" ? "Streaming is ready" : conn === "degraded" ? "A few features may be limited" : "Offline — downloaded tracks still play"}
             right={<div style={{ width: 8, height: 8, borderRadius: "50%", background: conn === "online" ? "#34C759" : conn === "degraded" ? "#FF9F0A" : "#E5484D", flexShrink: 0 }} />} />
           <Row label="Version" sub="Vibra 2.1.0" right={<span style={{ fontSize: 13, color: C.accent, fontWeight: 600 }}>Latest</span>} />
           <Row label="Terms of service" onClick={() => toast("Opening terms…")} right={<ChevronRight size={16} color={C.muted} />} />
@@ -1189,7 +1214,7 @@ function ProfileScreen() {
         </>
       ) : (
         <div style={{ padding: "24px 28px 0" }}>
-          <EmptyState title="Not signed in" sub="Sign in to sync your library, likes, and listening history across devices." action={
+          <EmptyState title="Make Vibra yours" sub="Sign in to keep your library, likes, and listening history across devices." action={
             <button onClick={() => navigate({ id: "auth", mode: "login" })}
               style={{ height: 40, padding: "0 20px", borderRadius: 20, border: "none", background: C.accent, color: C.bg, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
               Sign in
@@ -1578,13 +1603,13 @@ function LeftSidebar() {
 // ─── RightPanel ────────────────────────────────────────────────────────────────
 function RightPanel() {
   const {
-    C, currentTrack, isPlaying, playTrack, lyrics, plainLyrics, lyricsLoading, elapsed,
+    C, currentTrack, isPlaying, playTrack,
     likedTrackIds, toggleLike, queue, discoveryTracks, vibePool,
     moveQueueItem, removeFromQueue, openTrackOptions,
     panelTab, openPanel, uiState, setPlayerPageOpen, outputDevice,
   } = useApp();
 
-  const tab: PanelTab = panelTab === "lyrics" && uiState.hasLyrics ? "lyrics" : (panelTab ?? "nowplaying");
+  const tab: PanelTab = panelTab ?? "nowplaying";
   const isLiked = currentTrack ? likedTrackIds.has(currentTrack.id) : false;
   const queued = queue;
   // The suggested continuation prefers vibe matches (recent artists) over the
@@ -1597,7 +1622,6 @@ function RightPanel() {
   const tabs: { id: PanelTab; label: string }[] = [
     { id: "nowplaying", label: "Now playing" },
     { id: "queue", label: "Queue" },
-    ...(uiState.hasLyrics ? [{ id: "lyrics" as PanelTab, label: "Lyrics" }] : []),
   ];
 
   return (
@@ -1732,12 +1756,6 @@ function RightPanel() {
         </div>
       )}
 
-      {tab === "lyrics" && (
-        <div style={{ flex: 1, overflowY: "auto", scrollbarWidth: "none", padding: "16px 20px 24px" }}>
-          {currentTrack && <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 10 }}>{currentTrack.title} — {currentTrack.artist}</div>}
-          <LyricsPanel lyrics={lyrics} plain={plainLyrics} loading={lyricsLoading} elapsed={elapsed} />
-        </div>
-      )}
     </div>
   );
 }
@@ -1831,11 +1849,6 @@ function PlayerBar() {
             <ListMusic size={16} />
           </button>
         )}
-        {uiState.hasLyrics && (
-          <button onClick={() => togglePanel("lyrics")} aria-label="Lyrics" style={iconBtn(panelTab === "lyrics")}>
-            <Mic2 size={16} />
-          </button>
-        )}
         {uiState.isPlaying && (
           <button onClick={() => { setShowDevices(v => !v); refreshDevices(true); }} aria-label="Choose output device"
             style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 30, padding: "0 10px", borderRadius: 999, background: showDevices ? C.surf : "none", border: "none", cursor: "pointer", color: C.muted, fontSize: 11.5, fontWeight: 600, maxWidth: 170 }}>
@@ -1879,9 +1892,7 @@ function PlayerBar() {
 // ─── MobileLayout ──────────────────────────────────────────────────────────────
 function MobileLayout() {
   const { C, screen, navigate, currentTrack, isPlaying, togglePlay, progress,
-    lyrics, plainLyrics, lyricsLoading, elapsed, uiState, errorState,
-    playNext, playPrev } = useApp();
-  const [lyricsOpen, setLyricsOpen] = useState(false);
+    uiState, errorState } = useApp();
 
   const TABS = [
     { id: "home",     label: "Home",     Icon: Home },
@@ -1914,21 +1925,13 @@ function MobileLayout() {
 
       {currentTrack && (
         <div
-          style={{ margin: "0 8px 6px", background: C.pane, borderRadius: 16, padding: "10px 12px 14px", position: "relative", cursor: "pointer", border: `1px solid ${C.border}`, flexShrink: 0 }}
-          onClick={() => setLyricsOpen(true)}>
+          style={{ margin: "0 8px 6px", background: C.pane, borderRadius: 16, padding: "10px 12px 14px", position: "relative", border: `1px solid ${C.border}`, flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <CoverArt bg={currentTrack.bg} imageUrl={currentTrack.imageUrl} size={44} radius={10} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: 700, fontSize: 14, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentTrack.title}</div>
               <div style={{ fontSize: 12, color: C.muted }}>{currentTrack.artist}</div>
             </div>
-            {uiState.hasLyrics && (
-              <button onClick={e => { e.stopPropagation(); setLyricsOpen(o => !o); }}
-                aria-label="Lyrics"
-                style={{ width: 40, height: 40, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: lyricsOpen ? C.accent : C.muted }}>
-                <Mic2 size={18} />
-              </button>
-            )}
             <button onClick={e => { e.stopPropagation(); togglePlay(); }}
               style={{ width: 40, height: 40, borderRadius: "50%", background: C.accent, border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.bg }}>
               {isPlaying ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" />}
@@ -1949,40 +1952,6 @@ function MobileLayout() {
           </button>
         ))}
       </nav>
-
-      {lyricsOpen && currentTrack && (
-        <div style={{ position: "absolute", inset: 0, background: C.bg, zIndex: 100, display: "flex", flexDirection: "column" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "20px 20px 0", flexShrink: 0 }}>
-            <button onClick={() => setLyricsOpen(false)}
-              style={{ width: 36, height: 36, borderRadius: "50%", background: C.surf, border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.text }}>
-              <ChevronLeft size={20} />
-            </button>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 700, fontSize: 16, color: C.text }}>{currentTrack.title}</div>
-              <div style={{ fontSize: 13, color: C.muted }}>{currentTrack.artist}</div>
-            </div>
-          </div>
-          <div style={{ display: "flex", justifyContent: "center", padding: "20px 40px" }}>
-            <div style={{ width: 180, height: 180, borderRadius: 18, background: currentTrack.bg, overflow: "hidden", boxShadow: `0 16px 48px ${currentTrack.bg}88` }}>
-              {currentTrack.imageUrl && <img src={currentTrack.imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
-            </div>
-          </div>
-          <div style={{ flex: 1, overflowY: "auto", padding: "0 28px 8px", scrollbarWidth: "none" }}>
-            <LyricsPanel lyrics={lyrics} plain={plainLyrics} loading={lyricsLoading} elapsed={elapsed} />
-          </div>
-          <div style={{ padding: "12px 20px 20px", borderTop: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
-            <button onClick={playPrev} style={{ background: "none", border: "none", cursor: "pointer", color: C.muted }}><SkipBack size={24} /></button>
-            <button onClick={togglePlay}
-              style={{ width: 56, height: 56, borderRadius: "50%", background: C.accent, border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.bg }}>
-              {isPlaying ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" />}
-            </button>
-            <button onClick={playNext} style={{ background: "none", border: "none", cursor: "pointer", color: C.muted }}><SkipForward size={24} /></button>
-            <div style={{ flex: 1, height: 4, borderRadius: 2, background: C.border }}>
-              <div style={{ width: `${progress * 100}%`, height: "100%", background: C.accent, borderRadius: 2, transition: "width .5s linear" }} />
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -2031,11 +2000,6 @@ export default function App() {
   const [repeatMode, setRepeatMode]   = useState<RepeatMode>("off");
   const [volume, setVolumeState]      = useState(1);
 
-  // Lyrics
-  const [lyrics, setLyrics]                 = useState<LyricLine[]>([]);
-  const [plainLyrics, setPlainLyrics]       = useState("");
-  const [lyricsLoading, setLyricsLoading]   = useState(false);
-
   // User & library
   const [user, setUser]                             = useState<User | null>(null);
   const [userLoading, setUserLoading]               = useState(true);
@@ -2063,7 +2027,7 @@ export default function App() {
 
   // Settings
   const [theme, setTheme]                               = useState("dark");
-  const [accent, setAccent]                             = useState(() => getUserProfile()?.accentColor ?? "#E8334F");
+  const [accent, setAccent]                             = useState(() => getUserProfile()?.accentColor ?? "#1ED760");
   const [audioQuality, setAudioQuality]                 = useState(() => getUserProfile()?.audioQuality ?? "high");
   const [normalizeVolume, setNormalizeVolume]           = useState(true);
   const [autoplay, setAutoplay]                         = useState(true);
@@ -2301,18 +2265,6 @@ export default function App() {
     }
     return () => clearInterval(timerRef.current);
   }, [isPlaying]);
-
-  // ── Lyrics ────────────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!currentTrack) return;
-    let cancelled = false;
-    setLyrics([]); setPlainLyrics(""); setLyricsLoading(true);
-    fetchLyricsFromApi(currentTrack.title, currentTrack.artist).then(r => {
-      if (cancelled) return;
-      setLyrics(r.synced); setPlainLyrics(r.plain); setLyricsLoading(false);
-    });
-    return () => { cancelled = true; };
-  }, [currentTrack?.id]);
 
   // ── Playback engines ─────────────────────────────────────────────────────────
   /** Engine-level failures: only report them when the failing engine is the live one. */
@@ -2788,13 +2740,12 @@ export default function App() {
   const uiState: UiState = useMemo(() => ({
     hasPlayback,
     hasQueue: queue.length >= 2,
-    hasLyrics: lyrics.length > 0 || plainLyrics.trim().length > 0,
     hasHistory: recentTracks.length > 0 || history.length > 0,
     isPlaying,
     deviceCount: Math.max(devices.length, 1),
     signedIn: isSignedIn(),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [authVersion, hasPlayback, queue.length, lyrics.length, plainLyrics,
+  }), [authVersion, hasPlayback, queue.length,
        recentTracks.length, history.length, isPlaying, devices.length]);
 
   const ctxValue: AppCtxType = {
@@ -2805,7 +2756,6 @@ export default function App() {
     addToQueue, playNextInQueue, moveQueueItem, removeFromQueue, openCreatePlaylist,
     repeatMode, cycleRepeat: () => setRepeatMode(m => m === "off" ? "one" : m === "one" ? "all" : "off"),
     volume, setVolume,
-    lyrics, plainLyrics, lyricsLoading,
     uiState, panelTab, openPanel, togglePanel,
     playerPageOpen, setPlayerPageOpen,
     errorState, showError, clearError,

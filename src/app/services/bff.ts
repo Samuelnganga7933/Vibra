@@ -2,7 +2,7 @@
  * bff.ts — client for the Vibra user BFF (backend/main.py).
  *
  * The audio engine (api.ts) and the user backend are separate services:
- * audio/search/lyrics go to VITE_API_BASE_URL, everything account- and
+ * audio/search goes to VITE_API_BASE_URL, everything account- and
  * history-shaped goes here. All calls run through safeFetch, so an unreachable
  * BFF degrades to `null`/`false` quietly — never a crash.
  */
