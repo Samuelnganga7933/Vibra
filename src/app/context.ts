@@ -174,6 +174,8 @@ export interface AppCtxType {
   panelTab: PanelTab | null;
   openPanel: (tab: PanelTab) => void;
   togglePanel: (tab: PanelTab) => void;
+  devicesOpen: boolean;
+  setDevicesOpen: (open: boolean) => void;
   playerPageOpen: boolean;
   setPlayerPageOpen: (open: boolean) => void;
   errorState: AppError | null;

@@ -215,12 +215,41 @@ function TrackRow({ track, index, queue, showLike = false, sourceShelfId }: { tr
 
 // ─── HomeScreen ───────────────────────────────────────────────────────────────
 function HomeScreen() {
-  const { C, navigate, playTrack, shelves, homeLoading, hiddenIds, hideItem, user, openTrackOptions } = useApp();
+  const { C, navigate, playTrack, shelves, homeLoading, hiddenIds, hideItem, user, openTrackOptions, uiState, openCreatePlaylist } = useApp();
 
   const now = new Date();
   const h = now.getHours();
   const greeting = h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
   const dayStr = now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+
+  // Filter chips (design: All / Music / Made for you / New) + per-shelf "more".
+  const [chip, setChip] = useState("All");
+  const [moreShelves, setMoreShelves] = useState<Record<string, HomeItem[]>>({});
+  const CHIPS = ["All", "Music", "Made for you", "New"] as const;
+  const chipMatch = (s: HomeShelf) =>
+    chip === "All" ? true
+    : chip === "Music" ? (s.type === "shelf" || s.type === "recent")
+    : chip === "Made for you" ? (s.type === "jump_back_in" || s.type === "recent" || s.id.startsWith("because-"))
+    : s.id === "new-releases";
+
+  /** Extra items for a shelf ("See all" / "Show more") come from the live engine. */
+  const moreQuery = (s: HomeShelf): string | null =>
+    s.id.startsWith("because-") ? s.title.replace(/^Because you played\s*/i, "")
+    : s.id === "region-kenya" ? "popular in kenya"
+    : s.id === "trending-now" ? "trending music"
+    : s.id === "new-releases" ? "new releases"
+    : null;
+
+  const loadMore = async (shelf: HomeShelf) => {
+    const q = moreQuery(shelf);
+    if (!q) return;
+    const res = await searchTracks(q, 20);
+    const items: HomeItem[] = res.slice(0, 20).map((t, i) => {
+      const tr = fromApiTrack(t, i);
+      return { id: String(tr.id), title: tr.title, artist: tr.artist, imageUrl: tr.imageUrl, videoId: tr.videoId ?? String(tr.id), durationSec: tr.durationSec, bg: tr.bg };
+    });
+    setMoreShelves(prev => ({ ...prev, [shelf.id]: items }));
+  };
 
   /** Opens a shelf item: tracks play directly; seeded mixes resolve via search. */
   const openItem = async (item: HomeItem, shelf: HomeShelf) => {
@@ -313,13 +342,27 @@ function HomeScreen() {
   );
 
   const section = (shelf: HomeShelf) => {
-    const items = visible(shelf).slice(0, 10);
+    const base = visible(shelf);
+    const extra = (moreShelves[shelf.id] ?? []).filter(e => !base.some(b => b.id === e.id));
+    const items = [...base, ...extra].slice(0, 24);
     if (items.length === 0) return null;
+    const q = moreQuery(shelf);
+    const moreLabel = shelf.id.startsWith("because-") ? "Show more" : "See all";
     return (
       <section key={shelf.id} style={{ padding: "22px 28px 0" }}>
-        <div>
-          <h2 style={{ fontSize: 19, fontWeight: 800, color: C.text, margin: 0, letterSpacing: -0.3 }}>{shelf.title}</h2>
-          {shelf.subtitle && <div style={{ fontSize: 12.5, color: C.muted, marginTop: 3 }}>{shelf.subtitle}</div>}
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+          <div style={{ minWidth: 0 }}>
+            <h2 style={{ fontSize: 19, fontWeight: 800, color: C.text, margin: 0, letterSpacing: -0.3 }}>{shelf.title}</h2>
+            {shelf.subtitle && <div style={{ fontSize: 12.5, color: C.muted, marginTop: 3 }}>{shelf.subtitle}</div>}
+          </div>
+          {q && !moreShelves[shelf.id] && (
+            <button onClick={() => loadMore(shelf)}
+              style={{ background: "none", border: "none", cursor: "pointer", color: C.muted, fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", flexShrink: 0, padding: "4px 0" }}
+              onMouseEnter={e => (e.currentTarget.style.color = C.text)}
+              onMouseLeave={e => (e.currentTarget.style.color = C.muted)}>
+              {moreLabel}
+            </button>
+          )}
         </div>
         <div style={{ marginTop: 12 }}>
           {shelf.type === "mix_row" ? mixGrid(shelf, items) : shelf.type === "recent" ? rowList(shelf, items) : cardRow(shelf, items)}
@@ -330,19 +373,63 @@ function HomeScreen() {
 
   return (
     <div style={{ flex: 1, overflowY: "auto", scrollbarWidth: "none", paddingBottom: 32 }}>
-      <div style={{ padding: "28px 28px 0" }}>
-        <div style={{ fontSize: 12, fontWeight: 500, color: C.muted, marginBottom: 4 }}>{dayStr}</div>
-        <h1 style={{ fontSize: 28, fontWeight: 800, color: C.text, margin: 0, lineHeight: 1.2, letterSpacing: -0.5 }}>
-          {greeting}{user ? `, ${user.name.split(" ")[0]}` : ""}
-        </h1>
+      <div style={{ padding: "28px 28px 0", display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 16, flexWrap: "wrap" }}>
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 500, color: C.muted, marginBottom: 4 }}>{dayStr}</div>
+          <h1 style={{ fontSize: 28, fontWeight: 800, color: C.text, margin: 0, lineHeight: 1.2, letterSpacing: -0.5 }}>
+            {greeting}{user ? `, ${user.name.split(" ")[0]}` : ""}
+          </h1>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+          {CHIPS.map(l => (
+            <button key={l} onClick={() => setChip(l)}
+              style={{
+                border: "none", borderRadius: 999, padding: "9px 18px", fontSize: 13.5, fontWeight: 600,
+                fontFamily: "inherit", cursor: "pointer",
+                background: chip === l ? C.text : C.surf, color: chip === l ? C.pane : C.muted,
+                transition: "all .15s",
+              }}>
+              {l}
+            </button>
+          ))}
+        </div>
       </div>
+
+      {/* Get started — first-run cards from the design (signed out / fresh) */}
+      {!uiState.signedIn && !homeLoading && (
+        <section style={{ padding: "18px 28px 0" }}>
+          <h2 style={{ margin: "0 0 12px", fontSize: 19, fontWeight: 800, color: C.text }}>Get started</h2>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 320px))", gap: 12 }}>
+            <button onClick={() => navigate({ id: "search" })}
+              style={{ display: "flex", gap: 14, alignItems: "center", border: `1px solid ${C.border}`, background: C.pane, borderRadius: 14, padding: 16, textAlign: "left", color: C.text, cursor: "pointer", fontFamily: "inherit" }}>
+              <span style={{ width: 40, height: 40, borderRadius: "50%", background: `${C.accent}22`, color: C.accent, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <Search size={20} />
+              </span>
+              <span style={{ fontSize: 14 }}>
+                <b style={{ display: "block" }}>Search a song</b>
+                <span style={{ fontSize: 12, color: C.muted }}>Find anything and hit play</span>
+              </span>
+            </button>
+            <button onClick={() => openCreatePlaylist()}
+              style={{ display: "flex", gap: 14, alignItems: "center", border: `1px solid ${C.border}`, background: C.pane, borderRadius: 14, padding: 16, textAlign: "left", color: C.text, cursor: "pointer", fontFamily: "inherit" }}>
+              <span style={{ width: 40, height: 40, borderRadius: "50%", background: `${C.accent}22`, color: C.accent, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <Plus size={20} />
+              </span>
+              <span style={{ fontSize: 14 }}>
+                <b style={{ display: "block" }}>Make a playlist</b>
+                <span style={{ fontSize: 12, color: C.muted }}>Save songs in one place</span>
+              </span>
+            </button>
+          </div>
+        </section>
+      )}
 
       {homeLoading ? (
         <div style={{ display: "flex", gap: 14, padding: "26px 28px 0" }}>
           {[...Array(5)].map((_, i) => <CardSkeleton key={i} size={140} />)}
         </div>
       ) : shelves.length > 0 ? (
-        shelves.slice(0, 4).map(section)
+        shelves.filter(chipMatch).slice(0, 4).map(section)
       ) : (
         /* First run is never an empty room — one line, one action. */
         <div style={{ margin: "36px 28px 0", borderRadius: 18, border: `1px dashed ${C.border}`, background: C.surf, padding: "44px 28px", display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: 14 }}>
@@ -1424,7 +1511,7 @@ function ScreenView({ s }: { s: Screen }) {
 
 // ─── LeftSidebar ──────────────────────────────────────────────────────────────
 function LeftSidebar() {
-  const { C, screen, navigate, playlists, user, likedTrackIds, openCreatePlaylist, uiState } = useApp();
+  const { C, screen, navigate, playlists, user, likedTrackIds, openCreatePlaylist, uiState, devicesOpen, setDevicesOpen } = useApp();
 
   const NAV = [
     { id: "home",     label: "Home",     Icon: Home },
@@ -1570,6 +1657,11 @@ function LeftSidebar() {
             </button>
           </div>
         )}
+        <button onClick={() => setDevicesOpen(!devicesOpen)} aria-label="Devices"
+          style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, height: 38, padding: "0 12px", marginTop: 2, borderRadius: 10, border: "none", cursor: "pointer", background: devicesOpen ? C.surf : "transparent", color: devicesOpen ? C.text : C.muted, fontWeight: 600, fontSize: 13.5, textAlign: "left", transition: "all .15s" }}>
+          <Volume2 size={16} />
+          Devices
+        </button>
       </div>
     </div>
   );
@@ -1581,7 +1673,7 @@ function RightPanel() {
     C, currentTrack, isPlaying, playTrack, lyrics, plainLyrics, lyricsLoading, elapsed,
     likedTrackIds, toggleLike, queue, discoveryTracks, vibePool,
     moveQueueItem, removeFromQueue, openTrackOptions,
-    panelTab, openPanel, uiState, setPlayerPageOpen, outputDevice,
+    panelTab, openPanel, uiState, setPlayerPageOpen,
   } = useApp();
 
   const tab: PanelTab = panelTab === "lyrics" && uiState.hasLyrics ? "lyrics" : (panelTab ?? "nowplaying");
@@ -1594,6 +1686,13 @@ function RightPanel() {
     .filter(t => !queuedIds.has(String(t.id)))
     .slice(0, 8);
   const activeQueueIdx = currentTrack ? queued.findIndex(t => t.id === currentTrack.id) : -1;
+  // The track that plays after this one — from the queue when we're in it,
+  // otherwise the queue head.
+  const nextUp: Track | undefined = currentTrack
+    ? activeQueueIdx >= 0 && activeQueueIdx + 1 < queue.length
+      ? queue[activeQueueIdx + 1]
+      : queue.find(t => t.id !== currentTrack.id)
+    : undefined;
   const tabs: { id: PanelTab; label: string }[] = [
     { id: "nowplaying", label: "Now playing" },
     { id: "queue", label: "Queue" },
@@ -1649,10 +1748,26 @@ function RightPanel() {
                   </button>
                 )}
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, color: C.muted }}>
-                <Headphones size={13} style={{ flexShrink: 0 }} />
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Playing on {outputDevice.name}</span>
-              </div>
+              {/* NEXT UP — the design's continuation preview */}
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.14em", color: C.dim, marginTop: 16, marginBottom: 6 }}>NEXT UP</div>
+              {nextUp ? (
+                <div role="button" tabIndex={0}
+                  onClick={() => playTrack(nextUp, queue)}
+                  onKeyDown={e => e.key === "Enter" && playTrack(nextUp, queue)}
+                  style={{ display: "flex", alignItems: "center", gap: 12, padding: 6, borderRadius: 10, cursor: "pointer" }}
+                  onMouseEnter={e => (e.currentTarget.style.background = C.surf)}
+                  onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
+                  <CoverArt bg={nextUp.bg} imageUrl={nextUp.imageUrl} size={44} radius={8} />
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nextUp.title}</div>
+                    <div style={{ fontSize: 12, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nextUp.artist}</div>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ fontSize: 12.5, color: C.muted, lineHeight: 1.55, padding: "4px 6px" }}>
+                  Nothing queued — a vibe match keeps the music going when this ends.
+                </div>
+              )}
             </>
           ) : (
             <EmptyState title="Nothing playing yet" sub="Choose something from Home to start listening." />
@@ -1763,15 +1878,18 @@ function PlayerBar() {
 
   return (
     <div style={{ background: C.pane, display: "flex", alignItems: "center", padding: "0 16px", height: "100%", gap: 16, position: "relative", overflow: "hidden" }}>
-      {/* Left — cover/title open Now playing; heart */}
+      {/* Left — cover/title open the full player; heart */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 0 }}>
         {currentTrack && (
           <>
-            <button onClick={() => togglePanel("nowplaying")} aria-label="Open now playing panel"
-              style={{ padding: 0, border: "none", background: "none", cursor: "pointer", borderRadius: 10, overflow: "hidden", flexShrink: 0, display: "block", boxShadow: panelTab === "nowplaying" ? `0 0 0 2px ${C.accent}` : "none" }}>
+            <button onClick={() => setPlayerPageOpen(true)} aria-label="Open full-screen player"
+              style={{ padding: 0, border: "none", background: "none", cursor: "pointer", flexShrink: 0, display: "block", position: "relative", borderRadius: 10 }}>
               <CoverArt bg={currentTrack.bg} imageUrl={currentTrack.imageUrl} size={48} radius={10} />
+              <span style={{ position: "absolute", top: 3, right: 3, width: 20, height: 20, borderRadius: 6, background: "rgba(0,0,0,0.65)", display: "grid", placeItems: "center", color: "#fff", pointerEvents: "none" }}>
+                <ChevronUp size={12} />
+              </span>
             </button>
-            <button onClick={() => openPanel("nowplaying")}
+            <button onClick={() => setPlayerPageOpen(true)}
               style={{ minWidth: 0, flex: 1, background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer" }}>
               <div style={{ fontWeight: 700, fontSize: 14, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentTrack.title}</div>
               <div style={{ fontSize: 12, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentTrack.artist}</div>
@@ -2079,6 +2197,7 @@ export default function App() {
   // ── Contextual UI ─────────────────────────────────────────────────────────────
   /** Right panel — closed by default; the bar opens it per tab. */
   const [panelTab, setPanelTab] = useState<PanelTab | null>(null);
+  const [devicesOpen, setDevicesOpen] = useState(false);
   const [playerPageOpen, setPlayerPageOpen] = useState(false);
   /** Failure shown in the main area; shell/sidebar/bar stay intact. */
   const [errorState, setErrorState] = useState<AppError | null>(null);
@@ -2807,6 +2926,7 @@ export default function App() {
     volume, setVolume,
     lyrics, plainLyrics, lyricsLoading,
     uiState, panelTab, openPanel, togglePanel,
+    devicesOpen, setDevicesOpen,
     playerPageOpen, setPlayerPageOpen,
     errorState, showError, clearError,
     user, userLoading, login, register, logout,
@@ -2881,6 +3001,7 @@ export default function App() {
       <div className="hidden md:grid"
         style={{
           height: "100dvh",
+          position: "relative",
           gridTemplateColumns: "240px minmax(0,1fr) 320px",
           gridTemplateRows: uiState.hasPlayback ? "minmax(0,1fr) 88px" : "minmax(0,1fr)",
           gap: 12, padding: 12, background: C.bg,
@@ -2900,6 +3021,42 @@ export default function App() {
           <div style={{ gridColumn: "1 / -1", gridRow: "2", borderRadius: 18, overflow: "hidden", border: `1px solid ${C.border}`, minWidth: 0 }}>
             <PlayerBar />
           </div>
+        )}
+
+        {/* Connect to a device — popover above the player bar, per design */}
+        {devicesOpen && (
+          <>
+            <div onClick={() => setDevicesOpen(false)}
+              style={{ position: "fixed", inset: 0, zIndex: 34 }} />
+            <div style={{ position: "absolute", right: 24, bottom: uiState.hasPlayback ? 112 : 24, width: 340, background: C.pane, border: `1px solid ${C.border}`, borderRadius: 16, padding: 14, zIndex: 35, boxShadow: "0 20px 50px rgba(0,0,0,0.6)", display: "flex", flexDirection: "column", gap: 2 }}>
+              <div style={{ fontWeight: 800, fontSize: 16, color: C.text, padding: "6px 10px 8px" }}>Connect to a device</div>
+              {(devices.length > 0 ? devices : [outputDevice]).map(d => {
+                const active = d.id === outputDevice.id;
+                return (
+                  <button key={d.id} onClick={() => { selectOutput(d.id); setDevicesOpen(false); }}
+                    style={{ display: "flex", gap: 14, alignItems: "center", border: "none", background: "none", color: C.muted, borderRadius: 10, padding: 10, textAlign: "left", width: "100%", cursor: "pointer" }}>
+                    {d.kind === "headphones" ? <Headphones size={24} color={active ? C.accent : C.muted} /> : d.kind === "phone" ? <Smartphone size={24} color={active ? C.accent : C.muted} /> : d.kind === "speaker" ? <Speaker size={24} color={active ? C.accent : C.muted} /> : <MonitorSpeaker size={24} color={active ? C.accent : C.muted} />}
+                    <span style={{ fontSize: 14, minWidth: 0 }}>
+                      <b style={{ display: "block", color: active ? C.accent : C.text }}>{d.name}</b>
+                      {active ? (
+                        <span style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12, color: C.accent, fontWeight: 600 }}>
+                          <span style={{ display: "inline-flex", alignItems: "flex-end", gap: 1.5, height: 10 }}>
+                            {[6, 10, 7].map((hgt, i) => <span key={i} style={{ width: 2.5, height: hgt, borderRadius: 1, background: C.accent }} />)}
+                          </span>
+                          Listening here
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: 12, color: C.dim }}>{d.kind === "phone" ? "Vibra mobile app · Tap to play here" : d.kind === "speaker" ? "Cast · Tap to play here" : "Tap to play here"}</span>
+                      )}
+                    </span>
+                  </button>
+                );
+              })}
+              <div style={{ fontSize: 12, color: C.dim, padding: "8px 10px 2px", lineHeight: 1.5 }}>
+                Don't see your device? Open Vibra on it and sign in.
+              </div>
+            </div>
+          </>
         )}
       </div>
 
