@@ -83,3 +83,72 @@ class SettingsUpdate(BaseModel):
     notifFollowers: Optional[bool] = None
     shareListening: Optional[bool] = None
     shareData: Optional[bool] = None
+
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
+
+
+class RegisterIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=8, max_length=128)
+
+
+class LoginIn(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=1, max_length=128)
+
+
+class AuthOut(BaseModel):
+    token: str
+    user: UserOut
+
+
+class HistoryPauseIn(BaseModel):
+    paused: bool
+
+
+# ── Telemetry & home feed ─────────────────────────────────────────────────────
+
+
+class DeviceInfo(BaseModel):
+    type: str = "computer"
+    name: str = "This computer"
+
+
+class VibraEventIn(BaseModel):
+    type: Literal[
+        "play", "skip", "complete", "replay", "like", "unlike",
+        "add_to_playlist", "search", "not_interested",
+    ]
+    track_id: Optional[str] = None
+    title: Optional[str] = None
+    artist: Optional[str] = None
+    image: Optional[str] = None
+    position_ms: Optional[int] = None
+    source_shelf_id: Optional[str] = None
+    device: DeviceInfo = DeviceInfo()
+    ts: Optional[int] = None
+
+
+class HomeItemOut(BaseModel):
+    id: str
+    title: str
+    artist: Optional[str] = None
+    subtitle: Optional[str] = None
+    durationSec: Optional[int] = None
+    imageUrl: Optional[str] = None
+    videoId: Optional[str] = None
+    query: Optional[str] = None
+
+
+class HomeShelfOut(BaseModel):
+    id: str
+    type: Literal["jump_back_in", "mix_row", "shelf", "recent"]
+    title: str
+    subtitle: Optional[str] = None
+    items: list[HomeItemOut] = []
+
+
+class HomeOut(BaseModel):
+    shelves: list[HomeShelfOut] = []
