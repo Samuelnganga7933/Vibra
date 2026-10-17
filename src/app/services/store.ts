@@ -134,6 +134,12 @@ export function mergeHistory(tracks: StoredTrack[]): StoredTrack[] {
   return merged;
 }
 
+/** Empties the stored history (Settings → listening history reset). */
+export function clearHistory(): StoredTrack[] {
+  writeJSON(HISTORY_KEY, []);
+  return [];
+}
+
 function isStoredTrack(value: unknown): value is StoredTrack {
   if (!value || typeof value !== "object") return false;
   const t = value as Record<string, unknown>;
@@ -201,6 +207,9 @@ export function addTrackToPlaylist(playlistId: string, track: StoredTrack): Stor
     ...playlist,
     tracks: [track, ...playlist.tracks],
     trackCount: playlist.trackCount + 1,
+    // The playlist's cover is its first song's artwork (tracks are prepend-ordered).
+    imageUrl: track.imageUrl || playlist.imageUrl,
+    bg: track.bg || playlist.bg,
   };
   savePlaylist(updated);
   return updated;
