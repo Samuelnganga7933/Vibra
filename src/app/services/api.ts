@@ -27,6 +27,16 @@ export interface ApiTrack {
   streamUrl?: string;
 }
 
+export interface LyricLine {
+  time: number;
+  text: string;
+}
+
+export interface LyricsResult {
+  synced: LyricLine[];
+  plain: string;
+}
+
 // ─── Normalisation ────────────────────────────────────────────────────────────
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -165,6 +175,50 @@ export function getStreamUrl(videoId: string): string {
 /** Direct download URL for a track's video id. */
 export function getDownloadUrl(videoId: string): string {
   return `${API_BASE}/api/v1/tracks/download/${encodeURIComponent(String(videoId))}`;
+}
+
+// ─── LRC parsing ──────────────────────────────────────────────────────────────
+
+export function parseLrc(lrc: string): LyricLine[] {
+  if (!lrc) return [];
+  const lines: LyricLine[] = [];
+  for (const line of lrc.split(/\r?\n/)) {
+    const m = line.match(/^\[(\d+):(\d+(?:\.\d+)?)\](.*)/);
+    if (!m) continue;
+    const text = m[3].trim();
+    if (text) lines.push({ time: parseInt(m[1], 10) * 60 + parseFloat(m[2]), text });
+  }
+  return lines;
+}
+
+/**
+ * Fetches lyrics for a track. Returns `{ synced: [], plain: "" }` on any
+ * failure — the lyrics panel simply shows its calm empty copy.
+ */
+export async function fetchLyrics(title: string, artist: string): Promise<LyricsResult> {
+  const empty: LyricsResult = { synced: [], plain: "" };
+  const track = title.trim();
+  const who = artist.trim();
+  if (!track) return empty;
+
+  const params = new URLSearchParams({
+    track_name: track,
+    artist_name: who,
+    track,
+    artist: who,
+  });
+
+  const data = await safeJson<Record<string, unknown>>(
+    `${API_BASE}/api/v1/lyrics?${params.toString()}`,
+    { quiet: true },
+  );
+  if (!data) return empty;
+
+  const plain = asString(data.plainLyrics) ?? "";
+  const synced = parseLrc(asString(data.syncedLyrics) ?? "");
+
+  if (!plain && synced.length === 0) return empty;
+  return { synced, plain };
 }
 
 /** Search-term autocomplete; resolves to `[]` on any failure. */

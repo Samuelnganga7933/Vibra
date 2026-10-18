@@ -44,6 +44,7 @@ import {
 import {
   searchTracks,
   toApiTracks,
+  fetchLyrics as fetchLyricsFromApi,
 } from "./services/api";
 import { bffJson, BFF_BASE, isSignedIn, onSessionExpired } from "./services/bff";
 import { sendEvent, isHistoryPaused, setHistoryPaused as persistHistoryPaused } from "./services/events";
@@ -63,7 +64,7 @@ import {
   ACCENT_OPTIONS, BROWSE_CATEGORIES, BG_PALETTE,
   type Screen, type Track, type PlaylistItem, type AlbumItem, type ArtistItem,
   type LibTab, type Colors, type User, type RepeatMode,
-  type PanelTab, type AppError, type AppCtxType, type UiState,
+  type PanelTab, type AppError, type AppCtxType, type UiState, type LyricLine,
 } from "./context";
 import { ImageWithFallback } from "./components/ui/ImageWithFallback";
 import { UiThemeContext } from "./components/ui/ui-theme";
@@ -71,6 +72,7 @@ import { TrackCard, AlbumCard, PlaylistItemCard } from "./components/ui/cards";
 import { DownloadsView } from "./components/vibra/DownloadsView";
 import { CoverArt } from "./components/CoverArt";
 import { PlayerPage } from "./components/player/PlayerPage";
+import { LyricsPanel } from "./components/player/LyricsPanel";
 import { ErrorScreen } from "./screens/ErrorScreen";
 import { AuthScreen } from "./screens/AuthScreen";
 
@@ -1921,11 +1923,12 @@ function RightPanel() {
     likedTrackIds, toggleLike, queue, discoveryTracks, vibePool,
     moveQueueItem, removeFromQueue, openTrackOptions,
     panelTab, openPanel, uiState, setPlayerPageOpen,
+    lyrics, plainLyrics, lyricsLoading, elapsed,
   } = useApp();
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
 
-  const tab: PanelTab = panelTab ?? "nowplaying";
+  const tab: PanelTab = panelTab === "lyrics" && uiState.hasLyrics ? "lyrics" : (panelTab ?? "nowplaying");
   const isLiked = currentTrack ? likedTrackIds.has(currentTrack.id) : false;
   const queued = queue;
   // The suggested continuation prefers vibe matches (recent artists) over the
@@ -1945,6 +1948,7 @@ function RightPanel() {
   const tabs: { id: PanelTab; label: string }[] = [
     { id: "nowplaying", label: "Now playing" },
     { id: "queue", label: "Queue" },
+    ...(uiState.hasLyrics ? [{ id: "lyrics" as PanelTab, label: "Lyrics" }] : []),
   ];
 
   return (
@@ -1996,6 +2000,55 @@ function RightPanel() {
                   </button>
                 )}
               </div>
+              {/* Lyrics preview — a taste of the sync (or opening lines), full
+                  lyrics live behind the Lyrics tab this card opens. */}
+              {(uiState.hasLyrics || lyricsLoading) && (
+                <button onClick={() => openPanel("lyrics")} aria-label="Open lyrics"
+                  style={{ display: "block", width: "100%", textAlign: "left", marginTop: 16, padding: "12px 14px", borderRadius: 12, background: C.surf, border: "none", cursor: "pointer", fontFamily: "inherit", transition: "background .15s" }}
+                  onMouseEnter={e => (e.currentTarget.style.background = C.border)}
+                  onMouseLeave={e => (e.currentTarget.style.background = C.surf)}>
+                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.14em", color: C.dim, marginBottom: 8 }}>LYRICS</div>
+                  {lyricsLoading && lyrics.length === 0 ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                      {[86, 64, 74].map((w, i) => (
+                        <div key={i} style={{ width: `${w}%`, height: 10, borderRadius: 5, background: C.border, animation: "fadeIn .6s ease infinite alternate", animationDelay: `${i * 0.12}s` }} />
+                      ))}
+                    </div>
+                  ) : lyrics.length > 0 ? (
+                    (() => {
+                      const activeIdx = lyrics.reduce((b, l, i) => (l.time <= elapsed ? i : b), -1);
+                      const start = Math.max(activeIdx, 0);
+                      return (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                          {lyrics.slice(start, start + 4).map((l, i) => {
+                            const current = start + i === activeIdx;
+                            return (
+                              <div key={start + i}
+                                style={{ fontSize: current ? 14 : 13, fontWeight: current ? 700 : 500, color: current ? C.text : C.muted, lineHeight: 1.45, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {l.text}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()
+                  ) : (
+                    (() => {
+                      const lines = plainLyrics.split(/\n+/).map(s => s.trim()).filter(Boolean).slice(0, 4);
+                      return (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                          {lines.map((l, i) => (
+                            <div key={i}
+                              style={{ fontSize: 13, fontWeight: i === 0 ? 700 : 500, color: i === 0 ? C.text : C.muted, lineHeight: 1.45, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {l}
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()
+                  )}
+                </button>
+              )}
               {/* NEXT UP — the design's continuation preview */}
               <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.14em", color: C.dim, marginTop: 16, marginBottom: 6 }}>NEXT UP</div>
               {nextUp ? (
@@ -2020,6 +2073,12 @@ function RightPanel() {
           ) : (
             <EmptyState title="Nothing playing yet" sub="Choose something from Home to start listening." />
           )}
+        </div>
+      )}
+
+      {tab === "lyrics" && (
+        <div style={{ flex: 1, overflowY: "auto", scrollbarWidth: "none", padding: "20px 20px 24px" }}>
+          <LyricsPanel lyrics={lyrics} plain={plainLyrics} loading={lyricsLoading} elapsed={elapsed} />
         </div>
       )}
 
@@ -2202,6 +2261,11 @@ function PlayerBar() {
 
       {/* Right — panel openers, volume, expand (never transport) */}
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 2, position: "relative", minWidth: 0 }}>
+        {uiState.hasLyrics && (
+          <button onClick={() => togglePanel("lyrics")} aria-label="Lyrics" style={iconBtn(panelTab === "lyrics")}>
+            <Mic size={16} />
+          </button>
+        )}
         {uiState.hasQueue && (
           <button onClick={() => togglePanel("queue")} aria-label="Queue" style={iconBtn(panelTab === "queue")}>
             <ListMusic size={16} />
@@ -2397,6 +2461,9 @@ export default function App() {
   /** Right panel — closed by default; the bar opens it per tab. */
   const [panelTab, setPanelTab] = useState<PanelTab | null>(null);
   const [playerPageOpen, setPlayerPageOpen] = useState(false);
+  const [lyrics, setLyrics]                 = useState<LyricLine[]>([]);
+  const [plainLyrics, setPlainLyrics]       = useState("");
+  const [lyricsLoading, setLyricsLoading]   = useState(false);
   /** Failure shown in the main area; shell/sidebar/bar stay intact. */
   const [errorState, setErrorState] = useState<AppError | null>(null);
   /** Set on the first play this session — the player bar exists only after it. */
@@ -2560,20 +2627,20 @@ export default function App() {
     let cancelled = false;
     (async () => {
       try {
-        const [trendingRows, featuredRows, backendNR] = await Promise.all([
-          api<unknown[]>(`/discover/trending?${localeParam()}`),
-          api<unknown[]>(`/discover/featured?${localeParam()}`),
-          api<any[]>("/discover/new-releases"),
-        ]);
+        // Serialised on purpose: three parallel BFF calls each fan out into
+        // the engine, which serves searches one at a time — together they
+        // starve it and the 7s catalogue timeout yields nothing.
+        let backendNR: any[] | null = null;
+        const trendingRows = await api<unknown[]>(`/discover/trending?${localeParam()}`);
         // BFF unreachable → engine-direct fallback (market chart + generic).
         let trendingList = toApiTracks(trendingRows);
         if (trendingList.length === 0) {
           trendingList = await searchTracks(marketChartQuery(), 20);
           if (trendingList.length === 0) trendingList = await searchTracks("trending music", 20);
         }
-        let freshList = toApiTracks(featuredRows, 12);
-        if (freshList.length === 0) freshList = await searchTracks("new music releases", 12);
         if (cancelled) return;
+        // Client fallbacks bypass the BFF's music-only rules — same filter here.
+        trendingList = sanitizeMusicItems(trendingList);
         if (trendingList.length > 0) {
           const all = trendingList.map((t, i) => fromApiTrack(t, i));
           setDiscoveryTracks(all.slice(0, 8));
@@ -2586,13 +2653,23 @@ export default function App() {
             })));
           }
         }
+        // Trending (and with it the featured hero) has its answer now — show
+        // it while the new-releases shelf is still being fetched.
+        if (!cancelled) setDiscoveryLoading(false);
+
+        const featuredRows = await api<unknown[]>(`/discover/featured?${localeParam()}`);
+        backendNR = await api<any[]>("/discover/new-releases");
+        if (cancelled) return;
+        let freshList = toApiTracks(featuredRows, 12);
+        if (freshList.length === 0) freshList = await searchTracks("new music releases", 12);
+        freshList = sanitizeMusicItems(freshList);
         if (freshList.length > 0 && !backendNR) {
           setNewReleases(prev => prev.length > 0 ? prev : freshList.slice(0, 6).map((t, i) => ({
             id: String(t.id), title: t.title, artist: t.artist,
             year: String(new Date().getFullYear()), bg: BG_PALETTE[i % BG_PALETTE.length], imageUrl: t.imageUrl, trackCount: 1,
           })));
         }
-        if (backendNR) setNewReleases(backendNR.map(mapAPIAlbum));
+        if (backendNR && backendNR.length > 0) setNewReleases(backendNR.map(mapAPIAlbum));
         setDiscoveryLoading(false);
       } catch {
         if (!cancelled) setDiscoveryLoading(false);
@@ -2606,6 +2683,18 @@ export default function App() {
     if (likedTrackIds.size === 0) return;
     setLikedTracks(discoveryTracks.filter(t => likedTrackIds.has(t.id)));
   }, [likedTrackIds, discoveryTracks]);
+
+  // ── Lyrics for the current track ──────────────────────────────────────────────
+  useEffect(() => {
+    if (!currentTrack) { setLyrics([]); setPlainLyrics(""); setLyricsLoading(false); return; }
+    let cancelled = false;
+    setLyrics([]); setPlainLyrics(""); setLyricsLoading(true);
+    fetchLyricsFromApi(currentTrack.title, currentTrack.artist).then(r => {
+      if (cancelled) return;
+      setLyrics(r.synced); setPlainLyrics(r.plain); setLyricsLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [currentTrack]);
 
   // ── Volume sync ───────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -3177,13 +3266,15 @@ export default function App() {
   const uiState: UiState = useMemo(() => ({
     hasPlayback,
     hasQueue: queue.length >= 2,
+    hasLyrics: lyrics.length > 0 || plainLyrics.trim().length > 0,
     hasHistory: recentTracks.length > 0 || history.length > 0,
     isPlaying,
     deviceCount: Math.max(devices.length, 1),
     signedIn: isSignedIn(),
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [authVersion, hasPlayback, queue.length,
-       recentTracks.length, history.length, isPlaying, devices.length]);
+       recentTracks.length, history.length, isPlaying, devices.length,
+       lyrics.length, plainLyrics]);
 
   // ── Inactivity logout ────────────────────────────────────────────────────────
   // 30 minutes with no pointer/keyboard/touch input signs the user out.
@@ -3214,6 +3305,7 @@ export default function App() {
     addToQueue, queueAll, playNextInQueue, moveQueueItem, removeFromQueue, openCreatePlaylist,
     repeatMode, cycleRepeat: () => setRepeatMode(m => m === "off" ? "one" : m === "one" ? "all" : "off"),
     volume, setVolume,
+    lyrics, plainLyrics, lyricsLoading,
     uiState, panelTab, openPanel, togglePanel,
     playerPageOpen, setPlayerPageOpen,
     errorState, showError, clearError,

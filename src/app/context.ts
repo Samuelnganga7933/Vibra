@@ -95,7 +95,9 @@ export interface Colors {
 }
 
 /** The right panel's open tab — `null` means the panel is closed. */
-export type PanelTab = "nowplaying" | "queue";
+export type PanelTab = "nowplaying" | "queue" | "lyrics";
+
+export interface LyricLine { time: number; text: string; }
 
 /** Failure surfaced in the main area (shell, sidebar and bar stay intact). */
 export interface AppError {
@@ -116,6 +118,8 @@ export interface UiState {
   hasPlayback: boolean;
   /** Shuffle/repeat/next/prev and the queue icon: 2+ tracks in the queue. */
   hasQueue: boolean;
+  /** Mic buttons and the Lyrics tab: the current track has lyrics. */
+  hasLyrics: boolean;
   /** Jump back in / Recently played: the user has play history. */
   hasHistory: boolean;
   /** Output chip: something is actually playing right now. */
@@ -147,6 +151,11 @@ export interface AppCtxType {
   addToQueue: (t: Track) => void;
   /** Appends a whole list to Up Next in one update (starts playback when idle). */
   queueAll: (items: Track[]) => void;
+
+  // Lyrics data (where to show it is the panel's decision).
+  lyrics: LyricLine[];
+  plainLyrics: string;
+  lyricsLoading: boolean;
   /** Inserts directly after the current track (starts playback if idle). */
   playNextInQueue: (t: Track) => void;
   /** Moves a queue entry to a new index, keeping the playing track in sync. */
