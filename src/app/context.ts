@@ -145,6 +145,8 @@ export interface AppCtxType {
   queue: Track[];
   /** Appends to the end of the queue (starts playback if nothing is playing). */
   addToQueue: (t: Track) => void;
+  /** Appends a whole list to Up Next in one update (starts playback when idle). */
+  queueAll: (items: Track[]) => void;
   /** Inserts directly after the current track (starts playback if idle). */
   playNextInQueue: (t: Track) => void;
   /** Moves a queue entry to a new index, keeping the playing track in sync. */

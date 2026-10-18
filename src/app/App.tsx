@@ -268,7 +268,7 @@ function useAlbums(rows: Track[]): Record<string, string> {
 
 // ─── HomeScreen ───────────────────────────────────────────────────────────────
 function HomeScreen() {
-  const { C, navigate, playTrack, shelves, homeLoading, hiddenIds, hideItem, user, openTrackOptions, uiState, openCreatePlaylist } = useApp();
+  const { C, navigate, playTrack, shelves, homeLoading, hiddenIds, hideItem, user, openTrackOptions, uiState, openCreatePlaylist, playlists, artists } = useApp();
 
   const now = new Date();
   const h = now.getHours();
@@ -487,6 +487,47 @@ function HomeScreen() {
           </button>
         </div>
       )}
+
+      {/* Sections the earlier Home carried — real data, never filler. */}
+      {chip === "All" && artists.length > 0 && (
+        <section style={{ padding: "22px 28px 0" }}>
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 12 }}>
+            <h2 style={{ fontSize: 19, fontWeight: 800, color: C.text, margin: 0, letterSpacing: -0.3 }}>Artists</h2>
+            <button onClick={() => navigate({ id: "library", tab: "artists" })} style={{ fontSize: 13, fontWeight: 600, color: C.muted, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit" }}>See all</button>
+          </div>
+          <div style={{ display: "flex", gap: 18, overflowX: "auto", scrollbarWidth: "none", paddingBottom: 4 }}>
+            {artists.slice(0, 8).map(a => (
+              <div key={a.id} role="button" tabIndex={0}
+                onClick={() => navigate({ id: "search", q: a.name })}
+                onKeyDown={e => e.key === "Enter" && navigate({ id: "search", q: a.name })}
+                style={{ width: 110, flexShrink: 0, textAlign: "center", cursor: "pointer" }}>
+                <div style={{ width: 96, height: 96, borderRadius: "50%", background: a.bg, overflow: "hidden", margin: "0 auto" }}>
+                  {a.imageUrl
+                    ? <img src={a.imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    : <div style={{ width: "100%", height: "100%", display: "grid", placeItems: "center", fontSize: 30, fontWeight: 800, color: "rgba(255,255,255,0.85)" }}>{a.name[0]}</div>}
+                </div>
+                <div style={{ fontWeight: 700, fontSize: 13.5, color: C.text, marginTop: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</div>
+                <div style={{ fontSize: 11.5, color: C.muted }}>Artist</div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {chip === "All" && playlists.length > 0 && (
+        <section style={{ padding: "22px 28px 0" }}>
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 12 }}>
+            <h2 style={{ fontSize: 19, fontWeight: 800, color: C.text, margin: 0, letterSpacing: -0.3 }}>From your library</h2>
+            <button onClick={() => navigate({ id: "library" })} style={{ fontSize: 13, fontWeight: 600, color: C.muted, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit" }}>See all</button>
+          </div>
+          <div style={{ display: "flex", gap: 14, overflowX: "auto", scrollbarWidth: "none", paddingBottom: 4 }}>
+            {playlists.slice(0, 6).map(pl => (
+              <PlaylistItemCard key={pl.id} playlist={pl} size={150}
+                onClick={() => navigate({ id: "playlist", item: pl })} />
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }
@@ -641,7 +682,7 @@ function SearchScreen({ seed }: { seed?: string }) {
 
 // ─── DiscoverScreen ───────────────────────────────────────────────────────────
 function DiscoverScreen() {
-  const { C, playTrack, navigate, trendingTracks, newReleases, playlists, discoveryLoading, artists } = useApp();
+  const { C, playTrack, navigate, trendingTracks, newReleases, playlists, discoveryLoading, artists, queueAll } = useApp();
 
   const albumToPlaylist = (a: AlbumItem): PlaylistItem => ({
     id: a.id, name: a.title, description: `${a.artist} · ${a.year}`,
@@ -661,17 +702,43 @@ function DiscoverScreen() {
           <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to right, rgba(18,8,42,0.9) 40%, transparent)", display: "flex", flexDirection: "column", justifyContent: "flex-end", padding: 24 }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: C.accent, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Featured</div>
             <h2 style={{ fontSize: 22, fontWeight: 700, color: "#fff", margin: "0 0 10px" }}>{playlists[0].name}</h2>
-            <button onClick={() => navigate({ id: "playlist", item: playlists[0] })}
-              style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 34, padding: "0 16px", borderRadius: 17, background: C.accent, border: "none", color: C.bg, fontSize: 13, fontWeight: 700, cursor: "pointer", width: "fit-content" }}>
-              <Play size={14} fill="currentColor" /> Play now
-            </button>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => { const pl = playlists[0]; pl.tracks.length > 0 ? playTrack(pl.tracks[0], pl.tracks) : navigate({ id: "playlist", item: pl }); }}
+                style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 34, padding: "0 16px", borderRadius: 17, background: C.accent, border: "none", color: C.bg, fontSize: 13, fontWeight: 700, cursor: "pointer", width: "fit-content" }}>
+                <Play size={14} fill="currentColor" /> Play all
+              </button>
+              {playlists[0].tracks.length > 0 && (
+                <button onClick={() => queueAll(playlists[0].tracks)}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 34, padding: "0 16px", borderRadius: 17, background: "rgba(10,9,16,0.45)", border: "1px solid rgba(255,255,255,0.4)", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", width: "fit-content" }}>
+                  <ListPlus size={14} /> Add to queue
+                </button>
+              )}
+            </div>
           </div>
         </div>
-      ) : (
-        <div style={{ margin: "20px 28px 0", borderRadius: 18, height: 176, background: C.surf, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          {discoveryLoading ? <Sk w="80%" h={24} /> : <span style={{ color: C.muted, fontSize: 14 }}>Featured content will appear here</span>}
+      ) : trendingTracks.length > 0 ? (
+        <div style={{ margin: "20px 28px 0", borderRadius: 18, overflow: "hidden", position: "relative", height: 176, background: trendingTracks[0].bg }}>
+          {trendingTracks[0].imageUrl && <img src={trendingTracks[0].imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
+          <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to right, rgba(18,8,42,0.9) 40%, transparent)", display: "flex", flexDirection: "column", justifyContent: "flex-end", padding: 24 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.accent, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Featured</div>
+            <h2 style={{ fontSize: 22, fontWeight: 700, color: "#fff", margin: "0 0 10px" }}>Trending now</h2>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => playTrack(trendingTracks[0], trendingTracks)}
+                style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 34, padding: "0 16px", borderRadius: 17, background: C.accent, border: "none", color: C.bg, fontSize: 13, fontWeight: 700, cursor: "pointer", width: "fit-content" }}>
+                <Play size={14} fill="currentColor" /> Play all
+              </button>
+              <button onClick={() => queueAll(trendingTracks)}
+                style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 34, padding: "0 16px", borderRadius: 17, background: "rgba(10,9,16,0.45)", border: "1px solid rgba(255,255,255,0.4)", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", width: "fit-content" }}>
+                <ListPlus size={14} /> Add to queue
+              </button>
+            </div>
+          </div>
         </div>
-      )}
+      ) : discoveryLoading ? (
+        <div style={{ margin: "20px 28px 0", borderRadius: 18, height: 176, background: C.surf, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <Sk w="80%" h={24} />
+        </div>
+      ) : null}
 
       <div style={{ padding: "24px 28px 0" }}>
         <h2 style={{ fontSize: 20, fontWeight: 800, color: C.text, margin: "0 0 10px" }}>Trending now</h2>
@@ -2760,6 +2827,23 @@ export default function App() {
     toast(`Queued “${t.title}”`);
   }, [currentTrack, queue.length, playTrack]);
 
+  /** Bulk addToQueue — one state update so a shelf's order survives intact. */
+  const queueAll = useCallback((items: Track[]) => {
+    if (items.length === 0) return;
+    if (!currentTrack) { playTrack(items[0], items); return; }
+    if (queue.length === 0) {
+      setQueue([currentTrack, ...items]);
+      setQueueIdx(0);
+      toast(`Queued ${items.length} track${items.length === 1 ? "" : "s"}`);
+      return;
+    }
+    const known = new Set(queue.map(t => t.id));
+    const add = items.filter(t => !known.has(t.id));
+    if (add.length === 0) { toast("Already in your queue"); return; }
+    setQueue(prev => [...prev, ...add]);
+    toast(`Queued ${add.length} track${add.length === 1 ? "" : "s"}`);
+  }, [currentTrack, queue, playTrack]);
+
   const playNextInQueue = useCallback((t: Track) => {
     if (!currentTrack) { playTrack(t, [t]); return; }
     if (queue.length === 0) {
@@ -3127,7 +3211,7 @@ export default function App() {
     currentTrack, isPlaying, progress, elapsed, audioDuration,
     playTrack, togglePlay, playNext, playPrev, handleSeek,
     queue, shuffleOn, toggleShuffle: () => setShuffleOn(s => !s),
-    addToQueue, playNextInQueue, moveQueueItem, removeFromQueue, openCreatePlaylist,
+    addToQueue, queueAll, playNextInQueue, moveQueueItem, removeFromQueue, openCreatePlaylist,
     repeatMode, cycleRepeat: () => setRepeatMode(m => m === "off" ? "one" : m === "one" ? "all" : "off"),
     volume, setVolume,
     uiState, panelTab, openPanel, togglePanel,
