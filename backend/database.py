@@ -1,10 +1,13 @@
 from pathlib import Path
 import os
 
+from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 BASE_DIR = Path(__file__).resolve().parent
+# Project root .env (pulled by `neon env pull`); real env vars still win.
+load_dotenv(BASE_DIR.parent / ".env")
 DATABASE_URL = (os.getenv("DATABASE_URL") or f"sqlite:///{BASE_DIR / 'vibra_users.db'}").strip()
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = "postgresql+psycopg://" + DATABASE_URL[len("postgres://"):]

@@ -182,6 +182,11 @@ class AuthOut(BaseModel):
     user: UserOut
 
 
+class NeonSessionIn(BaseModel):
+    """Neon Auth (Better Auth) session token presented by the client."""
+    token: str = Field(min_length=8, max_length=4096)
+
+
 class HistoryPauseIn(BaseModel):
     paused: bool
 

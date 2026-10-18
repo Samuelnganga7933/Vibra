@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { AlertCircle, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { useApp } from "../context";
+import { signInWithGoogle } from "../services/neonAuth";
 
 /**
  * Log in / Sign up — the full-screen split layout from the design boards
@@ -52,6 +53,19 @@ export function AuthScreen({ mode }: { mode: "login" | "signup" }) {
     navigate({ id: "home" });
   };
 
+  const google = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    // Redirects the browser to Google → Neon Auth → back to the app; the
+    // App bootstrap exchanges the Better Auth session for a Vibra session.
+    const failure = await signInWithGoogle();
+    if (failure) {
+      setBusy(false);
+      setError(failure);
+    }
+  };
+
   const inputStyle: React.CSSProperties = {
     width: "100%", height: 52, borderRadius: "var(--radius-input)", boxSizing: "border-box",
     padding: "0 16px", background: C.surf, border: `1px solid ${C.border}`,
@@ -92,15 +106,12 @@ export function AuthScreen({ mode }: { mode: "login" | "signup" }) {
             </p>
           </div>
 
-          <button type="button"
-            onClick={() => toast.info(isSignup
-              ? "Google sign-in isn't set up yet — sign up with email instead."
-              : "Google sign-in isn't set up yet — log in with email instead.")}
+          <button type="button" onClick={google} disabled={busy}
             style={{
               display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
               border: "1px solid var(--google-border)", background: "none", color: C.text,
               borderRadius: 999, height: 52, fontWeight: 600, fontSize: 15, fontFamily: "inherit",
-              cursor: "pointer",
+              cursor: busy ? "default" : "pointer", opacity: busy ? 0.7 : 1, transition: "opacity .15s",
             }}>
             Continue with Google
           </button>

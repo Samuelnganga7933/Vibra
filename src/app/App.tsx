@@ -58,6 +58,7 @@ import {
   type OutputDevice,
 } from "./services/devices";
 import { loginUser, registerUser, logoutUser } from "./services/auth";
+import { exchangeNeonSession, signOutNeon } from "./services/neonAuth";
 import {
   useApp, AppCtx, makeColors, fmtSec, fmtDur, cleanTitle, audioUrlFor, toTrackItem,
   fromApiTrack, mapAPITrack, mapAPIPlaylist, mapAPIAlbum, mapAPIArtist,
@@ -2548,7 +2549,13 @@ export default function App() {
 
   // ── Bootstrap user ────────────────────────────────────────────────────────────
   useEffect(() => {
-    api<User>("/auth/me").then(u => {
+    // Coming back from Google OAuth: trade the Neon Auth session for a Vibra
+    // bearer first, so /auth/me below sees the fresh sign-in.
+    const bootstrap = async () => {
+      if (!isSignedIn()) {
+        await exchangeNeonSession();
+      }
+      const u = await api<User>("/auth/me");
       if (u) {
         setUser(u);
         updateUserProfile({
@@ -2575,7 +2582,8 @@ export default function App() {
         }
       }
       setUserLoading(false);
-    });
+    };
+    bootstrap();
   }, []);
 
   // ── Bootstrap library ─────────────────────────────────────────────────────────
@@ -3218,6 +3226,7 @@ export default function App() {
 
   const logout = useCallback(async (reason?: "idle") => {
     await logoutUser();
+    await signOutNeon();
     setUser(null);
     setAuthVersion(v => v + 1);
     toast(reason === "idle"

@@ -4,3 +4,8 @@ sqlalchemy
 psycopg[binary]
 pydantic
 httpx
+python-dotenv
+# EdDSA JWT verification for the Neon Auth bridge (/auth/neon).
+# cryptography pinned to the last release with Python 3.9 wheels.
+pyjwt==2.10.1
+cryptography==43.0.3

@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
+import jwt
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import distinct, func, select
@@ -53,6 +54,7 @@ from schemas import (
     LikeToggleOut,
     LikedIdsOut,
     LoginIn,
+    NeonSessionIn,
     NewReleaseOut,
     PlayEvent,
     PlaylistCreate,
@@ -326,6 +328,81 @@ def logout(response: Response, user: User = Depends(get_token_user), db: Session
     response.delete_cookie("vibra_session", path="/")
     response.status_code = 204
     return response
+
+
+@app.post("/auth/neon", response_model=AuthOut)
+def auth_neon(payload: NeonSessionIn, response: Response, db: Session = Depends(get_db)):
+    """Exchange a Neon Auth (Better Auth) JWT for a Vibra BFF session.
+
+    The client finishes Google OAuth against NEON_AUTH_BASE_URL, then posts
+    the session JWT from GET /token here. The signature is verified against
+    the branch's JWKS (EdDSA); the matching Vibra user is looked up by email
+    (created on first sign-in) and issued a normal Vibra bearer so every
+    existing endpoint keeps working unchanged.
+    """
+    jwks_url = (os.getenv("NEON_AUTH_JWKS_URL") or "").strip()
+    if not jwks_url:
+        raise HTTPException(status_code=503, detail="Neon Auth is not configured")
+    try:
+        jwks = httpx.get(jwks_url, timeout=10.0)
+        jwks.raise_for_status()
+        keys = jwks.json().get("keys") or []
+    except Exception:
+        raise HTTPException(status_code=502, detail="Could not fetch Neon Auth keys")
+
+    try:
+        header = jwt.get_unverified_header(payload.token)
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Neon Auth session is invalid or expired")
+    key_data = next((k for k in keys if k.get("kid") == header.get("kid")), None)
+    if key_data is None and len(keys) == 1:
+        key_data = keys[0]
+    if key_data is None:
+        raise HTTPException(status_code=401, detail="Neon Auth session is invalid or expired")
+    try:
+        # Only EdDSA is ever issued by Neon Auth; never trust the header's alg.
+        if header.get("alg") != "EdDSA":
+            raise jwt.InvalidTokenError("unexpected algorithm")
+        jwk = jwt.PyJWK.from_dict(key_data).key
+        claims = jwt.decode(
+            payload.token,
+            jwk,
+            algorithms=["EdDSA"],
+            options={"verify_aud": False},
+        )
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Neon Auth session is invalid or expired")
+
+    email = str(claims.get("email") or "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=401, detail="Neon Auth session is invalid or expired")
+
+    name = str(claims.get("name") or "").strip() or email.split("@")[0][:60]
+    user = db.scalar(select(User).where(User.email == email))
+    if user is None:
+        username_base = email.split("@")[0].replace(".", "")[:40] or "listener"
+        username = username_base
+        if db.scalar(select(User).where(User.username == username)) is not None:
+            username = f"{username_base}{secrets.token_hex(2)}"
+        user = User(
+            name=name,
+            email=email,
+            username=username,
+            initials=_initials(name),
+        )
+    else:
+        # Keep the profile fresh from the identity provider on every sign-in.
+        user.name = name
+    user.session_token = secrets.token_hex(24)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    _set_session_cookie(response, user.session_token or "")
+    return AuthOut(token=user.session_token or "", user=UserOut(
+        id=user.id, name=user.name, email=user.email, username=user.username,
+        initials=user.initials, avatar_url=user.avatar_url,
+        subscription=user.subscription,  # type: ignore[arg-type]
+    ))
 
 
 def _playlist_track_out(row: PlaylistTrack) -> PlaylistTrackOut:
