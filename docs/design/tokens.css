@@ -1,0 +1,14 @@
+/* Vibra design tokens: import once at the app root. Never hard-code these values in components. */
+:root{
+  --bg:#0b0a10; --panel:#14131c; --raised:#1f1e2b; --hover:#1d1c29;
+  --border:#2c2a3e; --text:#f4f3f8; --muted:#a9a7bd; --dim:#8886a0;
+  --accent:#e8334f; --accent-2:#7a4ae8; --online:#3ad07a;
+  --radius-panel:18px; --radius-card:14px; --radius-thumb:10px; --radius-pill:999px;
+  --font:'Plus Jakarta Sans',system-ui,sans-serif;
+  --shell-gap:12px; --topbar-h:56px; --sidebar-w:240px; --rightcol-w:320px; --playerbar-h:88px;
+}
+body{background:var(--bg);color:var(--text);font-family:var(--font);margin:0}
+/* skeleton shimmer (see "Loading skeletons" in the spec) */
+.sk{background:linear-gradient(90deg,#1b1a26 0%,#272538 50%,#1b1a26 100%);background-size:200% 100%;animation:sh 1.4s ease-in-out infinite}
+@keyframes sh{0%{background-position:200% 0}100%{background-position:-200% 0}}
+@media (prefers-reduced-motion:reduce){.sk{animation:none}}
