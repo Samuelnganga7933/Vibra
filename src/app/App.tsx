@@ -397,35 +397,6 @@ function HomeScreen() {
         </div>
       </div>
 
-      {/* Get started — first-run cards from the design (signed out / fresh) */}
-      {!uiState.signedIn && !homeLoading && (
-        <section style={{ padding: "18px 28px 0" }}>
-          <h2 style={{ margin: "0 0 12px", fontSize: 19, fontWeight: 800, color: C.text }}>Get started</h2>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 320px))", gap: 12 }}>
-            <button onClick={() => navigate({ id: "search" })}
-              style={{ display: "flex", gap: 14, alignItems: "center", border: `1px solid ${C.border}`, background: C.pane, borderRadius: 14, padding: 16, textAlign: "left", color: C.text, cursor: "pointer", fontFamily: "inherit" }}>
-              <span style={{ width: 40, height: 40, borderRadius: "50%", background: `${C.accent}22`, color: C.accent, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <Search size={20} />
-              </span>
-              <span style={{ fontSize: 14 }}>
-                <b style={{ display: "block" }}>Search a song</b>
-                <span style={{ fontSize: 12, color: C.muted }}>Find anything and hit play</span>
-              </span>
-            </button>
-            <button onClick={() => openCreatePlaylist()}
-              style={{ display: "flex", gap: 14, alignItems: "center", border: `1px solid ${C.border}`, background: C.pane, borderRadius: 14, padding: 16, textAlign: "left", color: C.text, cursor: "pointer", fontFamily: "inherit" }}>
-              <span style={{ width: 40, height: 40, borderRadius: "50%", background: `${C.accent}22`, color: C.accent, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <Plus size={20} />
-              </span>
-              <span style={{ fontSize: 14 }}>
-                <b style={{ display: "block" }}>Make a playlist</b>
-                <span style={{ fontSize: 12, color: C.muted }}>Save songs in one place</span>
-              </span>
-            </button>
-          </div>
-        </section>
-      )}
-
       {homeLoading ? (
         <div style={{ display: "flex", gap: 14, padding: "26px 28px 0" }}>
           {[...Array(5)].map((_, i) => <CardSkeleton key={i} size={140} />)}
