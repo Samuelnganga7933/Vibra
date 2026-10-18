@@ -197,3 +197,27 @@ export async function fetchHome(): Promise<HomeShelf[]> {
     return base;
   }
 }
+
+// ─── Home shelf cache ─────────────────────────────────────────────────────────
+/** The last good shelf list, kept so Home paints instantly on every launch. */
+const HOME_CACHE_KEY = "vibra_home_shelves";
+
+export function readCachedShelves(): HomeShelf[] {
+  try {
+    const raw = window.localStorage.getItem(HOME_CACHE_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed as HomeShelf[];
+  } catch {
+    return [];
+  }
+}
+
+export function writeCachedShelves(shelves: HomeShelf[]): void {
+  try {
+    window.localStorage.setItem(HOME_CACHE_KEY, JSON.stringify(shelves));
+  } catch {
+    /* quota/private mode — the cache is a nicety, never a blocker */
+  }
+}

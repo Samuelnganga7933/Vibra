@@ -46,7 +46,7 @@ import {
 import { bffJson, BFF_BASE, isSignedIn, onSessionExpired } from "./services/bff";
 import { sendEvent, isHistoryPaused, setHistoryPaused as persistHistoryPaused } from "./services/events";
 import { sanitizeMusicItems } from "./services/smartQueue";
-import { fetchHome, type HomeShelf, type HomeItem } from "./services/home";
+import { fetchHome, readCachedShelves, writeCachedShelves, type HomeShelf, type HomeItem } from "./services/home";
 import {
   listOutputDevices, refreshOutput, switchOutput, primeOutput,
   getActiveOutput, subscribeOutput, registerSinkElement,
@@ -176,7 +176,7 @@ function queueRest<T extends { id: string | number }>(list: T[], clicked: T): T[
 
 // ─── TrackRow ─────────────────────────────────────────────────────────────────
 function TrackRow({ track, index, queue, showLike = false, sourceShelfId }: { track: Track; index?: number; queue?: Track[]; showLike?: boolean; sourceShelfId?: string }) {
-  const { C, playTrack, currentTrack, isPlaying, likedTrackIds, toggleLike, openTrackOptions, uiState } = useApp();
+  const { C, playTrack, currentTrack, isPlaying, likedTrackIds, toggleLike, openTrackOptions } = useApp();
   const isActive = currentTrack?.id === track.id;
   const isLiked  = likedTrackIds.has(track.id);
 
@@ -200,7 +200,7 @@ function TrackRow({ track, index, queue, showLike = false, sourceShelfId }: { tr
           <div style={{ fontSize: 12, color: C.muted }}>{track.artist}</div>
         </div>
       </div>
-      {showLike && uiState.signedIn && (
+      {showLike && (
         <button onClick={e => { e.stopPropagation(); toggleLike(track.id); }}
           style={{ width: 30, height: 30, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: isLiked ? C.accent : C.muted, flexShrink: 0 }}>
           <Heart size={13} fill={isLiked ? C.accent : "none"} />
@@ -738,10 +738,10 @@ function LibraryScreen({ tab: initTab = "playlists" }: { tab?: LibTab }) {
               ))}
             </div>
           ) : (
-            <EmptyState title="No playlists" sub={uiState.signedIn ? "Create a playlist to start building your library." : "Sign in to create playlists and save your music."} action={
-              <button onClick={() => uiState.signedIn ? openCreatePlaylist() : navigate({ id: "auth", mode: "login" })}
+            <EmptyState title="No playlists" sub="Create a playlist to start building your library." action={
+              <button onClick={() => openCreatePlaylist()}
                 style={{ height: 36, padding: "0 16px", borderRadius: 18, border: `1px solid ${C.border}`, background: "transparent", color: C.text, fontSize: 13, cursor: "pointer" }}>
-                {uiState.signedIn ? "Create playlist" : "Sign in"}
+                Create playlist
               </button>
             } />
           )
@@ -1357,7 +1357,7 @@ function FollowButton({ id, size = "md" }: { id: string; size?: "sm" | "md" }) {
 function TrackOptionsSheet({ track, onClose }: { track: Track; onClose: () => void }) {
   const {
     C, toggleLike, likedTrackIds, navigate, playlists, addTrackToPlaylist,
-    hideItem, refreshHome, playTrack, addToQueue, playNextInQueue,
+    hideItem, playTrack, addToQueue, playNextInQueue,
     openCreatePlaylist, uiState,
   } = useApp();
   const [view, setView] = useState<"root" | "playlists" | "share">("root");
@@ -1402,15 +1402,9 @@ function TrackOptionsSheet({ track, onClose }: { track: Track; onClose: () => vo
     option(<Play size={18} />, "Play now", () => { playTrack(track, [track]); onClose(); }),
     option(<ListStart size={18} />, "Play next", () => { playNextInQueue(track); onClose(); }),
     option(<ListPlus size={18} />, "Add to queue", () => { addToQueue(track); onClose(); }),
-    ...(signedIn
-      ? [
-          option(<ListMusic size={18} />, "Add to playlist", () => setView("playlists")),
-          option(<Heart size={18} fill={isLiked ? C.accent : "none"} />, isLiked ? "Remove from liked" : "Add to liked", () => { toggleLike(track.id); onClose(); }),
-          option(<Download size={18} />, "Download", () => { addOfflineTrack(toOfflineTrack(track)); onClose(); toast("Saved for offline playback"); }),
-        ]
-      : [
-          option(<Heart size={18} />, "Sign in to like and save", () => { onClose(); navigate({ id: "auth", mode: "login" }); }),
-        ]),
+    option(<ListMusic size={18} />, "Add to playlist", () => setView("playlists")),
+    option(<Heart size={18} fill={isLiked ? C.accent : "none"} />, isLiked ? "Remove from liked" : "Add to liked", () => { toggleLike(track.id); onClose(); }),
+    option(<Download size={18} />, "Download", () => { addOfflineTrack(toOfflineTrack(track)); onClose(); toast("Saved for offline playback"); }),
     option(<Compass size={18} />, `More from ${track.artist}`, () => { onClose(); navigate({ id: "search", q: track.artist }); }),
     option(<Share2 size={18} />, "Share track", () => {
       // Prefer the OS share sheet when the browser offers one.
@@ -1424,7 +1418,6 @@ function TrackOptionsSheet({ track, onClose }: { track: Track; onClose: () => vo
     }),
     option(<MinusCircle size={18} />, "Not interested", () => {
       hideItem({ id: String(track.id), kind: "track", artist: track.artist, title: track.title });
-      void refreshHome();
       onClose();
       toast("Got it — you'll see less of this");
     }),
@@ -1490,7 +1483,7 @@ function TrackOptionsSheet({ track, onClose }: { track: Track; onClose: () => vo
               New playlist
             </button>
             {realPlaylists.length === 0 && !signedIn && (
-              <div style={{ padding: "8px 20px 4px", fontSize: 13, color: C.muted }}>Sign in to keep playlists.</div>
+              <div style={{ padding: "8px 20px 4px", fontSize: 13, color: C.muted }}>New playlists are saved on this device — sign in to sync.</div>
             )}
             {realPlaylists.map(p => (
               <button key={p.id} onClick={() => { addTrackToPlaylist(p.id, track); onClose(); toast(`Added to "${p.name}"`); }}
@@ -1678,17 +1671,17 @@ function LeftSidebar() {
         </div>
 
         <div style={{ flex: 1, overflowY: "auto", scrollbarWidth: "none", padding: "0 12px" }}>
-          {/* Signed out: the library area is a sign-in callout, matching the design. */}
+          {/* Signed out: one quiet hint at the top — but the library below
+              always works locally (likes and playlists need no account). */}
           {!uiState.signedIn && (
             <button onClick={() => navigate({ id: "auth", mode: "login" })}
-              style={{ width: "100%", display: "flex", alignItems: "flex-start", gap: 10, padding: "14px 12px", borderRadius: 12, border: `1px dashed #34324a`, background: "transparent", cursor: "pointer", fontSize: 13, color: C.muted, lineHeight: 1.45, textAlign: "left", marginTop: 4 }}>
-              <span style={{ color: C.dim, marginTop: 1 }}><Lock size={16} /></span>
-              Log in to save songs and playlists.
+              style={{ width: "100%", display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 12px", borderRadius: 12, border: `1px dashed #34324a`, background: "transparent", cursor: "pointer", fontSize: 12.5, color: C.muted, lineHeight: 1.45, textAlign: "left", marginTop: 4 }}>
+              <span style={{ color: C.dim, marginTop: 1 }}><Lock size={15} /></span>
+              Log in to sync your library across devices.
             </button>
           )}
 
-          {/* Liked songs — signed-in users only */}
-          {uiState.signedIn && (
+          {/* Liked songs — always present */}
           <button onClick={() => navigate({ id: "library", tab: "liked" })}
             style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, height: 52, padding: "0 10px", borderRadius: 10, border: "none", cursor: "pointer", background: rowBg(screen.id === "library" && screen.tab === "liked"), transition: "background .15s", textAlign: "left" }}
             onMouseEnter={e => (e.currentTarget.style.background = C.surf)}
@@ -1701,9 +1694,8 @@ function LeftSidebar() {
               <div style={{ fontSize: 11, color: C.muted }}>{likedTrackIds.size} {likedTrackIds.size === 1 ? "song" : "songs"}</div>
             </div>
           </button>
-          )}
 
-          {uiState.signedIn && (userPlaylists.length === 0 ? (
+          {userPlaylists.length === 0 ? (
             <button onClick={() => openCreatePlaylist()}
               style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, height: 48, padding: "0 12px", marginTop: 4, borderRadius: 10, background: "transparent", border: `1px dashed ${C.border}`, cursor: "pointer", color: C.muted, fontSize: 12.5, fontWeight: 600, textAlign: "left" }}>
               <Plus size={14} /> Create your first playlist
@@ -1719,14 +1711,12 @@ function LeftSidebar() {
                 <div style={{ fontSize: 11, color: C.muted }}>Playlist · {pl.trackCount}</div>
               </div>
             </button>
-          )))}
+          ))}
 
-          {uiState.signedIn && (
-            <button onClick={() => navigate({ id: "library" })}
-              style={{ width: "100%", height: 38, padding: "0 10px", borderRadius: 10, border: "none", cursor: "pointer", background: "transparent", color: C.muted, fontSize: 12, fontWeight: 600, textAlign: "left", display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
-              <Library size={13} /> Show all
-            </button>
-          )}
+          <button onClick={() => navigate({ id: "library" })}
+            style={{ width: "100%", height: 38, padding: "0 10px", borderRadius: 10, border: "none", cursor: "pointer", background: "transparent", color: C.muted, fontSize: 12, fontWeight: 600, textAlign: "left", display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+            <Library size={13} /> Show all
+          </button>
         </div>
       </div>
 
@@ -2324,8 +2314,12 @@ export default function App() {
   const [authVersion, setAuthVersion] = useState(0);
 
   // ── Server-driven home feed ───────────────────────────────────────────────────
-  const [shelves, setShelves] = useState<HomeShelf[]>([]);
-  const [homeLoading, setHomeLoading] = useState(true);
+  // Shelves hydrate from the last successful fetch so Home paints instantly —
+  // never an empty screen while the catalogue is slow.
+  const initialShelves = useRef<HomeShelf[]>(readCachedShelves()).current;
+  const [shelves, setShelves] = useState<HomeShelf[]>(initialShelves);
+  const [homeLoading, setHomeLoading] = useState(initialShelves.length === 0);
+  const hasShelvesRef = useRef(initialShelves.length > 0);
   /** Item ids dismissed via “Not interested” (also POSTed to the BFF). */
   const [hiddenIds, setHiddenIds] = useState<Record<string, boolean>>({});
 
@@ -2337,9 +2331,17 @@ export default function App() {
   const [historyPaused, setHistoryPausedState] = useState(() => isHistoryPaused());
 
   const refreshHome = useCallback(() => {
-    setHomeLoading(true);
+    // Keep what's on screen while refreshing; only show the skeleton on a
+    // true first load with nothing cached.
+    if (!hasShelvesRef.current) setHomeLoading(true);
     fetchHome()
-      .then(s => setShelves(s))
+      .then(s => {
+        if (s.length > 0) {
+          setShelves(s);
+          hasShelvesRef.current = true;
+          writeCachedShelves(s);
+        }
+      })
       .catch(() => { /* fetchHome already degrades to synthesised shelves */ })
       .finally(() => setHomeLoading(false));
   }, []);
@@ -2363,31 +2365,16 @@ export default function App() {
   }, [recentTracks]);
 
   /**
-   * Taste loop: one listen should reshape Home. Plays mark the feed stale and
-   * refresh it a few seconds later (so the play event lands first), or right
-   * away when the user comes back to Home.
+   * One listen should reshape what the *queue* continues with — refresh the
+   * vibe pool a few seconds after a play (debounced). Home itself is never
+   * refetched here: it stays put until the user asks for it.
    */
-  const homeStaleRef = useRef(false);
-  const homeStaleTimer = useRef<number | undefined>(undefined);
-  const scheduleHomeRefresh = useCallback(() => {
-    homeStaleRef.current = true;
-    window.clearTimeout(homeStaleTimer.current);
-    homeStaleTimer.current = window.setTimeout(() => {
-      homeStaleRef.current = false;
-      refreshHome();
-      refreshVibes();
-    }, 8000);
-  }, [refreshHome, refreshVibes]);
-  useEffect(() => () => window.clearTimeout(homeStaleTimer.current), []);
-  useEffect(() => {
-    if (screen.id === "home" && homeStaleRef.current) {
-      window.clearTimeout(homeStaleTimer.current);
-      homeStaleRef.current = false;
-      refreshHome();
-      refreshVibes();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [screen.id]);
+  const vibeTimer = useRef<number | undefined>(undefined);
+  const scheduleVibeRefresh = useCallback(() => {
+    window.clearTimeout(vibeTimer.current);
+    vibeTimer.current = window.setTimeout(() => refreshVibes(), 8000);
+  }, [refreshVibes]);
+  useEffect(() => () => window.clearTimeout(vibeTimer.current), []);
   // First paint: build the vibe pool from whatever history exists.
   useEffect(() => { refreshVibes(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -2660,9 +2647,9 @@ export default function App() {
     setProgress(0); setElapsed(0);
     beginPlayback(pick);
     sendEvent({ type: "play", trackId: pick.id, title: pick.title, image: pick.imageUrl, positionMs: 0, artist: pick.artist });
-    scheduleHomeRefresh();
+    scheduleVibeRefresh();
     return true;
-  }, [queue, vibePool, currentTrack, beginPlayback, scheduleHomeRefresh]);
+  }, [queue, vibePool, currentTrack, beginPlayback, scheduleVibeRefresh]);
 
   const handleTrackEnd = useCallback(() => {
     if (repeatMode === "one") {
@@ -2681,7 +2668,7 @@ export default function App() {
         positionMs: Math.round((audioDuration || currentTrack.durationSec || 0) * 1000),
         artist: currentTrack.artist,
       });
-      scheduleHomeRefresh();
+      scheduleVibeRefresh();
     }
     if (queue.length === 0) { if (!startVibeIfAny()) setIsPlaying(false); return; }
     // Invalid queue index (the seeded queue didn't contain the clicked track)
@@ -2697,8 +2684,8 @@ export default function App() {
     setProgress(0); setElapsed(0);
     beginPlayback(t);
     sendEvent({ type: "play", trackId: t.id, title: t.title, image: t.imageUrl, positionMs: 0, artist: t.artist });
-    scheduleHomeRefresh();
-  }, [queue, queueIdx, shuffleOn, repeatMode, beginPlayback, currentTrack, audioDuration, scheduleHomeRefresh, startVibeIfAny]);
+    scheduleVibeRefresh();
+  }, [queue, queueIdx, shuffleOn, repeatMode, beginPlayback, currentTrack, audioDuration, scheduleVibeRefresh, startVibeIfAny]);
   handleTrackEndRef.current = handleTrackEnd;
 
   // ── playTrack ─────────────────────────────────────────────────────────────────
@@ -2730,8 +2717,8 @@ export default function App() {
     // let the BFF render "Jump back in" without a second lookup).
     sendEvent({ type: "play", trackId: t.id, title: t.title, image: t.imageUrl, positionMs: 0, sourceShelfId, artist: t.artist });
     // …and the feed itself should learn: refresh Home once the event lands.
-    scheduleHomeRefresh();
-  }, [currentTrack, beginPlayback, scheduleHomeRefresh, user]);
+    scheduleVibeRefresh();
+  }, [currentTrack, beginPlayback, scheduleVibeRefresh, user]);
 
   // ── addToQueue / playNextInQueue ──────────────────────────────────────────────
   const addToQueue = useCallback((t: Track) => {
@@ -2830,8 +2817,8 @@ export default function App() {
     beginPlayback(t);
     // The newly started track is taste too — log the start, refresh Home later.
     sendEvent({ type: "play", trackId: t.id, title: t.title, image: t.imageUrl, positionMs: 0, artist: t.artist });
-    scheduleHomeRefresh();
-  }, [queue, queueIdx, shuffleOn, currentTrack, beginPlayback, elapsed, scheduleHomeRefresh, startVibeIfAny]);
+    scheduleVibeRefresh();
+  }, [queue, queueIdx, shuffleOn, currentTrack, beginPlayback, elapsed, scheduleVibeRefresh, startVibeIfAny]);
 
   // ── playPrev ──────────────────────────────────────────────────────────────────
   const playPrev = useCallback(() => {
