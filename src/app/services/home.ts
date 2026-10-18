@@ -10,6 +10,7 @@ import { bffJson, isSignedIn } from "./bff";
 import { searchTracks, type ApiTrack } from "./api";
 import { getHistory, type StoredTrack } from "./store";
 import { sanitizeMusicItems } from "./smartQueue";
+import { localeParam, marketChartQuery, marketLabel } from "./locale";
 
 export type ShelfType = "jump_back_in" | "mix_row" | "shelf" | "recent";
 
@@ -114,16 +115,23 @@ function fromApiTracks(tracks: ApiTrack[], title: string, id: string, type: Shel
 
 /** Cold-start shelves built from the audio engine when the BFF is down. */
 async function synthesizeShelves(): Promise<HomeShelf[]> {
-  const [kenya, trending, fresh] = await Promise.all([
-    searchTracks("popular in kenya", 10).catch(() => []),
+  const market = marketLabel();
+  const [region, trending, fresh] = await Promise.all([
+    searchTracks(marketChartQuery(), 10).catch(() => []),
     searchTracks("trending music", 10).catch(() => []),
-    searchTracks("new releases", 10).catch(() => []),
+    searchTracks("new music releases", 10).catch(() => []),
   ]);
 
   const shelves: HomeShelf[] = [];
   // Music-only + variant dedupe: the engine answers these queries with plenty
   // of slowed/cover duplicates and the odd 20-minute mix.
-  if (kenya.length > 0) shelves.push(fromApiTracks(sanitizeMusicItems(kenya), "Popular in Kenya", "region-kenya"));
+  if (region.length > 0) {
+    shelves.push(fromApiTracks(
+      sanitizeMusicItems(region),
+      `Popular in ${market}`,
+      `region-${market.toLowerCase().replace(/\s+/g, "-")}`,
+    ));
+  }
   if (trending.length > 0) shelves.push(fromApiTracks(sanitizeMusicItems(trending), "Trending now", "trending-now"));
   if (fresh.length > 0) shelves.push(fromApiTracks(sanitizeMusicItems(fresh), "New releases", "new-releases"));
   return shelves;
@@ -183,7 +191,7 @@ async function shelvesFromLocalHistory(history: StoredTrack[]): Promise<HomeShel
  * when the BFF is unreachable or returns nothing renderable.
  */
 export async function fetchHome(): Promise<HomeShelf[]> {
-  const data = await bffJson<{ shelves?: unknown }>("/api/home");
+  const data = await bffJson<{ shelves?: unknown }>(`/api/home?${localeParam()}`);
   const shelves = Array.isArray(data?.shelves)
     ? data.shelves.map(normalizeShelf).filter((s): s is HomeShelf => s !== null && s.items.length > 0)
     : [];

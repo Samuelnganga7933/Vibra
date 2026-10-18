@@ -7,7 +7,7 @@ import {
   Play, Pause, Settings, ChevronLeft, ChevronRight, ChevronDown,
   MoreHorizontal, Plus, Download, Check, X, LogOut, Music2,
   Eye, EyeOff, ArrowRight, Sparkles, HardDrive, RefreshCw,
-  ListMusic, Headphones, MonitorSpeaker, Smartphone, Speaker,
+  ListMusic,
   AlertCircle, Copy, ListPlus, MinusCircle, PauseCircle, RotateCcw,
   HelpCircle, ChevronUp, Maximize2, CalendarDays, Mic, ListStart,
   Moon, Sun, Contrast, WifiOff, Lock,
@@ -36,16 +36,21 @@ import {
   addTrackToPlaylist as addTrackToStoredPlaylist,
   reorderPlaylistTracks as reorderStoredPlaylistTracks,
   clearHistory as clearStoredHistory,
+  getRecentSearches,
+  pushRecentSearch,
   type StoredPlaylist,
   type StoredTrack,
 } from "./services/store";
 import {
   searchTracks,
+  toApiTracks,
 } from "./services/api";
 import { bffJson, BFF_BASE, isSignedIn, onSessionExpired } from "./services/bff";
 import { sendEvent, isHistoryPaused, setHistoryPaused as persistHistoryPaused } from "./services/events";
 import { sanitizeMusicItems } from "./services/smartQueue";
 import { fetchHome, readCachedShelves, writeCachedShelves, type HomeShelf, type HomeItem } from "./services/home";
+import { localeParam, marketChartQuery, marketLabel } from "./services/locale";
+import { fetchAlbums } from "./services/metadata";
 import {
   listOutputDevices, refreshOutput, switchOutput, primeOutput,
   getActiveOutput, subscribeOutput, registerSinkElement,
@@ -61,7 +66,6 @@ import {
   type PanelTab, type AppError, type AppCtxType, type UiState,
 } from "./context";
 import { ImageWithFallback } from "./components/ui/ImageWithFallback";
-import { EmptyStateCard } from "./components/ui/EmptyStateCard";
 import { UiThemeContext } from "./components/ui/ui-theme";
 import { TrackCard, AlbumCard, PlaylistItemCard } from "./components/ui/cards";
 import { DownloadsView } from "./components/vibra/DownloadsView";
@@ -173,10 +177,11 @@ function queueRest<T extends { id: string | number }>(list: T[], clicked: T): T[
 }
 
 // ─── TrackRow ─────────────────────────────────────────────────────────────────
-function TrackRow({ track, index, queue, showLike = false, sourceShelfId }: { track: Track; index?: number; queue?: Track[]; showLike?: boolean; sourceShelfId?: string }) {
+function TrackRow({ track, index, queue, showLike = false, showAlbum = false, album, sourceShelfId }: { track: Track; index?: number; queue?: Track[]; showLike?: boolean; showAlbum?: boolean; album?: string; sourceShelfId?: string }) {
   const { C, playTrack, currentTrack, isPlaying, likedTrackIds, toggleLike, openTrackOptions } = useApp();
   const isActive = currentTrack?.id === track.id;
   const isLiked  = likedTrackIds.has(track.id);
+  const albumName = album ?? track.album;
 
   return (
     <div
@@ -195,22 +200,70 @@ function TrackRow({ track, index, queue, showLike = false, sourceShelfId }: { tr
         <CoverArt bg={track.bg} imageUrl={track.imageUrl} size={44} radius={8} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 700, fontSize: 14, color: isActive ? C.accent : C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{track.title}</div>
-          <div style={{ fontSize: 12, color: C.muted }}>{track.artist}</div>
+          <div style={{ fontSize: 12, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{track.artist}</div>
         </div>
       </div>
+      {showAlbum && (
+        <div style={{ flex: "0 1 200px", minWidth: 0, fontSize: 12.5, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {albumName || "—"}
+        </div>
+      )}
       {showLike && (
         <button onClick={e => { e.stopPropagation(); toggleLike(track.id); }}
           style={{ width: 30, height: 30, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: isLiked ? C.accent : C.muted, flexShrink: 0 }}>
           <Heart size={13} fill={isLiked ? C.accent : "none"} />
         </button>
       )}
-      <span style={{ fontSize: 12, color: C.muted, flexShrink: 0, minWidth: 36, textAlign: "right" }}>{track.duration}</span>
+      <span style={{ fontSize: 12, color: C.muted, flexShrink: 0, minWidth: showAlbum ? 64 : 36, textAlign: "right" }}>{track.duration}</span>
       <button onClick={e => { e.stopPropagation(); openTrackOptions(track); }}
         style={{ width: 28, height: 28, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.muted, flexShrink: 0 }}>
         <MoreHorizontal size={13} />
       </button>
     </div>
   );
+}
+
+/** Column header for tabular tracklists (# · Title · Album · Duration). */
+function TrackTableHead({ showLike = false }: { showLike?: boolean }) {
+  const { C } = useApp();
+  const cell: React.CSSProperties = {
+    fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase",
+    letterSpacing: "0.06em", overflow: "hidden", textOverflow: "ellipsis",
+    whiteSpace: "nowrap", flexShrink: 0,
+  };
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "7px 10px", borderBottom: `1px solid ${C.border}`, margin: "4px 0 6px" }}>
+      <span style={{ ...cell, width: 22, textAlign: "center" }}>#</span>
+      <span style={{ ...cell, flex: 1, minWidth: 0 }}>Title</span>
+      <span style={{ ...cell, flex: "0 1 200px", minWidth: 0 }}>Album</span>
+      {showLike && <span style={{ width: 30, flexShrink: 0 }} />}
+      <span style={{ ...cell, width: 64, textAlign: "right" }}>Duration</span>
+      <span style={{ width: 28, flexShrink: 0 }} />
+    </div>
+  );
+}
+
+/**
+ * Album names for table rows, keyed by track id. The engine carries no album
+ * field, so this asks the BFF's cached enrichment once per row set; misses
+ * resolve to an em dash in the cell.
+ */
+function useAlbums(rows: Track[]): Record<string, string> {
+  const [map, setMap] = useState<Record<string, string>>({});
+  const key = rows.map(r => String(r.id)).join("|");
+  useEffect(() => {
+    const missing = rows.filter(t => !t.album);
+    if (missing.length === 0) return;
+    let cancelled = false;
+    void fetchAlbums(missing.map(t => ({ id: String(t.id), title: t.title, artist: t.artist }))).then(found => {
+      if (!cancelled && Object.keys(found).length > 0) {
+        setMap(prev => ({ ...prev, ...found }));
+      }
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  return map;
 }
 
 // ─── HomeScreen ───────────────────────────────────────────────────────────────
@@ -235,9 +288,9 @@ function HomeScreen() {
   /** Extra items for a shelf ("See all" / "Show more") come from the live engine. */
   const moreQuery = (s: HomeShelf): string | null =>
     s.id.startsWith("because-") ? s.title.replace(/^Because you played\s*/i, "")
-    : s.id === "region-kenya" ? "popular in kenya"
+    : s.id.startsWith("region-") ? `${s.title.replace(/^Popular in\s*/i, "")} top songs`
     : s.id === "trending-now" ? "trending music"
-    : s.id === "new-releases" ? "new releases"
+    : s.id === "new-releases" ? "new music releases"
     : null;
 
   const loadMore = async (shelf: HomeShelf) => {
@@ -438,9 +491,6 @@ function HomeScreen() {
   );
 }
 // ─── SearchScreen ─────────────────────────────────────────────────────────────
-const SEARCH_EMPTY_GIF =
-  "https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExc29mcmQ1b3JpZXB0MjJvNTh0MmpvZWFvdm40dzVxeXF4cnV4YmZwOCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/3o7aCSPqXE5C6T8tBC/giphy.gif";
-
 function SearchScreen({ seed }: { seed?: string }) {
   const { C, playTrack, discoveryTracks } = useApp();
   const [query, setQuery]     = useState(seed ?? "");
@@ -448,6 +498,22 @@ function SearchScreen({ seed }: { seed?: string }) {
   const [searching, setSearching] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<number | undefined>(undefined);
+
+  // Zero-state seeds: the local market category, recent queries, recent plays.
+  const market = marketLabel();
+  const recentSeeds = getRecentSearches();
+  const recentPlays = useMemo(
+    () => (getHistory() as unknown as Track[]).filter(t => t?.id != null).slice(0, 5),
+    [query], // refresh after a search settles — history may have grown
+  );
+  const browseTiles = useMemo(
+    () => [
+      { id: "market", label: `Popular in ${market}`, query: marketChartQuery(), bg: C.accent },
+      ...BROWSE_CATEGORIES,
+    ],
+    [market, C.accent],
+  );
+  const albumMap = useAlbums(results);
 
   useEffect(() => { inputRef.current?.focus(); }, []);
   // ⌘⇧L lands here — focus the field even when this screen stayed mounted.
@@ -471,15 +537,18 @@ function SearchScreen({ seed }: { seed?: string }) {
       if (tracks.length > 0) {
         setResults(sanitizeMusicItems(tracks.map((t, i) => fromApiTrack(t, i))));
         setSearching(false);
+        pushRecentSearch(query);
         sendEvent({ type: "search" });
         return;
       }
       // 2. Fallback: filter whatever is already cached locally.
       const q = query.toLowerCase();
-      setResults(discoveryTracks.filter(t =>
+      const local = discoveryTracks.filter(t =>
         t.title.toLowerCase().includes(q) || t.artist.toLowerCase().includes(q)
-      ));
+      );
+      setResults(local);
       setSearching(false);
+      if (local.length > 0) pushRecentSearch(query);
     }, 300);
 
     return () => clearTimeout(debounceRef.current);
@@ -502,39 +571,70 @@ function SearchScreen({ seed }: { seed?: string }) {
         )}
       </div>
 
-      {query ? (
-        searching ? (
-          [...Array(5)].map((_, i) => <TrackSkeleton key={i} />)
-        ) : results.length > 0 ? (
-          <>
-            <h2 style={{ fontSize: 17, fontWeight: 700, color: C.text, margin: "0 0 12px" }}>{results.length} result{results.length !== 1 ? "s" : ""}</h2>
-            {results.map((t, i) => (
-              <TrackRow key={t.id} track={t} index={i} showLike
-                // Up Next = the remaining search results after this one, in
-                // order; a vibe match continues the queue once they run out.
-                queue={queueRest(results, t)} />
-            ))}
-          </>
+      {/* Typing flips the view with a soft crossfade; the input never moves. */}
+      <div key={query.trim() ? "results" : "browse"} style={{ animation: "fadeIn .18s ease" }}>
+        {query ? (
+          searching ? (
+            [...Array(5)].map((_, i) => <TrackSkeleton key={i} />)
+          ) : results.length > 0 ? (
+            <>
+              <h2 style={{ fontSize: 17, fontWeight: 700, color: C.text, margin: "0 0 12px" }}>{results.length} result{results.length !== 1 ? "s" : ""}</h2>
+              <TrackTableHead showLike />
+              {results.map((t, i) => (
+                <TrackRow key={t.id} track={t} index={i} showLike showAlbum album={albumMap[String(t.id)]}
+                  // Up Next = the remaining search results after this one, in
+                  // order; a vibe match continues the queue once they run out.
+                  queue={queueRest(results, t)} />
+              ))}
+            </>
+          ) : (
+            <EmptyState icon={Search} title="No results" sub={`Nothing matched “${query}”. Try an artist, album, or a different spelling.`} />
+          )
         ) : (
-          <EmptyState icon={Search} title="No results" sub={`Nothing matched “${query}”. Try an artist, album, or a different spelling.`} />
-        )
-      ) : (
-        <EmptyStateCard
-          visual={SEARCH_EMPTY_GIF}
-          title="Search Vibra"
-          subtitle="Find tracks, artists, albums, or playlists."
-          action={
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
-              {BROWSE_CATEGORIES.slice(0, 5).map(cat => (
-                <button key={cat.id} onClick={() => setQuery(cat.label)}
-                  style={{ height: 32, padding: "0 14px", borderRadius: 16, border: `1px solid ${C.border}`, background: "transparent", color: C.muted, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
-                  {cat.label}
+          <>
+            {/* Browse all — the local market plus every category/genre tile. */}
+            <h2 style={{ fontSize: 17, fontWeight: 700, color: C.text, margin: "0 0 12px" }}>Recommended for you</h2>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(168px, 1fr))", gap: 10 }}>
+              {browseTiles.map(tile => (
+                <button key={tile.id} onClick={() => setQuery("query" in tile ? tile.query : tile.label)}
+                  style={{ position: "relative", height: 74, borderRadius: 12, border: "none", cursor: "pointer", overflow: "hidden", background: tile.bg, padding: "0 16px", display: "flex", alignItems: "flex-end", textAlign: "left", transition: "transform .15s" }}
+                  onMouseEnter={e => (e.currentTarget.style.transform = "scale(1.02)")}
+                  onMouseLeave={e => (e.currentTarget.style.transform = "scale(1)")}>
+                  <span style={{ fontWeight: 800, fontSize: 15, color: "#fff", textShadow: "0 1px 8px rgba(0,0,0,0.45)", paddingBottom: 2 }}>{tile.label}</span>
                 </button>
               ))}
             </div>
-          }
-        />
-      )}
+
+            {/* Recent seeds — queries first, then what was last played. */}
+            {recentSeeds.length > 0 && (
+              <section style={{ marginTop: 28 }}>
+                <h2 style={{ fontSize: 17, fontWeight: 700, color: C.text, margin: "0 0 12px" }}>Recent searches</h2>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {recentSeeds.map(q => (
+                    <button key={q} onClick={() => setQuery(q)}
+                      style={{ height: 34, padding: "0 16px", borderRadius: 17, border: `1px solid ${C.border}`, background: C.surf, color: C.text, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                      {q}
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
+            {recentPlays.length > 0 && (
+              <section style={{ marginTop: 28 }}>
+                <h2 style={{ fontSize: 17, fontWeight: 700, color: C.text, margin: "0 0 8px" }}>Recently played</h2>
+                {recentPlays.map((t, i) => (
+                  <TrackRow key={`${t.id}-${i}`} track={t} index={i} queue={queueRest(recentPlays, t)} />
+                ))}
+              </section>
+            )}
+            {recentSeeds.length === 0 && recentPlays.length === 0 && (
+              <div style={{ marginTop: 22, fontSize: 13.5, color: C.muted, lineHeight: 1.6 }}>
+                Search for a song, or tap a category above — trending charts for your region are ready to play.
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -676,6 +776,7 @@ function DiscoverScreen() {
 function LibraryScreen({ tab: initTab = "playlists" }: { tab?: LibTab }) {
   const { C, navigate, playTrack, playlists, playlistsLoading, likedTracks, artists, newReleases, downloadedTracks, refreshDownloads, openCreatePlaylist, uiState } = useApp();
   const [tab, setTab] = useState<LibTab>(initTab);
+  const albumMap = useAlbums(likedTracks);
 
   const TABS: { id: LibTab; label: string }[] = [
     { id: "playlists",  label: "Playlists"  },
@@ -741,7 +842,12 @@ function LibraryScreen({ tab: initTab = "playlists" }: { tab?: LibTab }) {
 
         {tab === "liked" && (
           likedTracks.length > 0
-            ? (likedTracks || []).map((t, i) => <TrackRow key={t.id} track={t} index={i} queue={queueRest(likedTracks, t)} showLike />)
+            ? (
+              <>
+                <TrackTableHead showLike />
+                {(likedTracks || []).map((t, i) => <TrackRow key={t.id} track={t} index={i} queue={queueRest(likedTracks, t)} showLike showAlbum album={albumMap[String(t.id)]} />)}
+              </>
+            )
             : <EmptyState icon={Heart} title="No liked songs" sub="Songs you heart will appear here." />
         )}
 
@@ -822,6 +928,7 @@ function PlaylistScreen({ item }: { item: PlaylistItem }) {
 
   const tracks = fullPlaylist.tracks || [];
   const totalSec = tracks.reduce((sum, t) => sum + (t.durationSec ?? 0), 0);
+  const albumMap = useAlbums(tracks);
 
   return (
     <div style={{ flex: 1, overflowY: "auto", scrollbarWidth: "none", paddingBottom: 32 }}>
@@ -884,7 +991,10 @@ function PlaylistScreen({ item }: { item: PlaylistItem }) {
         {loading
           ? [...Array(6)].map((_, i) => <TrackSkeleton key={i} />)
           : tracks.length > 0
-            ? tracks.map((t, i) => {
+            ? (
+              <>
+                <TrackTableHead showLike />
+                {tracks.map((t, i) => {
                 const dropTarget = dragOverIdx === i && dragIdx !== null && dragIdx !== i;
                 return (
                   <div key={`${t.id}-${i}`}
@@ -919,10 +1029,12 @@ function PlaylistScreen({ item }: { item: PlaylistItem }) {
                       cursor: dragIdx === i ? "grabbing" : "grab",
                       transition: "box-shadow .12s",
                     }}>
-                    <TrackRow track={t} index={i} queue={queueRest(tracks, t)} showLike />
+                    <TrackRow track={t} index={i} queue={queueRest(tracks, t)} showLike showAlbum album={albumMap[String(t.id)]} />
                   </div>
                 );
-              })
+                })}
+              </>
+            )
             : <EmptyState title="No tracks" sub="This playlist is empty." />
         }
       </div>
@@ -1587,7 +1699,7 @@ function ScreenView({ s }: { s: Screen }) {
 
 // ─── LeftSidebar ──────────────────────────────────────────────────────────────
 function LeftSidebar() {
-  const { C, screen, navigate, playlists, user, likedTrackIds, openCreatePlaylist, uiState, devicesOpen, setDevicesOpen } = useApp();
+  const { C, screen, navigate, playlists, user, likedTrackIds, openCreatePlaylist, uiState } = useApp();
 
   const NAV = [
     { id: "home",     label: "Home",     Icon: Home },
@@ -1730,11 +1842,6 @@ function LeftSidebar() {
             </button>
           </div>
         )}
-        <button onClick={() => setDevicesOpen(!devicesOpen)} aria-label="Devices"
-          style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, height: 38, padding: "0 12px", marginTop: 2, borderRadius: 10, border: "none", cursor: "pointer", background: devicesOpen ? C.surf : "transparent", color: devicesOpen ? C.text : C.muted, fontWeight: 600, fontSize: 13.5, textAlign: "left", transition: "all .15s" }}>
-          <Volume2 size={16} />
-          Devices
-        </button>
       </div>
     </div>
   );
@@ -1954,14 +2061,11 @@ function PlayerBar() {
   const {
     C, currentTrack, isPlaying, togglePlay, playNext, playPrev,
     progress, elapsed, audioDuration, handleSeek,
-    likedTrackIds, toggleLike,
     shuffleOn, toggleShuffle, repeatMode, cycleRepeat,
-    volume, setVolume, uiState, panelTab, openPanel, togglePanel,
-    setPlayerPageOpen, playerPageOpen, devices, outputDevice, refreshDevices, selectOutput,
+    volume, setVolume, uiState, panelTab, togglePanel,
+    setPlayerPageOpen, playerPageOpen,
   } = useApp();
-  const isLiked = currentTrack ? likedTrackIds.has(currentTrack.id) : false;
   const [showVol, setShowVol] = useState(false);
-  const [showDevices, setShowDevices] = useState(false);
 
   const iconBtn = (active = false): React.CSSProperties => ({
     width: 32, height: 32, background: "none", border: "none", cursor: "pointer",
@@ -1970,7 +2074,7 @@ function PlayerBar() {
 
   return (
     <div style={{ background: C.pane, display: "flex", alignItems: "center", padding: "0 16px", height: "100%", gap: 16, position: "relative", overflow: "hidden" }}>
-      {/* Left — cover/title open the full player; heart */}
+      {/* Left — cover/title open the full player */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 0 }}>
         {currentTrack && (
           <>
@@ -1986,11 +2090,6 @@ function PlayerBar() {
               <div style={{ fontWeight: 700, fontSize: 14, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentTrack.title}</div>
               <div style={{ fontSize: 12, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentTrack.artist}</div>
             </button>
-            {uiState.signedIn && (
-              <button onClick={() => toggleLike(currentTrack.id)} aria-label={isLiked ? "Unlike" : "Like"} style={{ ...iconBtn(isLiked), flexShrink: 0 }}>
-                <Heart size={15} fill={isLiked ? C.accent : "none"} />
-              </button>
-            )}
           </>
         )}
       </div>
@@ -2034,32 +2133,12 @@ function PlayerBar() {
         </div>
       </div>
 
-      {/* Right — panel openers, output chip, volume, expand (never transport) */}
+      {/* Right — panel openers, volume, expand (never transport) */}
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 2, position: "relative", minWidth: 0 }}>
         {uiState.hasQueue && (
           <button onClick={() => togglePanel("queue")} aria-label="Queue" style={iconBtn(panelTab === "queue")}>
             <ListMusic size={16} />
           </button>
-        )}
-        {uiState.isPlaying && (
-          <button onClick={() => { setShowDevices(v => !v); refreshDevices(true); }} aria-label="Choose output device"
-            style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 30, padding: "0 10px", borderRadius: 999, background: showDevices ? C.surf : "none", border: "none", cursor: "pointer", color: C.muted, fontSize: 11.5, fontWeight: 600, maxWidth: 170 }}>
-            <Headphones size={15} style={{ flexShrink: 0 }} />
-            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{outputDevice.name}</span>
-          </button>
-        )}
-        {showDevices && (
-          <div style={{ position: "absolute", bottom: "calc(100% + 10px)", right: 0, width: 250, background: C.pane, border: `1px solid ${C.border}`, borderRadius: 14, padding: 8, zIndex: 30, boxShadow: "0 12px 40px rgba(0,0,0,0.5)" }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: 0.5, padding: "6px 8px 8px" }}>Play audio on</div>
-            {(devices.length > 0 ? devices : [outputDevice]).map(d => (
-              <button key={d.id} onClick={() => { selectOutput(d.id); setShowDevices(false); }}
-                style={{ width: "100%", display: "flex", alignItems: "center", gap: 9, height: 38, padding: "0 8px", borderRadius: 9, border: "none", cursor: "pointer", background: d.id === outputDevice.id ? C.surf : "transparent", color: d.id === outputDevice.id ? C.text : C.muted, fontSize: 13, fontWeight: 600, textAlign: "left" }}>
-                {d.kind === "headphones" ? <Headphones size={14} /> : d.kind === "phone" ? <Smartphone size={14} /> : d.kind === "speaker" ? <Speaker size={14} /> : <MonitorSpeaker size={14} />}
-                <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.name}</span>
-                {d.id === outputDevice.id && <Check size={14} />}
-              </button>
-            ))}
-          </div>
         )}
         <button onClick={() => setShowVol(v => !v)} aria-label="Volume" style={iconBtn(volume === 0)}>
           {volume === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />}
@@ -2250,7 +2329,6 @@ export default function App() {
   // ── Contextual UI ─────────────────────────────────────────────────────────────
   /** Right panel — closed by default; the bar opens it per tab. */
   const [panelTab, setPanelTab] = useState<PanelTab | null>(null);
-  const [devicesOpen, setDevicesOpen] = useState(false);
   const [playerPageOpen, setPlayerPageOpen] = useState(false);
   /** Failure shown in the main area; shell/sidebar/bar stay intact. */
   const [errorState, setErrorState] = useState<AppError | null>(null);
@@ -2408,36 +2486,51 @@ export default function App() {
   }, [refreshDevices]);
 
   // ── Fetch discovery from the live audio engine ───────────────────────────────
+  // The BFF blends these queries with the browser's initial locale, so a
+  // first-visit account gets its local charts before any play telemetry.
   useEffect(() => {
     setDiscoveryLoading(true);
     let cancelled = false;
-    Promise.all([
-      searchTracks("trending music", 20),
-      searchTracks("new releases", 12),
-      api<any[]>("/discover/new-releases"),
-    ]).then(([trendingList, freshList, backendNR]) => {
-      if (cancelled) return;
-      if (trendingList.length > 0) {
-        const all = trendingList.map((t, i) => fromApiTrack(t, i));
-        setDiscoveryTracks(all.slice(0, 8));
-        setTrendingTracks(all);
-        setRecentTracks(prev => prev.length > 0 ? prev : all.slice(8, 12));
-        if (!backendNR) {
-          setNewReleases(all.slice(0, 6).map((t, i) => ({
+    (async () => {
+      try {
+        const [trendingRows, featuredRows, backendNR] = await Promise.all([
+          api<unknown[]>(`/discover/trending?${localeParam()}`),
+          api<unknown[]>(`/discover/featured?${localeParam()}`),
+          api<any[]>("/discover/new-releases"),
+        ]);
+        // BFF unreachable → engine-direct fallback (market chart + generic).
+        let trendingList = toApiTracks(trendingRows);
+        if (trendingList.length === 0) {
+          trendingList = await searchTracks(marketChartQuery(), 20);
+          if (trendingList.length === 0) trendingList = await searchTracks("trending music", 20);
+        }
+        let freshList = toApiTracks(featuredRows, 12);
+        if (freshList.length === 0) freshList = await searchTracks("new music releases", 12);
+        if (cancelled) return;
+        if (trendingList.length > 0) {
+          const all = trendingList.map((t, i) => fromApiTrack(t, i));
+          setDiscoveryTracks(all.slice(0, 8));
+          setTrendingTracks(all);
+          setRecentTracks(prev => prev.length > 0 ? prev : all.slice(8, 12));
+          if (!backendNR) {
+            setNewReleases(all.slice(0, 6).map((t, i) => ({
+              id: String(t.id), title: t.title, artist: t.artist,
+              year: String(new Date().getFullYear()), bg: t.bg, imageUrl: t.imageUrl, trackCount: 1,
+            })));
+          }
+        }
+        if (freshList.length > 0 && !backendNR) {
+          setNewReleases(prev => prev.length > 0 ? prev : freshList.slice(0, 6).map((t, i) => ({
             id: String(t.id), title: t.title, artist: t.artist,
-            year: String(new Date().getFullYear()), bg: t.bg, imageUrl: t.imageUrl, trackCount: 1,
+            year: String(new Date().getFullYear()), bg: BG_PALETTE[i % BG_PALETTE.length], imageUrl: t.imageUrl, trackCount: 1,
           })));
         }
+        if (backendNR) setNewReleases(backendNR.map(mapAPIAlbum));
+        setDiscoveryLoading(false);
+      } catch {
+        if (!cancelled) setDiscoveryLoading(false);
       }
-      if (freshList.length > 0 && !backendNR) {
-        setNewReleases(prev => prev.length > 0 ? prev : freshList.slice(0, 6).map((t, i) => ({
-          id: String(t.id), title: t.title, artist: t.artist,
-          year: String(new Date().getFullYear()), bg: BG_PALETTE[i % BG_PALETTE.length], imageUrl: t.imageUrl, trackCount: 1,
-        })));
-      }
-      if (backendNR) setNewReleases(backendNR.map(mapAPIAlbum));
-      setDiscoveryLoading(false);
-    }).catch(() => { if (!cancelled) setDiscoveryLoading(false); });
+    })();
     return () => { cancelled = true; };
   }, []);
 
@@ -3038,7 +3131,6 @@ export default function App() {
     repeatMode, cycleRepeat: () => setRepeatMode(m => m === "off" ? "one" : m === "one" ? "all" : "off"),
     volume, setVolume,
     uiState, panelTab, openPanel, togglePanel,
-    devicesOpen, setDevicesOpen,
     playerPageOpen, setPlayerPageOpen,
     errorState, showError, clearError,
     user, userLoading, login, register, logout,
@@ -3134,42 +3226,6 @@ export default function App() {
           <div style={{ gridColumn: "1 / -1", gridRow: "2", borderRadius: 18, overflow: "hidden", border: `1px solid ${C.border}`, minWidth: 0 }}>
             <PlayerBar />
           </div>
-        )}
-
-        {/* Connect to a device — popover above the player bar, per design */}
-        {devicesOpen && (
-          <>
-            <div onClick={() => setDevicesOpen(false)}
-              style={{ position: "fixed", inset: 0, zIndex: 34 }} />
-            <div style={{ position: "absolute", right: 24, bottom: uiState.hasPlayback ? 112 : 24, width: 340, background: C.pane, border: `1px solid ${C.border}`, borderRadius: 16, padding: 14, zIndex: 35, boxShadow: "0 20px 50px rgba(0,0,0,0.6)", display: "flex", flexDirection: "column", gap: 2 }}>
-              <div style={{ fontWeight: 800, fontSize: 16, color: C.text, padding: "6px 10px 8px" }}>Connect to a device</div>
-              {(devices.length > 0 ? devices : [outputDevice]).map(d => {
-                const active = d.id === outputDevice.id;
-                return (
-                  <button key={d.id} onClick={() => { selectOutput(d.id); setDevicesOpen(false); }}
-                    style={{ display: "flex", gap: 14, alignItems: "center", border: "none", background: "none", color: C.muted, borderRadius: 10, padding: 10, textAlign: "left", width: "100%", cursor: "pointer" }}>
-                    {d.kind === "headphones" ? <Headphones size={24} color={active ? C.accent : C.muted} /> : d.kind === "phone" ? <Smartphone size={24} color={active ? C.accent : C.muted} /> : d.kind === "speaker" ? <Speaker size={24} color={active ? C.accent : C.muted} /> : <MonitorSpeaker size={24} color={active ? C.accent : C.muted} />}
-                    <span style={{ fontSize: 14, minWidth: 0 }}>
-                      <b style={{ display: "block", color: active ? C.accent : C.text }}>{d.name}</b>
-                      {active ? (
-                        <span style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12, color: C.accent, fontWeight: 600 }}>
-                          <span style={{ display: "inline-flex", alignItems: "flex-end", gap: 1.5, height: 10 }}>
-                            {[6, 10, 7].map((hgt, i) => <span key={i} style={{ width: 2.5, height: hgt, borderRadius: 1, background: C.accent }} />)}
-                          </span>
-                          Listening here
-                        </span>
-                      ) : (
-                        <span style={{ fontSize: 12, color: C.dim }}>{d.kind === "phone" ? "Vibra mobile app · Tap to play here" : d.kind === "speaker" ? "Cast · Tap to play here" : "Tap to play here"}</span>
-                      )}
-                    </span>
-                  </button>
-                );
-              })}
-              <div style={{ fontSize: 12, color: C.dim, padding: "8px 10px 2px", lineHeight: 1.5 }}>
-                Don't see your device? Open Vibra on it and sign in.
-              </div>
-            </div>
-          </>
         )}
       </div>
 

@@ -72,12 +72,28 @@ function MediaCard({
           fontWeight: 700,
           fontSize: pane ? 14 : 13.5,
           color: C.text,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
           width: "100%",
           minWidth: 0,
-          ...(row ? { flex: 1, padding: "0 12px" } : { marginTop: pane ? 12 : 9 }),
+          ...(row
+            ? {
+                flex: 1,
+                padding: "0 12px",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }
+            : {
+                // Two lines, then ellipsis — long titles breathe instead of
+                // clipping mid-word, and minHeight keeps tile rows aligned.
+                marginTop: pane ? 12 : 9,
+                minHeight: pane ? 38 : 36,
+                display: "-webkit-box",
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: "vertical",
+                whiteSpace: "normal",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }),
         }}
       >
         {title}

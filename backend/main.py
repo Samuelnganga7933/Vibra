@@ -13,17 +13,20 @@ from __future__ import annotations
 import hashlib
 import os
 import secrets
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import httpx
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import distinct, func, select
 from sqlalchemy.orm import Session
 
 from catalogue import search_catalogue
-from database import Base, engine, get_db
+from database import Base, SessionLocal, engine, get_db
+from market import market_label, market_queries, merged_catalogue, region_query, scene_queries
 from models import (
     ArtistScore,
     BlockedItem,
@@ -36,8 +39,11 @@ from models import (
     User,
 )
 from schemas import (
+    AlbumLookupIn,
+    AlbumQueryIn,
     ArtistOut,
     AuthOut,
+    DiscoverTrackOut,
     FollowIn,
     HistoryPauseIn,
     HomeItemOut,
@@ -660,7 +666,7 @@ def follow_artist(artist_id: str, payload: FollowIn, user: User = Depends(get_cu
 @app.get("/discover/new-releases", response_model=list[NewReleaseOut])
 def new_releases():
     """Fresh tracks from the live engine, shaped as single-track releases."""
-    rows = search_catalogue("new releases", 12)
+    rows = search_catalogue("new music releases", 12)
     return [
         NewReleaseOut(
             id=str(r["id"]),
@@ -671,6 +677,132 @@ def new_releases():
         )
         for r in rows
     ]
+
+
+def _discover_out(rows: list[dict], limit: int) -> list[DiscoverTrackOut]:
+    out: list[DiscoverTrackOut] = []
+    for row in rows:
+        video_id = row.get("videoId") or row.get("id")
+        title = row.get("title")
+        if not video_id or not title:
+            continue
+        out.append(DiscoverTrackOut(
+            id=str(video_id),
+            videoId=str(video_id),
+            title=title,
+            artist=row.get("artist"),
+            album=row.get("album"),
+            durationSec=row.get("durationSec"),
+            imageUrl=row.get("imageUrl"),
+        ))
+        if len(out) >= limit:
+            break
+    return out
+
+
+@app.get("/discover/trending", response_model=list[DiscoverTrackOut])
+def discover_trending(locale: Optional[str] = None, limit: int = 20):
+    """First-run trending, blended toward the caller's market.
+
+    The browser passes its initial locale (navigator.language) so a brand-new
+    account sees its local charts before any play telemetry exists.
+    """
+    limit = max(1, min(limit, 50))
+    queries = market_queries(locale) + ["trending music"]
+    return _discover_out(merged_catalogue(queries, limit), limit)
+
+
+@app.get("/discover/featured", response_model=list[DiscoverTrackOut])
+def discover_featured(locale: Optional[str] = None, limit: int = 16):
+    """Fresh picks for the empty state: new releases plus the local market."""
+    limit = max(1, min(limit, 50))
+    queries = ["new music releases"] + market_queries(locale)
+    return _discover_out(merged_catalogue(queries, limit), limit)
+
+
+# ── Track metadata: album enrichment (public iTunes search, cached) ───────────
+
+_ALBUM_CACHE: dict[str, Optional[str]] = {}
+_ALBUM_CACHE_MAX = 2048
+
+
+def _album_key(title: str, artist: Optional[str]) -> str:
+    return f"{(artist or '').strip().lower()}|{title.strip().lower()}"
+
+
+def _itunes_match(term: str, want_artist: str) -> Optional[str]:
+    """First collection whose artist agrees with the query; None if no match."""
+    try:
+        response = httpx.get(
+            "https://itunes.apple.com/search",
+            params={"term": term, "entity": "song", "limit": 5},
+            timeout=4.0,
+            follow_redirects=True,
+        )
+        results = response.json().get("results", [])
+    except Exception:
+        return None
+    if not isinstance(results, list):
+        return None
+    want = (want_artist or "").strip().lower()
+    for row in results:
+        if not isinstance(row, dict):
+            continue
+        collection = row.get("collectionName")
+        if not isinstance(collection, str) or not collection:
+            continue
+        if not want:
+            return collection
+        got = str(row.get("artistName") or "").strip().lower()
+        if want in got or got in want:
+            return collection
+    return None
+
+
+def _lookup_album(title: str, artist: Optional[str]) -> Optional[str]:
+    """Best-effort collection name for one track; None when unmatchable.
+
+    The artist must agree with the result — a bare title match (songs named
+    after common words) would invent wrong albums, and we never invent.
+    Engine rows also carry YouTube channel names as the artist, so a miss
+    retries with the real artist embedded in "Artist - Title" upload names.
+    """
+    direct = _itunes_match(
+        f"{artist} {title}".strip() if artist else title, artist or ""
+    )
+    if direct or not artist or " - " not in title:
+        return direct
+    pre, _, post = title.partition(" - ")
+    pre, post = pre.strip(), post.strip()
+    if not pre or not post:
+        return direct
+    return _itunes_match(f"{pre} {post}", pre)
+
+
+@app.post("/meta/albums")
+def lookup_albums(payload: AlbumLookupIn) -> dict[str, Optional[str]]:
+    """{trackId: album} for the requested rows; null when metadata has none."""
+    out: dict[str, Optional[str]] = {}
+    pending: list[AlbumQueryIn] = []
+    for track in payload.tracks[:30]:
+        key = _album_key(track.title, track.artist)
+        if key in _ALBUM_CACHE:
+            out[track.id] = _ALBUM_CACHE[key]
+        else:
+            pending.append(track)
+
+    if pending:
+        with ThreadPoolExecutor(max_workers=min(6, len(pending))) as pool:
+            found = list(pool.map(
+                lambda t: _lookup_album(t.title, t.artist),
+                pending,
+            ))
+        for track, album in zip(pending, found):
+            _ALBUM_CACHE[_album_key(track.title, track.artist)] = album
+            while len(_ALBUM_CACHE) > _ALBUM_CACHE_MAX:
+                _ALBUM_CACHE.pop(next(iter(_ALBUM_CACHE)))
+            out[track.id] = album
+    return out
 
 
 # ── Telemetry ─────────────────────────────────────────────────────────────────
@@ -753,15 +885,24 @@ def _items_from_events(events: list[PlayEventRow]) -> list[HomeItemOut]:
     ]
 
 
-def _guest_shelves() -> list[HomeShelfOut]:
-    """Cold start / signed out: region and trending shelves, same components."""
-    kenya = _items_from_tracks(search_catalogue("popular in kenya", 10))
-    trending = _items_from_tracks(search_catalogue("trending music", 10))
-    fresh = _items_from_tracks(search_catalogue("new releases", 10))
+def _guest_shelves(locale: Optional[str] = None) -> list[HomeShelfOut]:
+    """Cold start / signed out: region and trending shelves, same components.
+
+    `locale` (navigator.language from the client) picks the region market —
+    no fixed language: ko-KR gets Korean charts, en-KE gets Kenya, and a
+    locale-less client keeps the product default market.
+    """
+    market = market_label(locale)
+    region = _items_from_tracks(search_catalogue(region_query(locale), 10))
+    trending = _items_from_tracks(merged_catalogue(scene_queries(locale) + ["trending music"], 10))
+    fresh = _items_from_tracks(search_catalogue("new music releases", 10))
 
     shelves: list[HomeShelfOut] = []
-    if kenya:
-        shelves.append(HomeShelfOut(id="region-kenya", type="shelf", title="Popular in Kenya", items=kenya))
+    if region:
+        shelves.append(HomeShelfOut(
+            id=f"region-{market.lower().replace(' ', '-')}",
+            type="shelf", title=f"Popular in {market}", items=region,
+        ))
     if trending:
         shelves.append(HomeShelfOut(id="trending-now", type="shelf", title="Trending now", items=trending))
     if fresh:
@@ -769,7 +910,7 @@ def _guest_shelves() -> list[HomeShelfOut]:
     return shelves
 
 
-def _home_for_user(db: Session, user: User) -> list[HomeShelfOut]:
+def _home_for_user(db: Session, user: User, locale: Optional[str] = None) -> list[HomeShelfOut]:
     blocked_tracks = set(db.scalars(
         select(BlockedItem.value).where(BlockedItem.user_id == user.id, BlockedItem.kind == "track")
     ).all())
@@ -792,7 +933,7 @@ def _home_for_user(db: Session, user: User) -> list[HomeShelfOut]:
         and (e.artist is None or e.artist not in blocked_artists)
     ]
     if not played:
-        return _guest_shelves()
+        return _guest_shelves(locale)
 
     # Distinct, newest-first plays.
     seen: set[str] = set()
@@ -850,13 +991,17 @@ def _home_for_user(db: Session, user: User) -> list[HomeShelfOut]:
     # Generic trending only when there is nothing learned yet — never next to
     # a personalized shelf.
     if not top_artists:
-        shelves.extend(s for s in _guest_shelves() if s.id != "region-kenya")
+        shelves.extend(s for s in _guest_shelves(locale) if not s.id.startswith("region-"))
     return shelves
 
 
 @app.get("/api/home", response_model=HomeOut)
-def home(user: Optional[User] = Depends(get_optional_user), db: Session = Depends(get_db)):
-    shelves = _home_for_user(db, user) if user is not None else _guest_shelves()
+def home(
+    user: Optional[User] = Depends(get_optional_user),
+    db: Session = Depends(get_db),
+    locale: Optional[str] = None,
+):
+    shelves = _home_for_user(db, user, locale) if user is not None else _guest_shelves(locale)
     return HomeOut(shelves=shelves)
 
 

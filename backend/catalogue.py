@@ -37,7 +37,8 @@ _NON_MUSIC = re.compile(
     r"lecture|interview|reaction|gameplay|unboxing|vlog|live stream|livestream|"
     r"audiobook|audiobooks|commentary|behind the scenes|movie scene|film scene|"
     r"weather|highlights reel|sports highlights|tv show|full show|standup|stand-up comedy|"
-    r"comedy special|audio book"
+    r"comedy special|audio book|"
+    r"tutorial|how to|how-to|lesson|for beginners|phrases|vocabulary|language learning"
     r")\b",
     re.IGNORECASE,
 )

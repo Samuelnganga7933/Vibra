@@ -112,6 +112,24 @@ function extractTracks(data: unknown): unknown[] {
   return [];
 }
 
+/**
+ * Maps a BFF discovery payload (`/discover/trending`, `/discover/featured`)
+ * into ApiTracks. Returns [] for null/failed fetches so callers can fall
+ * back to a direct engine search.
+ */
+export function toApiTracks(data: unknown, limit = 24): ApiTrack[] {
+  const out: ApiTrack[] = [];
+  const seen = new Set<string>();
+  for (const row of extractTracks(data)) {
+    const track = normalizeTrack(row);
+    if (!track || seen.has(track.id)) continue;
+    seen.add(track.id);
+    out.push(track);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
 // ─── Endpoints ────────────────────────────────────────────────────────────────
 
 /**

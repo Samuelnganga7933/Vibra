@@ -137,7 +137,29 @@ export function mergeHistory(tracks: StoredTrack[]): StoredTrack[] {
 /** Empties the stored history (Settings → listening history reset). */
 export function clearHistory(): StoredTrack[] {
   writeJSON(HISTORY_KEY, []);
+  writeJSON(RECENT_SEARCHES_KEY, []);
   return [];
+}
+
+// ─── Recent search seeds ──────────────────────────────────────────────────────
+// Key: vibra_recent_searches — the Search zero-state's "recent seeds".
+
+const RECENT_SEARCHES_KEY = "vibra_recent_searches";
+const RECENT_SEARCHES_LIMIT = 8;
+
+/** Recent search queries, newest first. */
+export function getRecentSearches(): string[] {
+  const list = readJSON<unknown>(RECENT_SEARCHES_KEY, []);
+  if (!Array.isArray(list)) return [];
+  return list.filter((q): q is string => typeof q === "string" && q.trim().length > 0).slice(0, RECENT_SEARCHES_LIMIT);
+}
+
+/** Records a settled search query at the top of the seeds (deduped, capped). */
+export function pushRecentSearch(query: string): void {
+  const q = query.trim();
+  if (!q) return;
+  const rest = getRecentSearches().filter(s => s.toLowerCase() !== q.toLowerCase());
+  writeJSON(RECENT_SEARCHES_KEY, [q, ...rest].slice(0, RECENT_SEARCHES_LIMIT));
 }
 
 function isStoredTrack(value: unknown): value is StoredTrack {

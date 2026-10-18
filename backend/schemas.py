@@ -101,6 +101,32 @@ class NewReleaseOut(BaseModel):
     trackCount: int = 1
 
 
+class DiscoverTrackOut(BaseModel):
+    """A market-aligned discovery row (engine shape, snake-free keys)."""
+
+    id: str
+    videoId: Optional[str] = None
+    title: str
+    artist: Optional[str] = None
+    album: Optional[str] = None
+    durationSec: Optional[int] = None
+    imageUrl: Optional[str] = None
+    coverColor: str = "#2C4A5E"
+
+
+class AlbumQueryIn(BaseModel):
+    id: str = Field(min_length=1, max_length=64)
+    title: str = Field(min_length=1, max_length=300)
+    artist: Optional[str] = Field(default=None, max_length=200)
+
+
+class AlbumLookupIn(BaseModel):
+    """Batch album enrichment for table rows — the engine search carries no
+    album field, so the BFF resolves collection names from public metadata."""
+
+    tracks: list[AlbumQueryIn] = Field(default_factory=list, max_length=30)
+
+
 class LikeToggle(BaseModel):
     liked: bool
 
