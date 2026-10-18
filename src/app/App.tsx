@@ -2421,6 +2421,12 @@ export default function App() {
   // User & library
   const [user, setUser]                             = useState<User | null>(null);
   const [userLoading, setUserLoading]               = useState(true);
+  /**
+   * Hard auth gate: the app belongs to a signed-in listener. A live session
+   * OR the persisted local profile (someone signed in before, now offline)
+   * opens it; everyone else gets the Log in screen and nothing else.
+   */
+  const authGate = !userLoading && !user;
   const [playlists, setPlaylists]                   = useState<PlaylistItem[]>(() => getStoredPlaylists() as unknown as PlaylistItem[]);
   const [playlistsLoading, setPlaylistsLoading]     = useState(false);
   const [likedTrackIds, setLikedTrackIds]           = useState<Set<string | number>>(new Set());
@@ -3306,6 +3312,11 @@ export default function App() {
     };
   }, [uiState.signedIn, isPlaying, logout]);
 
+  // ── Leaving the app stops the sound — nothing plays over the gate ────────────
+  useEffect(() => {
+    if (authGate && isPlaying) togglePlay();
+  }, [authGate, isPlaying, togglePlay]);
+
   const ctxValue: AppCtxType = {
     C, navigate, goBack, canGoBack: navStack.length > 1, screen,
     currentTrack, isPlaying, progress, elapsed, audioDuration,
@@ -3378,6 +3389,19 @@ export default function App() {
         @keyframes fadeIn  { from{opacity:0} to{opacity:1} }
       `}</style>
 
+      {userLoading ? (
+        /* Splash — while bootstrap checks the session (including the return
+           from Google sign-in), the app shows neither Home nor the gate. */
+        <div style={{ position: "fixed", inset: 0, background: C.bg, display: "grid", placeItems: "center" }}>
+          <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: -0.5, color: C.text, animation: "fadeIn .4s ease" }}>
+            vibra<span style={{ color: C.accent }}>.</span>
+          </div>
+        </div>
+      ) : authGate ? (
+        /* Hard gate — no shell, no deep links, no escape until signed in. */
+        <AuthScreen mode={screen.id === "auth" ? screen.mode : "login"} />
+      ) : (
+        <>
       {/* Global modals */}
       {trackOptionsTrack && <TrackOptionsSheet track={trackOptionsTrack} onClose={() => setTrackOptionsTrack(null)} />}
       {createPlaylistOpen && (
@@ -3421,6 +3445,8 @@ export default function App() {
       <div className="md:hidden" style={{ height: "100dvh", position: "relative", overflow: "hidden", background: C.bg }}>
         <MobileLayout />
       </div>
+        </>
+      )}
     </AppCtx.Provider>
     </ErrorBoundary>
     </UiThemeContext.Provider>

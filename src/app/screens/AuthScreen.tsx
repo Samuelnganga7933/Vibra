@@ -7,12 +7,14 @@ import { signInWithGoogle } from "../services/neonAuth";
 /**
  * Log in / Sign up — the full-screen split layout from the design boards
  * (docs/design/boards/Login.html and Signup.html): form on the left, gradient
- * cover-card panel on the right. Covers the shell completely while open; the
- * logo sends you back to browsing.
+ * cover-card panel on the right. Under the hard gate this IS the whole app:
+ * the logo is inert while signed out, and mode switching stays local so the
+ * nav stack never holds an auth entry to crawl back out of.
  */
-export function AuthScreen({ mode }: { mode: "login" | "signup" }) {
-  const { C, login, register, navigate, clearError } = useApp();
+export function AuthScreen({ mode: initialMode }: { mode: "login" | "signup" }) {
+  const { C, login, register, navigate, clearError, user, screen } = useApp();
 
+  const [mode, setMode] = useState<"login" | "signup">(initialMode);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [reveal, setReveal] = useState(false);
@@ -24,10 +26,12 @@ export function AuthScreen({ mode }: { mode: "login" | "signup" }) {
 
   const switchMode = () => {
     setError(null);
-    navigate({ id: "auth", mode: isSignup ? "login" : "signup" });
+    setMode(m => (m === "login" ? "signup" : "login"));
   };
 
   const goHome = () => {
+    // Hard gate: while signed out there is nothing behind this screen.
+    if (!user) return;
     clearError();
     navigate({ id: "home" });
   };
@@ -50,7 +54,11 @@ export function AuthScreen({ mode }: { mode: "login" | "signup" }) {
     setBusy(false);
     if (failure) { setError(failure); return; }
     clearError();
-    navigate({ id: "home" });
+    // Sign up lands on Home (spec). Log in lifts the gate wherever the stack
+    // already points — a deep link survives — unless we're on the auth screen
+    // itself, which would otherwise stay covering the shell.
+    if (isSignup) navigate({ id: "home" });
+    else if (screen.id === "auth") navigate({ id: "home" });
   };
 
   const google = async () => {
@@ -85,10 +93,11 @@ export function AuthScreen({ mode }: { mode: "login" | "signup" }) {
     }}>
       {/* ── Form side ─────────────────────────────────────────────────────── */}
       <section style={{ position: "relative", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", padding: "0 48px" }}>
-        <button onClick={goHome} aria-label="Back to Home"
+        <button onClick={goHome} aria-label={user ? "Back to Home" : "Vibra"} disabled={!user}
           style={{
             position: "absolute", top: 36, left: 48, fontSize: 28, fontWeight: 800,
-            color: C.text, background: "none", border: "none", padding: 0, cursor: "pointer",
+            color: C.text, background: "none", border: "none", padding: 0,
+            cursor: user ? "pointer" : "default",
             fontFamily: "inherit", lineHeight: 1,
           }}>
           vibra<span style={{ color: "var(--brand)" }}>.</span>
