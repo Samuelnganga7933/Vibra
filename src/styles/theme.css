@@ -135,6 +135,13 @@
   --accent2: #7a4ae8;
   --online: #3ad07a;
 
+  /* Design-spec brand + auth-screen greys (docs/design/tokens.css + boards). */
+  --brand: #e8334f;
+  --faint: #6f6d86;
+  --hairline: #23212f;
+  --google-border: #3a3850;
+  --radius-input: 12px;
+
   --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
 
   --radius-panel: 18px;
