@@ -74,8 +74,6 @@ export interface ArtistItem {
   followers?: string;
 }
 
-export interface LyricLine { time: number; text: string; }
-
 export type LibTab = "playlists" | "liked" | "albums" | "artists" | "downloaded";
 
 export type Screen =
@@ -97,7 +95,7 @@ export interface Colors {
 }
 
 /** The right panel's open tab — `null` means the panel is closed. */
-export type PanelTab = "nowplaying" | "queue" | "lyrics";
+export type PanelTab = "nowplaying" | "queue";
 
 /** Failure surfaced in the main area (shell, sidebar and bar stay intact). */
 export interface AppError {
@@ -118,8 +116,6 @@ export interface UiState {
   hasPlayback: boolean;
   /** Shuffle/repeat/next/prev and the queue icon: 2+ tracks in the queue. */
   hasQueue: boolean;
-  /** Mic buttons and the Lyrics tab: the current track has lyrics. */
-  hasLyrics: boolean;
   /** Jump back in / Recently played: the user has play history. */
   hasHistory: boolean;
   /** Output chip: something is actually playing right now. */
@@ -163,11 +159,6 @@ export interface AppCtxType {
   cycleRepeat: () => void;
   volume: number;
   setVolume: (v: number) => void;
-
-  // Lyrics data (where to show it is the panel's/page's decision).
-  lyrics: LyricLine[];
-  plainLyrics: string;
-  lyricsLoading: boolean;
 
   // Contextual UI
   uiState: UiState;
@@ -258,8 +249,9 @@ export const makeColors = (theme: string, acc: string): Colors =>
   ({ ...(BASE_COLORS[theme] ?? BASE_COLORS.dark), accent: acc });
 
 export const ACCENT_OPTIONS = [
-  { label: "Red",     value: "#E8334F" },
+  { label: "Spotify green", value: "#1ED760" },
   { label: "Violet",  value: "#A78BFA" },
+  { label: "Red",     value: "#E8334F" },
   { label: "Emerald", value: "#34C759" },
   { label: "Blue",    value: "#3B82F6" },
   { label: "Orange",  value: "#F97316" },

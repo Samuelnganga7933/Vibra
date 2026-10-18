@@ -299,6 +299,8 @@ The frontend sends the following signals you can use to train recommendations:
 | Variable | Required | Description |
 |---|---|---|
 | `VITE_API_BASE_URL` | Yes | Base URL of your backend e.g. `https://api.vibra.app` |
+| `VITE_BFF_BASE_URL` | Yes | Base URL for authenticated library, profile, and feed requests |
+| `DATABASE_URL` | Yes in production | PostgreSQL connection string for user data and feed events |
+| `CORS_ORIGINS` | Yes in production | Comma-separated allowed app origins |
 
-The Epidemic Sound key (`epidemic_live_...`) is hardcoded for the music catalogue API.  
-The lrclib.net lyrics API is free and requires no key.
+Keep catalogue and database credentials on the server. Never expose them in the frontend build.

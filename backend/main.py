@@ -1,26 +1,29 @@
-"""Vibra User BFF — FastAPI + SQLAlchemy (SQLite).
+"""Vibra User BFF — FastAPI + SQLAlchemy.
 
 Run:
     cd backend
     pip install -r requirements.txt
     uvicorn main:app --reload --port 8000
+
+Set DATABASE_URL to PostgreSQL in production; local development falls back to SQLite.
 """
 
 from __future__ import annotations
 
 import hashlib
+import os
 import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Response
+from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import distinct, func, select
 from sqlalchemy.orm import Session
 
 from catalogue import search_catalogue
-from database import Base, SessionLocal, engine, get_db
+from database import Base, engine, get_db
 from models import (
     ArtistScore,
     BlockedItem,
@@ -60,7 +63,6 @@ from schemas import (
     VibraEventIn,
 )
 
-DEFAULT_USER_EMAIL = "user@vibra.local"
 COVER_COLOR_FALLBACK = "#2C4A5E"
 
 LISTENING_TYPES = {"play", "skip", "complete", "replay"}
@@ -68,13 +70,13 @@ LISTENING_TYPES = {"play", "skip", "complete", "replay"}
 # /api/home reads these scores immediately after the event commits.
 EVENT_WEIGHTS = {"play": 1.5, "complete": 3.0, "replay": 2.0, "skip": -1.0, "like": 2.0}
 
-DEFAULT_USER_EMAIL = "user@vibra.local"
-COVER_COLOR_FALLBACK = "#2C4A5E"
-
 
 def _initials(name: str) -> str:
     parts = [p for p in name.strip().split() if p]
     return "".join(p[0].upper() for p in parts[:2]) or "VU"
+
+
+DEFAULT_USER_EMAIL = "user@vibra.local"
 
 
 def _ensure_default_user(db: Session) -> User:
@@ -95,27 +97,23 @@ def _ensure_default_user(db: Session) -> User:
 def get_current_user(
     db: Session = Depends(get_db),
     authorization: Optional[str] = Header(default=None),
-    x_user_id: Optional[str] = Header(default=None),
+    vibra_session: Optional[str] = Cookie(default=None),
 ) -> User:
-    """Bearer session first, then X-User-Id, then the provisioned default user.
+    """Bearer session first, then the session cookie, then the dev default.
 
-    Every account/library route uses this: a signed-in user always operates on
-    their own rows, anonymous traffic falls back to the dev default. A bearer
-    token that matches no live session is an expired login — 401, never the
-    default user's data.
+    A signed-in user always operates on their own rows; anonymous traffic
+    falls back to the provisioned default so guest browsing works. A token
+    (header or cookie) that matches no live session is an expired login —
+    401, never the default user's data. The old X-User-Id header is gone:
+    it let any client pick someone else's id.
     """
-    token = _bearer(authorization)
+    token = _bearer(authorization) or vibra_session
     if token:
         user = db.scalar(select(User).where(User.session_token == token))
         if user is None:
             raise HTTPException(status_code=401, detail="Session expired")
         return user
-    if x_user_id:
-        user = db.get(User, x_user_id)
-        if user is not None:
-            return user
     return _ensure_default_user(db)
-
 
 # ── Auth (bearer session) ─────────────────────────────────────────────────────
 
@@ -141,6 +139,18 @@ def _bearer(authorization: Optional[str]) -> Optional[str]:
     if scheme.lower() != "bearer" or not token.strip():
         return None
     return token.strip()
+
+
+def _set_session_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        "vibra_session",
+        token,
+        httponly=True,
+        secure=os.getenv("ENVIRONMENT", "development").lower() == "production",
+        samesite="lax",
+        max_age=60 * 60 * 24 * 30,
+        path="/",
+    )
 
 
 def _user_out(db: Session, user: User) -> UserOut:
@@ -184,9 +194,10 @@ def _user_out(db: Session, user: User) -> UserOut:
 def get_token_user(
     db: Session = Depends(get_db),
     authorization: Optional[str] = Header(default=None),
+    vibra_session: Optional[str] = Cookie(default=None),
 ) -> User:
-    """Requires a valid bearer session — raises 401 otherwise."""
-    token = _bearer(authorization)
+    """Requires a valid bearer or HttpOnly cookie session."""
+    token = _bearer(authorization) or vibra_session
     user = db.scalar(select(User).where(User.session_token == token)) if token else None
     if user is None:
         raise HTTPException(status_code=401, detail="Sign in required")
@@ -196,8 +207,9 @@ def get_token_user(
 def get_optional_user(
     db: Session = Depends(get_db),
     authorization: Optional[str] = Header(default=None),
+    vibra_session: Optional[str] = Cookie(default=None),
 ) -> Optional[User]:
-    token = _bearer(authorization)
+    token = _bearer(authorization) or vibra_session
     if not token:
         return None
     return db.scalar(select(User).where(User.session_token == token))
@@ -244,7 +256,7 @@ app = FastAPI(title="Vibra User BFF", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if origin.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -255,7 +267,7 @@ app.add_middleware(
 
 
 @app.post("/auth/register", response_model=AuthOut)
-def register(payload: RegisterIn, db: Session = Depends(get_db)):
+def register(payload: RegisterIn, response: Response, db: Session = Depends(get_db)):
     email = payload.email.strip().lower()
     if db.scalar(select(User).where(User.email == email)) is not None:
         raise HTTPException(status_code=409, detail="An account with this email already exists")
@@ -275,6 +287,7 @@ def register(payload: RegisterIn, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
     db.refresh(user)
+    _set_session_cookie(response, user.session_token or "")
     return AuthOut(token=user.session_token or "", user=UserOut(
         id=user.id, name=user.name, email=user.email, username=user.username,
         initials=user.initials, avatarUrl=user.avatar_url,
@@ -283,7 +296,7 @@ def register(payload: RegisterIn, db: Session = Depends(get_db)):
 
 
 @app.post("/auth/login", response_model=AuthOut)
-def login(payload: LoginIn, db: Session = Depends(get_db)):
+def login(payload: LoginIn, response: Response, db: Session = Depends(get_db)):
     user = db.scalar(select(User).where(User.email == payload.email.strip().lower()))
     if user is None or not _verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Wrong email or password")
@@ -291,6 +304,7 @@ def login(payload: LoginIn, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
     db.refresh(user)
+    _set_session_cookie(response, user.session_token or "")
     return AuthOut(token=user.session_token or "", user=UserOut(
         id=user.id, name=user.name, email=user.email, username=user.username,
         initials=user.initials, avatarUrl=user.avatar_url,
@@ -299,11 +313,13 @@ def login(payload: LoginIn, db: Session = Depends(get_db)):
 
 
 @app.post("/auth/logout", status_code=204)
-def logout(user: User = Depends(get_token_user), db: Session = Depends(get_db)):
+def logout(response: Response, user: User = Depends(get_token_user), db: Session = Depends(get_db)):
     user.session_token = None
     db.add(user)
     db.commit()
-    return Response(status_code=204)
+    response.delete_cookie("vibra_session", path="/")
+    response.status_code = 204
+    return response
 
 
 def _playlist_track_out(row: PlaylistTrack) -> PlaylistTrackOut:
@@ -390,7 +406,7 @@ def read_me(user: User = Depends(get_token_user), db: Session = Depends(get_db))
 
 
 @app.get("/library/playlists", response_model=list[PlaylistOut])
-def list_playlists(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def list_playlists(user: User = Depends(get_token_user), db: Session = Depends(get_db)):
     rows = db.scalars(
         select(Playlist).where(Playlist.user_id == user.id).order_by(Playlist.created_at.desc())
     ).all()
@@ -400,7 +416,7 @@ def list_playlists(user: User = Depends(get_current_user), db: Session = Depends
 @app.post("/library/playlists", response_model=PlaylistOut, status_code=201)
 def create_playlist(
     payload: PlaylistCreate,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_token_user),
     db: Session = Depends(get_db),
 ):
     playlist = Playlist(
@@ -483,7 +499,7 @@ def reorder_playlist_tracks(
 
 
 @app.get("/library/liked", response_model=LikedIdsOut)
-def list_liked(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def list_liked(user: User = Depends(get_token_user), db: Session = Depends(get_db)):
     ids = db.scalars(
         select(LikedTrack.track_id).where(LikedTrack.user_id == user.id).order_by(LikedTrack.liked_at.desc())
     ).all()
@@ -494,7 +510,7 @@ def list_liked(user: User = Depends(get_current_user), db: Session = Depends(get
 def toggle_like(
     track_id: str,
     payload: LikeToggle,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_token_user),
     db: Session = Depends(get_db),
 ):
     existing = db.scalar(
@@ -512,7 +528,7 @@ def toggle_like(
 
 
 @app.get("/library/recent", response_model=list[TrackOut])
-def list_recent(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def list_recent(user: User = Depends(get_token_user), db: Session = Depends(get_db)):
     rows = db.scalars(
         select(PlayHistory)
         .where(PlayHistory.user_id == user.id)
@@ -527,7 +543,7 @@ def list_recent(user: User = Depends(get_current_user), db: Session = Depends(ge
 @app.post("/library/recent", status_code=204)
 def record_play(
     payload: PlayEvent,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_token_user),
     db: Session = Depends(get_db),
 ):
     db.add(
@@ -545,7 +561,7 @@ def record_play(
 @app.put("/settings", status_code=204)
 def update_settings(
     payload: SettingsUpdate,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_token_user),
     db: Session = Depends(get_db),
 ):
     fields = {
