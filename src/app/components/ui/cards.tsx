@@ -47,8 +47,33 @@ function MediaCard({
   const pane = variant === "pane";
   const row = layout === "row";
 
+  // Interactive hover — cursor-following glow behind the card + a light tilt
+  // toward the pointer. Pointer vars are written straight to the DOM (no
+  // re-render per mousemove); reduced-motion users get the static card.
+  const wrapRef = React.useRef<HTMLDivElement>(null);
+  const reduced = React.useMemo(
+    () => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+    [],
+  );
+  const onHoverMove = (e: React.MouseEvent) => {
+    if (reduced) return;
+    const el = wrapRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const px = (e.clientX - r.left) / Math.max(r.width, 1);
+    const py = (e.clientY - r.top) / Math.max(r.height, 1);
+    el.style.setProperty("--mx", `${(px * 100).toFixed(1)}%`);
+    el.style.setProperty("--my", `${(py * 100).toFixed(1)}%`);
+    el.style.setProperty("--tiltY", `${((px - 0.5) * 12).toFixed(2)}deg`);
+    el.style.setProperty("--tiltX", `${((0.5 - py) * 9).toFixed(2)}deg`);
+  };
+
+  // The glow wears the card's own colour so every shelf lights in its key.
+  const glow = coverColor && /^#[0-9a-f]{6}$/i.test(coverColor) ? `${coverColor}99` : `${C.accent}80`;
+
   const cover = (
     <div
+      className="mcard-cover"
       style={{
         width: size,
         height: size,
@@ -117,31 +142,50 @@ function MediaCard({
   );
 
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={className}
+    <div
+      ref={wrapRef}
+      className="mcard-wrap"
+      onMouseMove={onHoverMove}
       style={{
+        position: "relative",
         width: row ? "100%" : pane ? "100%" : size,
-        height: row ? size : undefined,
-        flexShrink: 0,
-        background: pane || row ? (row ? C.surf : C.pane) : "none",
-        border: pane && !row ? `1px solid ${C.border}` : "none",
-        borderRadius: row ? 10 : pane ? 16 : undefined,
-        padding: row ? 0 : pane ? 14 : 0,
-        overflow: "hidden",
-        cursor: onClick ? "pointer" : "default",
-        textAlign: "left",
-        display: "flex",
-        flexDirection: row ? "row" : "column",
-        alignItems: row ? "center" : undefined,
-        minWidth: 0,
-        ...style,
+        flexShrink: row ? undefined : 0,
       }}
     >
-      {cover}
-      {labels}
-    </button>
+      <div
+        className="mcard-glow"
+        aria-hidden
+        style={{
+          background: `radial-gradient(150px circle at var(--mx, 50%) var(--my, 42%), ${glow}, transparent 72%)`,
+        }}
+      />
+      <button
+        type="button"
+        onClick={onClick}
+        className={className ? `mcard ${className}` : "mcard"}
+        style={{
+          width: row ? "100%" : pane ? "100%" : size,
+          height: row ? size : undefined,
+          flexShrink: 0,
+          background: pane || row ? (row ? C.surf : C.pane) : "none",
+          border: pane && !row ? `1px solid ${C.border}` : "none",
+          borderRadius: row ? 10 : pane ? 16 : undefined,
+          padding: row ? 0 : pane ? 14 : 0,
+          overflow: "hidden",
+          cursor: onClick ? "pointer" : "default",
+          textAlign: "left",
+          display: "flex",
+          flexDirection: row ? "row" : "column",
+          alignItems: row ? "center" : undefined,
+          minWidth: 0,
+          position: "relative",
+          ...style,
+        }}
+      >
+        {cover}
+        {labels}
+      </button>
+    </div>
   );
 }
 

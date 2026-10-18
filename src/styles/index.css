@@ -5,3 +5,30 @@
 /* Auth screens (docs/design/boards/Login.html, Signup.html). */
 .auth-field::placeholder { color: var(--faint); opacity: 1; }
 .auth-field:focus { border-color: var(--brand); outline: none; }
+
+/* MediaCard — interactive hover: a colour halo behind the card, a cursor
+   light on the artwork and a 3D tilt toward the pointer (vars --mx/--my/
+   --tiltX/--tiltY are written to the wrapper by the component). */
+.mcard { transition: transform .16s ease, box-shadow .16s ease; }
+.mcard:hover, .mcard:focus-visible {
+  transform: perspective(640px) rotateX(var(--tiltX, 0deg)) rotateY(var(--tiltY, 0deg)) translateY(-4px);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5);
+}
+.mcard-glow {
+  position: absolute; inset: -12px; border-radius: 26px; opacity: 0;
+  filter: blur(16px); transition: opacity .22s ease; pointer-events: none;
+}
+.mcard-wrap:hover .mcard-glow, .mcard-wrap:focus-within .mcard-glow { opacity: 1; }
+.mcard-cover::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit;
+  background: radial-gradient(170px circle at var(--mx, 70%) var(--my, 30%),
+    rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.05) 44%, transparent 70%);
+  mix-blend-mode: screen;
+  opacity: 0; transition: opacity .25s ease; pointer-events: none;
+}
+.mcard-wrap:hover .mcard-cover::after,
+.mcard-wrap:focus-within .mcard-cover::after { opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .mcard:hover, .mcard:focus-visible { transform: none; }
+  .mcard, .mcard-glow, .mcard-cover::after { transition: none; }
+}
