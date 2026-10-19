@@ -2289,16 +2289,6 @@ function RightPanel() {
                     </div>
                     <span style={{ fontSize: 11, color: C.muted, flexShrink: 0 }}>{t.duration}</span>
                     <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
-                      <button className="qctl" aria-label="Move up"
-                        onClick={e => { e.stopPropagation(); moveQueueItem(i, i - 1); }}
-                        style={{ ...ctlBtn, visibility: i === 0 ? "hidden" : "visible" }}>
-                        <ChevronUp size={14} />
-                      </button>
-                      <button className="qctl" aria-label="Move down"
-                        onClick={e => { e.stopPropagation(); moveQueueItem(i, i + 1); }}
-                        style={{ ...ctlBtn, visibility: i === queued.length - 1 ? "hidden" : "visible" }}>
-                        <ChevronDown size={14} />
-                      </button>
                       <button className="qctl" aria-label="Remove from queue"
                         style={ctlBtn}
                         onClick={e => { e.stopPropagation(); removeFromQueue(i); }}>
