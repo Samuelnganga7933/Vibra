@@ -1258,14 +1258,14 @@ def _home_for_user(db: Session, user: User, locale: Optional[str] = None) -> lis
     top_artists = [s.artist for s in scores if s.score > 0][:6]
     focus = top_artists[:3]
 
-    # One pool, six workers: every "Because you played" search plus the guest
-    # shelves we keep alongside personalization ("Keep Trending") — the shared
-    # pool caps how many catalogue requests we burst at the external engine.
+    # One pool, six workers: the "Because you played" search plus the guest
+    # shelves we keep alongside personalization — the shared pool caps how
+    # many catalogue requests we burst at the external engine.
     with ThreadPoolExecutor(max_workers=6) as pool:
-        because_futures = [
-            pool.submit(_because_rows, artist, recent, blocked_artists)
-            for artist in focus
-        ]
+        because_future = (
+            pool.submit(_because_rows, focus[0], recent, blocked_artists)
+            if focus else None
+        )
         region_future = pool.submit(search_catalogue, region_query(locale), 10)
         trending_future = pool.submit(
             lambda: merged_catalogue(scene_queries(locale) + ["trending music"], 10)
@@ -1306,20 +1306,22 @@ def _home_for_user(db: Session, user: User, locale: Optional[str] = None) -> lis
             id="made-for-you", type="mix_row", title="Made for you", items=mixes,
         ))
 
-        for artist, future in zip(focus, because_futures):
+        # One "Because you played" shelf for the strongest affinity — a row
+        # per artist would repeat the same songs under three headings.
+        if because_future is not None and focus:
             rows = [
-                t for t in future.result()
+                t for t in because_future.result()
                 if str(t.get("id")) and str(t.get("id")) not in taken
             ][:10]
-            if not rows:
-                continue
-            taken.update(str(t.get("id")) for t in rows)
-            shelves.append(HomeShelfOut(
-                id=f"because-{artist.lower().replace(' ', '-')[:40]}",
-                type="shelf",
-                title=f"Because you played {artist}",
-                items=_items_from_tracks(rows),
-            ))
+            if rows:
+                taken.update(str(t.get("id")) for t in rows)
+                artist = focus[0]
+                shelves.append(HomeShelfOut(
+                    id=f"because-{artist.lower().replace(' ', '-')[:40]}",
+                    type="shelf",
+                    title=f"Because you played {artist}",
+                    items=_items_from_tracks(rows),
+                ))
 
         shelves.append(HomeShelfOut(
             id="recently-played", type="recent", title="Recently played",
