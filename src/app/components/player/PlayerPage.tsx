@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ChevronDown, Heart, ListMusic, MoreHorizontal } from "lucide-react";
+import { ChevronDown, Heart, ListMusic, Mic2, MoreHorizontal } from "lucide-react";
 import { useApp, fmtSec } from "../../context";
 import { CoverArt } from "../CoverArt";
+import { LyricsPanel } from "./LyricsPanel";
 
 /**
  * Full-screen player — artwork, metadata, seek and queue context.
@@ -15,15 +16,22 @@ export function PlayerPage() {
     openPanel, setPlayerPageOpen,
     openTrackOptions,
     isPlaying, togglePlay,
+    lyrics, plainLyrics, lyricsLoading, uiState,
   } = useApp();
   const scrubRef = useRef<HTMLDivElement | null>(null);
-  const [mediaMode, setMediaMode] = useState<"song" | "video">("song");
+  const [mediaMode, setMediaMode] = useState<"song" | "video" | "lyrics">("song");
+  const hasLyricsOption = uiState.hasLyrics || lyricsLoading;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setPlayerPageOpen(false); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [setPlayerPageOpen]);
+
+  // A track without lyrics can't keep the lyrics view open.
+  useEffect(() => {
+    if (mediaMode === "lyrics" && !hasLyricsOption) setMediaMode("song");
+  }, [mediaMode, hasLyricsOption]);
 
   if (!currentTrack) return null;
   const isLiked = likedTrackIds.has(currentTrack.id);
@@ -52,19 +60,21 @@ export function PlayerPage() {
           <ChevronDown size={18} />
         </button>
         <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: 1 }}>
-          {/* Song/Video toggle — video hands the canvas to the YouTube embed */}
+          {/* Song/Lyrics/Video toggle — video hands the canvas to the YouTube embed */}
           <div style={{ display: "flex", background: C.surf, borderRadius: 999, padding: 3, fontWeight: 600, fontSize: 12.5, textTransform: "none", letterSpacing: 0 }}>
-            {(["song", "video"] as const).map(mode => (
+            {(hasLyricsOption ? (["song", "lyrics", "video"] as const) : (["song", "video"] as const)).map(mode => (
               <button key={mode} onClick={() => {
                 if (mode === "video" && isPlaying) togglePlay(); // audio hands off to the embed
                 setMediaMode(mode);
               }}
                 style={{
-                  border: "none", borderRadius: 999, padding: "6px 22px", cursor: "pointer", fontFamily: "inherit",
+                  border: "none", borderRadius: 999, padding: "6px 18px", cursor: "pointer", fontFamily: "inherit",
                   background: mediaMode === mode ? C.text : "transparent",
                   color: mediaMode === mode ? C.pane : C.muted,
                   fontSize: 12.5, fontWeight: 700, textTransform: "capitalize",
+                  display: "inline-flex", alignItems: "center", gap: 6,
                 }}>
+                {mode === "lyrics" && <Mic2 size={13} />}
                 {mode}
               </button>
             ))}
@@ -81,11 +91,21 @@ export function PlayerPage() {
         {/* Left: artwork, title, seek */}
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 22, minWidth: 0 }}>
           <div style={{
-            width: "min(46vh, 100%)", maxWidth: 440, aspectRatio: "1 / 1", borderRadius: 16,
-            background: currentTrack.bg, overflow: "hidden", flexShrink: 0,
-            boxShadow: `0 28px 80px ${currentTrack.bg}66`, border: `1px solid ${C.border}`,
+            width: "min(46vh, 100%)", maxWidth: 440,
+            ...(mediaMode === "lyrics"
+              ? { height: "min(42vh, 440px)" }
+              : { aspectRatio: "1 / 1" }),
+            borderRadius: 16,
+            background: mediaMode === "lyrics" ? `${C.pane}cc` : currentTrack.bg,
+            overflow: "hidden", flexShrink: 0,
+            boxShadow: mediaMode === "lyrics" ? "none" : `0 28px 80px ${currentTrack.bg}66`,
+            border: `1px solid ${C.border}`,
+            padding: mediaMode === "lyrics" ? "18px 22px" : 0,
+            display: mediaMode === "lyrics" ? "block" : undefined,
           }}>
-            {mediaMode === "video" ? (
+            {mediaMode === "lyrics" ? (
+              <LyricsPanel lyrics={lyrics} plain={plainLyrics} loading={lyricsLoading} elapsed={elapsed} full />
+            ) : mediaMode === "video" ? (
               <iframe
                 src={`https://www.youtube-nocookie.com/embed/${currentTrack.videoId}?autoplay=1&playsinline=1`}
                 title={currentTrack.title}

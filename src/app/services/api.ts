@@ -191,34 +191,96 @@ export function parseLrc(lrc: string): LyricLine[] {
   return lines;
 }
 
+// ─── Lyrics ───────────────────────────────────────────────────────────────────
+
+/** Noisy catalogue suffixes hurt lyric lookups — strip before querying. */
+function stripLyricsNoise(s: string): string {
+  return s
+    .replace(/\s*[\(\[][^)\]]*(official|lyric|lyrics|audio|video|hd|hq|4k|visualizer|remastered|explicit|clean|version|feat)[^)\]]*[\)\]]\s*/gi, " ")
+    .replace(/\s*-\s*Topic\s*$/i, "")
+    .replace(/\s{2,}/g, " ")
+    .trim() || s;
+}
+
+/** Engines answer misses with a placeholder sentence — never show those. */
+function isPlaceholder(plain: string): boolean {
+  const p = plain.trim();
+  return p.length < 64 && /^(lyrics (are )?unavailable|no lyrics|not available|instrumental)/i.test(p);
+}
+
+function toLyricsResult(syncedRaw: string, plainRaw: string): LyricsResult {
+  const synced = parseLrc(syncedRaw);
+  const plain = isPlaceholder(plainRaw) ? "" : plainRaw.trim();
+  if (!plain && synced.length === 0) return { synced: [], plain: "" };
+  return { synced, plain };
+}
+
+/** Direct lrclib.net lookup (exact, then fuzzy) — CORS-open, keyless. */
+async function lrclibLyrics(track: string, who: string): Promise<LyricsResult | null> {
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const exact = await safeJson<Record<string, unknown>>(
+    `https://lrclib.net/api/get?${new URLSearchParams({ track_name: track, artist_name: who })}`,
+    { quiet: true },
+  );
+  if (exact) {
+    const r = toLyricsResult(asString(exact.syncedLyrics) ?? "", asString(exact.plainLyrics) ?? "");
+    if (r.synced.length > 0 || r.plain) return r;
+  }
+  const hits = await safeJson<unknown[]>(
+    `https://lrclib.net/api/search?${new URLSearchParams({ q: `${who} ${track}`.trim() })}`,
+    { quiet: true },
+  );
+  if (!Array.isArray(hits)) return null;
+  const nt = norm(track);
+  const nw = norm(who);
+  const rows = hits.map(asRecord).filter((h): h is Record<string, unknown> => !!h);
+  const pick =
+    rows.find(h => norm(asString(h.trackName) ?? "") === nt && (h.syncedLyrics || h.plainLyrics))
+    ?? rows.find(h => {
+      const t = norm(asString(h.trackName) ?? "");
+      const a = norm(asString(h.artistName) ?? "");
+      return (t.includes(nt) || nt.includes(t)) && (!nw || a === nw) && (h.syncedLyrics || h.plainLyrics);
+    })
+    ?? null;
+  if (!pick) return null;
+  return toLyricsResult(asString(pick.syncedLyrics) ?? "", asString(pick.plainLyrics) ?? "");
+}
+
+const LYRICS_CACHE = new Map<string, LyricsResult>();
+
 /**
- * Fetches lyrics for a track. Returns `{ synced: [], plain: "" }` on any
+ * Fetches lyrics for a track — engine first, lrclib.net as fallback, cached
+ * per cleaned title+artist. Returns `{ synced: [], plain: "" }` on any
  * failure — the lyrics panel simply shows its calm empty copy.
  */
 export async function fetchLyrics(title: string, artist: string): Promise<LyricsResult> {
   const empty: LyricsResult = { synced: [], plain: "" };
-  const track = title.trim();
+  const track = stripLyricsNoise(title.trim());
   const who = artist.trim();
   if (!track) return empty;
 
-  const params = new URLSearchParams({
-    track_name: track,
-    artist_name: who,
-    track,
-    artist: who,
-  });
+  const key = `${track}|${who}`.toLowerCase();
+  const hit = LYRICS_CACHE.get(key);
+  if (hit) return hit;
 
-  const data = await safeJson<Record<string, unknown>>(
-    `${API_BASE}/api/v1/lyrics?${params.toString()}`,
-    { quiet: true },
-  );
-  if (!data) return empty;
+  let result = empty;
+  try {
+    const params = new URLSearchParams({ track_name: track, artist_name: who, track, artist: who });
+    const data = await safeJson<Record<string, unknown>>(
+      `${API_BASE}/api/v1/lyrics?${params.toString()}`,
+      { quiet: true },
+    );
+    if (data) result = toLyricsResult(asString(data.syncedLyrics) ?? "", asString(data.plainLyrics) ?? "");
+    if (result.synced.length === 0 && !result.plain) {
+      const fb = await lrclibLyrics(track, who);
+      if (fb && (fb.synced.length > 0 || fb.plain)) result = fb;
+    }
+  } catch {
+    /* empty result — panel shows its calm empty copy */
+  }
 
-  const plain = asString(data.plainLyrics) ?? "";
-  const synced = parseLrc(asString(data.syncedLyrics) ?? "");
-
-  if (!plain && synced.length === 0) return empty;
-  return { synced, plain };
+  LYRICS_CACHE.set(key, result);
+  return result;
 }
 
 /** Search-term autocomplete; resolves to `[]` on any failure. */
