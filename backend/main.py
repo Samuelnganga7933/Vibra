@@ -1289,7 +1289,7 @@ def _home_for_user(db: Session, user: User, locale: Optional[str] = None) -> lis
             art = next((e.image_url for e in recent if e.artist == artist and e.image_url), None)
             mixes.append(HomeItemOut(
                 id=f"mix-your-{position}",
-                title=f"Your Mix {position}",
+                title=f"{artist} Mix",
                 artist=artist,
                 subtitle=artist,
                 imageUrl=art,
@@ -1298,7 +1298,7 @@ def _home_for_user(db: Session, user: User, locale: Optional[str] = None) -> lis
         last_art = next((e.image_url for e in recent if e.image_url), None)
         mixes.append(HomeItemOut(
             id="mix-late-night",
-            title="Late-night mix",
+            title="Late Night Mix",
             imageUrl=last_art,
             query="lofi hip hop radio",
         ))
