@@ -15,6 +15,7 @@ export function AuthScreen({ mode: initialMode }: { mode: "login" | "signup" }) 
   const { C, login, register, navigate, clearError, user, screen } = useApp();
 
   const [mode, setMode] = useState<"login" | "signup">(initialMode);
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [reveal, setReveal] = useState(false);
@@ -22,7 +23,10 @@ export function AuthScreen({ mode: initialMode }: { mode: "login" | "signup" }) 
   const [error, setError] = useState<string | null>(null);
 
   const isSignup = mode === "signup";
-  const canSubmit = email.trim().length > 3 && password.length >= 8;
+  const canSubmit =
+    email.trim().length > 3 &&
+    password.length >= 8 &&
+    (!isSignup || name.trim().length >= 2);
 
   const switchMode = () => {
     setError(null);
@@ -40,16 +44,17 @@ export function AuthScreen({ mode: initialMode }: { mode: "login" | "signup" }) 
     e.preventDefault();
     if (busy) return;
     if (!canSubmit) {
-      setError("Enter a valid email and a password of at least 8 characters.");
+      setError(
+        isSignup && name.trim().length < 2
+          ? "Enter your name so we can greet you by it."
+          : "Enter a valid email and a password of at least 8 characters.",
+      );
       return;
     }
     setBusy(true);
     setError(null);
-    // The board has no name field — the display name comes from the email
-    // local part (changeable later in Settings).
-    const derived = (email.split("@")[0] || "").trim().slice(0, 60) || "Vibra listener";
     const failure = isSignup
-      ? await register(derived, email.trim(), password)
+      ? await register(name.trim(), email.trim(), password)
       : await login(email.trim(), password);
     setBusy(false);
     if (failure) { setError(failure); return; }
@@ -132,6 +137,15 @@ export function AuthScreen({ mode: initialMode }: { mode: "login" | "signup" }) 
           </div>
 
           <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+            {isSignup && (
+              <label style={labelStyle}>
+                Name
+                <input className="auth-field" type="text" value={name}
+                  onChange={e => setName(e.target.value)} placeholder="What should we call you?"
+                  autoComplete="name" maxLength={120} style={inputStyle} />
+              </label>
+            )}
+
             <label style={labelStyle}>
               Email
               <input className="auth-field" type="email" value={email}
