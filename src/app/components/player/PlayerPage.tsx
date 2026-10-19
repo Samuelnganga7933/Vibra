@@ -13,13 +13,14 @@ export function PlayerPage() {
   const {
     C, currentTrack, progress, elapsed, audioDuration, handleSeek,
     likedTrackIds, toggleLike, queue, playTrack,
-    openPanel, setPlayerPageOpen,
+    setPlayerPageOpen,
     openTrackOptions,
     isPlaying, togglePlay,
     lyrics, plainLyrics, lyricsLoading, uiState,
   } = useApp();
   const scrubRef = useRef<HTMLDivElement | null>(null);
   const [mediaMode, setMediaMode] = useState<"song" | "video" | "lyrics">("song");
+  const [ctxTab, setCtxTab] = useState<"queue" | "lyrics">("queue");
   const hasLyricsOption = uiState.hasLyrics || lyricsLoading;
 
   useEffect(() => {
@@ -28,10 +29,11 @@ export function PlayerPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [setPlayerPageOpen]);
 
-  // A track without lyrics can't keep the lyrics view open.
+  // A track without lyrics can't keep a lyrics view open.
   useEffect(() => {
     if (mediaMode === "lyrics" && !hasLyricsOption) setMediaMode("song");
-  }, [mediaMode, hasLyricsOption]);
+    if (ctxTab === "lyrics" && !hasLyricsOption) setCtxTab("queue");
+  }, [mediaMode, ctxTab, hasLyricsOption]);
 
   if (!currentTrack) return null;
   const isLiked = likedTrackIds.has(currentTrack.id);
@@ -152,18 +154,30 @@ export function PlayerPage() {
         {/* Right: context tabs */}
         <div style={{ display: "flex", flexDirection: "column", minHeight: 0, background: C.pane, border: `1px solid ${C.border}`, borderRadius: 16, overflow: "hidden" }}>
           <div style={{ display: "flex", gap: 4, padding: "12px 12px 0", flexShrink: 0 }}>
-            <button onClick={() => openPanel("queue")} style={{
+            <button onClick={() => setCtxTab("queue")} style={{
               flex: 1, height: 34, borderRadius: 9, border: "none", cursor: "pointer",
-              background: C.surf,
-              color: C.text, fontSize: 12.5, fontWeight: 700,
+              background: ctxTab === "queue" ? C.text : C.surf,
+              color: ctxTab === "queue" ? C.pane : C.text, fontSize: 12.5, fontWeight: 700,
               display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7,
             }}>
               <ListMusic size={14} /> Queue
             </button>
+            {hasLyricsOption && (
+              <button onClick={() => setCtxTab("lyrics")} style={{
+                flex: 1, height: 34, borderRadius: 9, border: "none", cursor: "pointer",
+                background: ctxTab === "lyrics" ? C.text : C.surf,
+                color: ctxTab === "lyrics" ? C.pane : C.text, fontSize: 12.5, fontWeight: 700,
+                display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7,
+              }}>
+                <Mic2 size={14} /> Lyrics
+              </button>
+            )}
           </div>
 
           <div style={{ flex: 1, minHeight: 0, overflowY: "auto", scrollbarWidth: "none", padding: "12px 14px 16px" }}>
-            {queue.length > 0 ? (
+            {ctxTab === "lyrics" ? (
+              <LyricsPanel lyrics={lyrics} plain={plainLyrics} loading={lyricsLoading} elapsed={elapsed} />
+            ) : queue.length > 0 ? (
                 queue.map((t, i) => (
                   <div key={`${t.id}-${i}`} role="button" tabIndex={0}
                     onClick={() => playTrack(t, queue)}
