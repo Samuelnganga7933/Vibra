@@ -556,18 +556,17 @@ function HomeScreen() {
     <div style={{ flex: 1, overflowY: "auto", scrollbarWidth: "none", paddingBottom: 32 }}>
       <div style={{ position: "sticky", top: 0, zIndex: 3, display: "flex", alignItems: "center", gap: 14, padding: "14px 28px", background: `${C.pane}f2`, borderBottom: `1px solid ${C.border}`, backdropFilter: "blur(14px)" }}>
         <button onClick={() => navigate({ id: "search" })} aria-label="Search music"
-          style={{ flex: 1, maxWidth: 520, height: 42, display: "flex", alignItems: "center", gap: 10, padding: "0 14px", borderRadius: 999, border: `1px solid ${C.border}`, background: C.surf, color: C.muted, cursor: "pointer", textAlign: "left", fontSize: 13.5, fontWeight: 500 }}>
-          <Search size={17} />
-          <span style={{ flex: 1 }}>What do you want to play?</span>
-          <span style={{ fontSize: 11, color: C.dim, border: `1px solid ${C.border}`, borderRadius: 6, padding: "2px 6px" }}>⌘⇧L</span>
+          style={{ flex: 1, minWidth: 0, maxWidth: 520, height: 42, display: "flex", alignItems: "center", gap: 10, padding: "0 14px", borderRadius: 999, border: `1px solid ${C.border}`, background: C.surf, color: C.muted, cursor: "pointer", textAlign: "left", fontSize: 13.5, fontWeight: 500 }}>
+          <Search size={17} style={{ flexShrink: 0 }} />
+          <span style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>What do you want to play?</span>
+          <span className="hidden md:inline-block" style={{ fontSize: 11, color: C.dim, border: `1px solid ${C.border}`, borderRadius: 6, padding: "2px 6px" }}>⌘⇧L</span>
         </button>
-        <div style={{ flex: 1 }} />
+        <div className="hidden md:block" style={{ flex: 1 }} />
         {user && <button onClick={() => navigate({ id: "profile" })} aria-label="Open profile"
           style={{ display: "flex", alignItems: "center", gap: 9, border: "none", background: "transparent", color: C.text, cursor: "pointer", minWidth: 0 }}>
-          <span style={{ width: 32, height: 32, borderRadius: "50%", display: "grid", placeItems: "center", background: C.accent, color: C.bg, fontSize: 11, fontWeight: 800, overflow: "hidden" }}>
+          <span style={{ width: 32, height: 32, borderRadius: "50%", display: "grid", placeItems: "center", background: C.accent, color: C.bg, fontSize: 11, fontWeight: 800, overflow: "hidden", flexShrink: 0 }}>
             {user.avatarUrl ? <img src={user.avatarUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : user.initials}
           </span>
-          <span style={{ maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 13, fontWeight: 700 }}>{user.name}</span>
         </button>}
       </div>
 
@@ -1342,7 +1341,7 @@ function SettingsScreen() {
               } />
           )}
           <Row label="Subscription"
-            sub={user ? `${user.subscription === "premium" ? "Vibra Premium" : "Free"} plan` : "Sign in to manage your plan"}
+            sub={user ? `${user.subscription === "premium" ? "Vybra Premium" : "Free"} plan` : "Sign in to manage your plan"}
             onClick={() => toast("Manage subscription")} last
             right={user?.subscription === "premium"
               ? <div style={{ height: 24, padding: "0 10px", borderRadius: 12, background: C.accent + "33", color: C.accent, fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center" }}>PREMIUM</div>
@@ -1404,7 +1403,7 @@ function SettingsScreen() {
         <Section title="Privacy">
           <Row label="Listening activity" sub="Let others see what you are playing" right={<Toggle value={shareListening} onChange={v => { setShareListening(v); saveSettings({ shareListening: v }); }} />} />
           <Row label="Pause listening history" sub="New plays stop shaping Home and mixes" right={<Toggle value={historyPaused} onChange={v => setHistoryPaused(v)} />} />
-          <Row label="Share usage data" sub="Help improve Vibra" right={<Toggle value={shareData} onChange={v => { setShareData(v); saveSettings({ shareData: v }); }} />} />
+          <Row label="Share usage data" sub="Help improve Vybra" right={<Toggle value={shareData} onChange={v => { setShareData(v); saveSettings({ shareData: v }); }} />} />
           <Row
             label="Reset recommendations"
             sub="Clear listening history and start Home fresh"
@@ -1490,7 +1489,7 @@ function SettingsScreen() {
           <Row label="Connection"
             sub={conn === "online" ? "Streaming is ready" : conn === "degraded" ? "A few features may be limited" : "Offline — downloaded tracks still play"}
             right={<div style={{ width: 8, height: 8, borderRadius: "50%", background: conn === "online" ? "#34C759" : conn === "degraded" ? "#FF9F0A" : "#E5484D", flexShrink: 0 }} />} />
-          <Row label="Version" sub="Vibra 2.1.0" right={<span style={{ fontSize: 13, color: C.accent, fontWeight: 600 }}>Latest</span>} />
+          <Row label="Version" sub="Vybra 2.1.0" right={<span style={{ fontSize: 13, color: C.accent, fontWeight: 600 }}>Latest</span>} />
           <Row label="Terms of service" onClick={() => toast("Opening terms…")} right={<ChevronRight size={16} color={C.muted} />} />
           <Row label="Privacy policy" onClick={() => toast("Opening privacy policy…")} last right={<ChevronRight size={16} color={C.muted} />} />
         </Section>
@@ -1577,7 +1576,7 @@ function ProfileScreen() {
             }
             <h1 style={{ fontSize: 24, fontWeight: 800, color: C.text, margin: 0 }}>{user.name}</h1>
             <p style={{ fontSize: 14, color: C.muted, margin: "4px 0 0" }}>
-              {user.username ? `@${user.username} · ` : ""}{user.subscription === "premium" ? "Vibra Premium" : "Free plan"}
+              {user.username ? `@${user.username} · ` : ""}{user.subscription === "premium" ? "Vybra Premium" : "Free plan"}
             </p>
 
             <div style={{ display: "flex", gap: 32, marginTop: 20 }}>
@@ -1970,7 +1969,7 @@ function LeftSidebar() {
       {/* Wordmark — nothing else on this row */}
       <div style={{ padding: "22px 20px 16px" }}>
         <div style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: 21, fontWeight: 800, color: C.text, letterSpacing: -0.6, lineHeight: 1 }}>
-          vibra<span style={{ color: C.accent }}>.</span>
+          vybra<span style={{ color: C.accent }}>.</span>
         </div>
       </div>
 
@@ -3594,7 +3593,7 @@ export default function App() {
 
   return (
     <UiThemeContext.Provider value={C}>
-    <ErrorBoundary colors={C} title="Vibra hit an unexpected signal">
+    <ErrorBoundary colors={C} title="Vybra hit an unexpected signal">
     <AppCtx.Provider value={ctxValue}>
       <Toaster position="top-center" theme={theme === "light" ? "light" : "dark"} />
 
@@ -3614,7 +3613,7 @@ export default function App() {
            from Google sign-in), the app shows neither Home nor the gate. */
         <div style={{ position: "fixed", inset: 0, background: C.bg, display: "grid", placeItems: "center" }}>
           <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: -0.5, color: C.text, animation: "fadeIn .4s ease" }}>
-            vibra<span style={{ color: C.accent }}>.</span>
+            vybra<span style={{ color: C.accent }}>.</span>
           </div>
         </div>
       ) : authGate ? (

@@ -96,7 +96,7 @@ def _ensure_default_user(db: Session) -> User:
     user = db.scalar(select(User).where(User.email == DEFAULT_USER_EMAIL))
     if user is None:
         user = User(
-            name="Vibra User",
+            name="Vybra User",
             email=DEFAULT_USER_EMAIL,
             username="vibrauser",
             initials="VU",
@@ -300,7 +300,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Vibra User BFF", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Vybra User BFF", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

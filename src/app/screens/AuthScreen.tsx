@@ -91,21 +91,21 @@ export function AuthScreen({ mode: initialMode }: { mode: "login" | "signup" }) 
   };
 
   return (
-    <div style={{
+    <div className="grid grid-cols-1 min-w-0 min-[1100px]:grid-cols-2 min-[1100px]:min-w-[1100px]" style={{
       position: "fixed", inset: 0, zIndex: 80, overflowY: "auto", background: C.bg,
-      display: "grid", gridTemplateColumns: "1fr 1fr", minWidth: 1100, minHeight: "100%",
+      minHeight: "100%",
       color: C.text, fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif",
     }}>
-      {/* ── Form side ─────────────────────────────────────────────────────── */}
-      <section style={{ position: "relative", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", padding: "0 48px" }}>
-        <button onClick={goHome} aria-label={user ? "Back to Home" : "Vibra"} disabled={!user}
+      {/* ── Form side ─────────────────────────────────────────────────────────── */}
+      <section style={{ position: "relative", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", padding: "0 clamp(20px, 6vw, 48px)" }}>
+        <button onClick={goHome} aria-label={user ? "Back to Home" : "Vybra"} disabled={!user}
           style={{
             position: "absolute", top: 36, left: 48, fontSize: 28, fontWeight: 800,
             color: C.text, background: "none", border: "none", padding: 0,
             cursor: user ? "pointer" : "default",
             fontFamily: "inherit", lineHeight: 1,
           }}>
-          vibra<span style={{ color: "var(--brand)" }}>.</span>
+          vybra<span style={{ color: "var(--brand)" }}>.</span>
         </button>
 
         <div style={{ width: "min(400px, 100%)", display: "flex", flexDirection: "column", gap: 18 }}>
@@ -213,7 +213,7 @@ export function AuthScreen({ mode: initialMode }: { mode: "login" | "signup" }) 
           </form>
 
           <div style={{ textAlign: "center", fontSize: 14, color: C.muted }}>
-            {isSignup ? "Already have an account? " : "New to Vibra? "}
+            {isSignup ? "Already have an account? " : "New to Vybra? "}
             <button type="button" onClick={switchMode} style={{
               background: "none", border: "none", padding: 0, cursor: "pointer",
               color: C.text, fontWeight: 700, fontSize: 14, fontFamily: "inherit",
@@ -225,10 +225,10 @@ export function AuthScreen({ mode: initialMode }: { mode: "login" | "signup" }) 
       </section>
 
       {/* ── Art side — gradient panel with tilted cover cards ─────────────── */}
-      <section aria-hidden style={{
+      <section aria-hidden className="hidden min-[1100px]:flex" style={{
         position: "relative", overflow: "hidden",
         background: "linear-gradient(160deg,#4a1e2a,#1a1220 70%)",
-        display: "flex", alignItems: "flex-end", padding: 56,
+        alignItems: "flex-end", padding: 56,
       }}>
         <span style={{ position: "absolute", width: 260, height: 260, borderRadius: 24, background: "linear-gradient(135deg,#c2784a,#5a1a2a)", left: 150, top: 150, transform: "rotate(-8deg)", boxShadow: "0 30px 60px #0007" }} />
         <span style={{ position: "absolute", width: 220, height: 220, borderRadius: 24, background: "linear-gradient(135deg,#3a2a8a,#7a4ae8)", left: 330, top: 330, transform: "rotate(7deg)", boxShadow: "0 30px 60px #0007" }} />
