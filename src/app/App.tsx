@@ -2203,25 +2203,23 @@ function RightPanel() {
                   )}
                 </button>
               )}
-              {/* NEXT UP — the design's continuation preview */}
-              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.14em", color: C.dim, marginTop: 16, marginBottom: 6 }}>NEXT UP</div>
-              {nextUp ? (
-                <div role="button" tabIndex={0}
-                  onClick={() => playTrack(nextUp, queue)}
-                  onKeyDown={e => e.key === "Enter" && playTrack(nextUp, queue)}
-                  style={{ display: "flex", alignItems: "center", gap: 12, padding: 6, borderRadius: 10, cursor: "pointer" }}
-                  onMouseEnter={e => (e.currentTarget.style.background = C.surf)}
-                  onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
-                  <CoverArt bg={nextUp.bg} imageUrl={nextUp.imageUrl} size={44} radius={8} />
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nextUp.title}</div>
-                    <div style={{ fontSize: 12, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nextUp.artist}</div>
+              {/* NEXT UP — the design's continuation preview; silent when idle */}
+              {nextUp && (
+                <>
+                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.14em", color: C.dim, marginTop: 16, marginBottom: 6 }}>NEXT UP</div>
+                  <div role="button" tabIndex={0}
+                    onClick={() => playTrack(nextUp, queue)}
+                    onKeyDown={e => e.key === "Enter" && playTrack(nextUp, queue)}
+                    style={{ display: "flex", alignItems: "center", gap: 12, padding: 6, borderRadius: 10, cursor: "pointer" }}
+                    onMouseEnter={e => (e.currentTarget.style.background = C.surf)}
+                    onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
+                    <CoverArt bg={nextUp.bg} imageUrl={nextUp.imageUrl} size={44} radius={8} />
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nextUp.title}</div>
+                      <div style={{ fontSize: 12, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nextUp.artist}</div>
+                    </div>
                   </div>
-                </div>
-              ) : (
-                <div style={{ fontSize: 12.5, color: C.muted, lineHeight: 1.55, padding: "4px 6px" }}>
-                  Nothing queued — a vibe match keeps the music going when this ends.
-                </div>
+                </>
               )}
             </>
           ) : (
