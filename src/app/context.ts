@@ -258,13 +258,13 @@ export const makeColors = (theme: string, acc: string): Colors =>
   ({ ...(BASE_COLORS[theme] ?? BASE_COLORS.dark), accent: acc });
 
 export const ACCENT_OPTIONS = [
-  { label: "Spotify green", value: "#1ED760" },
-  { label: "Violet",  value: "#A78BFA" },
-  { label: "Red",     value: "#E8334F" },
-  { label: "Emerald", value: "#34C759" },
-  { label: "Blue",    value: "#3B82F6" },
-  { label: "Orange",  value: "#F97316" },
-  { label: "Cyan",    value: "#06B6D4" },
+  { label: "Red",      value: "#E8334F" },
+  { label: "Violet",   value: "#A78BFA" },
+  { label: "Green",    value: "#1ED760" },
+  { label: "Emerald",  value: "#34C759" },
+  { label: "Blue",     value: "#3B82F6" },
+  { label: "Orange",   value: "#F97316" },
+  { label: "Cyan",     value: "#06B6D4" },
 ];
 
 export const BROWSE_CATEGORIES = [

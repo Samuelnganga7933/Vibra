@@ -2606,7 +2606,12 @@ export default function App() {
 
   // Settings
   const [theme, setTheme]                               = useState("dark");
-  const [accent, setAccent]                             = useState(() => getUserProfile()?.accentColor ?? "#1ED760");
+  const [accent, setAccent]                             = useState(() => {
+    const stored = getUserProfile()?.accentColor;
+    // Old builds defaulted to Spotify green — treat it as unset so existing
+    // profiles land on the Vibra red default too.
+    return stored && !/^#(1ED760|1db954)$/i.test(stored) ? stored : "#E8334F";
+  });
   const [audioQuality, setAudioQuality]                 = useState(() => getUserProfile()?.audioQuality ?? "high");
   const [normalizeVolume, setNormalizeVolume]           = useState(true);
   const [autoplay, setAutoplay]                         = useState(true);
