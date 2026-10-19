@@ -282,6 +282,80 @@ const mapLikedTrack = (t: any): Track => ({
   videoId: t.videoId,
 });
 
+/**
+ * At most `limit` artists, ranked by what the listener played most recently —
+ * never the whole followed list, so the row can't ambush the current mood.
+ */
+function curatedArtistPicks(all: ArtistItem[], limit = 6): ArtistItem[] {
+  const pool = new Map<string, ArtistItem>();
+  for (const a of all) {
+    const k = a.name.trim().toLowerCase();
+    if (k && !pool.has(k)) pool.set(k, a);
+  }
+  const picks: ArtistItem[] = [];
+  const used = new Set<string>();
+  for (const t of getHistory()) {
+    const k = (t.artist ?? "").trim().toLowerCase();
+    if (!k || used.has(k)) continue;
+    const a = pool.get(k);
+    if (!a) continue;
+    picks.push(a);
+    used.add(k);
+    if (picks.length >= limit) return picks;
+  }
+  for (const a of all) {
+    const k = a.name.trim().toLowerCase();
+    if (used.has(k)) continue;
+    picks.push(a);
+    used.add(k);
+    if (picks.length >= limit) break;
+  }
+  return picks;
+}
+
+/** “Listen to <artist>”: shuffles that artist's music straight into play. */
+async function playArtistShuffled(
+  name: string,
+  playTrack: (t: Track, newQueue?: Track[], sourceShelfId?: string) => void,
+): Promise<void> {
+  try {
+    const res = await searchTracks(name, 12);
+    const tracks = sanitizeMusicItems(res).map((t, i) => fromApiTrack(t, i));
+    if (tracks.length === 0) { toast.error(`No music found for ${name} — try again.`); return; }
+    const shuffled = [...tracks].sort(() => Math.random() - 0.5);
+    playTrack(shuffled[0], shuffled);
+    toast.success(`Shuffling ${name}`);
+  } catch {
+    toast.error(`Couldn't play ${name} — try again.`);
+  }
+}
+
+/** Avatar tiles for the curated row — real art, play badge, one tap to shuffle. */
+function ArtistTiles({ picks, onPick }: { picks: ArtistItem[]; onPick: (a: ArtistItem) => void }) {
+  const { C } = useApp();
+  return (
+    <div style={{ display: "flex", gap: 18, overflowX: "auto", scrollbarWidth: "none", paddingBottom: 4 }}>
+      {picks.map(a => (
+        <div key={a.id} role="button" tabIndex={0}
+          onClick={() => onPick(a)}
+          onKeyDown={e => e.key === "Enter" && onPick(a)}
+          style={{ width: 110, flexShrink: 0, textAlign: "center", cursor: "pointer" }}>
+          <div style={{ width: 96, height: 96, borderRadius: "50%", background: a.bg, overflow: "hidden", margin: "0 auto", position: "relative" }}>
+            {a.imageUrl
+              ? <img src={a.imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              : <div style={{ width: "100%", height: "100%", display: "grid", placeItems: "center", fontSize: 30, fontWeight: 800, color: "rgba(255,255,255,0.85)" }}>{a.name[0]}</div>}
+            <span aria-hidden style={{ position: "absolute", right: 1, bottom: 1, width: 27, height: 27, borderRadius: "50%", background: C.accent, color: "#fff", display: "grid", placeItems: "center", border: `2px solid ${C.pane}` }}>
+              <Play size={11} fill="currentColor" />
+            </span>
+          </div>
+          <div style={{ fontWeight: 700, fontSize: 13.5, color: C.text, marginTop: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</div>
+          <div style={{ fontSize: 11.5, color: C.muted }}>Listen now</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ─── HomeScreen ───────────────────────────────────────────────────────────────
 function HomeScreen() {
   const { C, navigate, playTrack, shelves, homeLoading, hiddenIds, hideItem, user, openTrackOptions, uiState, openCreatePlaylist, playlists, artists } = useApp();
@@ -476,6 +550,8 @@ function HomeScreen() {
     );
   };
 
+  const artistPicks = curatedArtistPicks(artists);
+
   return (
     <div style={{ flex: 1, overflowY: "auto", scrollbarWidth: "none", paddingBottom: 32 }}>
       <div style={{ position: "sticky", top: 0, zIndex: 3, display: "flex", alignItems: "center", gap: 14, padding: "14px 28px", background: `${C.pane}f2`, borderBottom: `1px solid ${C.border}`, backdropFilter: "blur(14px)" }}>
@@ -540,29 +616,14 @@ function HomeScreen() {
         </div>
       )}
 
-      {/* Sections the earlier Home carried — real data, never filler. */}
-      {chip === "All" && artists.length > 0 && (
+      {/* Curated picks: what you've played lately, one tap to shuffle. */}
+      {chip === "All" && artistPicks.length > 0 && (
         <section style={{ padding: "22px 28px 0" }}>
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 12 }}>
-            <h2 style={{ fontSize: 19, fontWeight: 800, color: C.text, margin: 0, letterSpacing: -0.3 }}>Artists</h2>
+            <h2 style={{ fontSize: 19, fontWeight: 800, color: C.text, margin: 0, letterSpacing: -0.3 }}>Artists for you</h2>
             <button onClick={() => navigate({ id: "library", tab: "artists" })} style={{ fontSize: 13, fontWeight: 600, color: C.muted, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit" }}>See all</button>
           </div>
-          <div style={{ display: "flex", gap: 18, overflowX: "auto", scrollbarWidth: "none", paddingBottom: 4 }}>
-            {artists.slice(0, 8).map(a => (
-              <div key={a.id} role="button" tabIndex={0}
-                onClick={() => navigate({ id: "search", q: a.name })}
-                onKeyDown={e => e.key === "Enter" && navigate({ id: "search", q: a.name })}
-                style={{ width: 110, flexShrink: 0, textAlign: "center", cursor: "pointer" }}>
-                <div style={{ width: 96, height: 96, borderRadius: "50%", background: a.bg, overflow: "hidden", margin: "0 auto" }}>
-                  {a.imageUrl
-                    ? <img src={a.imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                    : <div style={{ width: "100%", height: "100%", display: "grid", placeItems: "center", fontSize: 30, fontWeight: 800, color: "rgba(255,255,255,0.85)" }}>{a.name[0]}</div>}
-                </div>
-                <div style={{ fontWeight: 700, fontSize: 13.5, color: C.text, marginTop: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</div>
-                <div style={{ fontSize: 11.5, color: C.muted }}>Artist</div>
-              </div>
-            ))}
-          </div>
+          <ArtistTiles picks={artistPicks} onPick={a => void playArtistShuffled(a.name, playTrack)} />
         </section>
       )}
 
@@ -741,6 +802,8 @@ function DiscoverScreen() {
     bg: a.bg, imageUrl: a.imageUrl, trackCount: a.trackCount, creator: a.artist, tracks: [],
   });
 
+  const artistPicks = curatedArtistPicks(artists);
+
   return (
     <div style={{ flex: 1, overflowY: "auto", scrollbarWidth: "none", paddingBottom: 32 }}>
       <div style={{ padding: "24px 28px 0" }}>
@@ -831,29 +894,13 @@ function DiscoverScreen() {
         ) : <EmptyState title="No new releases" sub="New releases will appear here." />}
       </div>
 
-      {artists.length > 0 && (
+      {artistPicks.length > 0 && (
         <div style={{ padding: "24px 28px 0" }}>
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 12 }}>
-            <h2 style={{ fontSize: 20, fontWeight: 800, color: C.text, margin: 0 }}>Artists</h2>
+            <h2 style={{ fontSize: 20, fontWeight: 800, color: C.text, margin: 0 }}>Artists for you</h2>
             <button onClick={() => navigate({ id: "library", tab: "artists" })} style={{ fontSize: 13, fontWeight: 600, color: C.muted, background: "none", border: "none", cursor: "pointer" }}>See all</button>
           </div>
-          <div style={{ display: "flex", gap: 18, overflowX: "auto", scrollbarWidth: "none", paddingBottom: 4 }}>
-            {(artists || []).slice(0, 8).map(a => (
-              <div key={a.id} role="button" tabIndex={0}
-                onClick={() => navigate({ id: "search", q: a.name })}
-                onKeyDown={e => e.key === "Enter" && navigate({ id: "search", q: a.name })}
-                style={{ width: 110, flexShrink: 0, textAlign: "center", cursor: "pointer" }}>
-                <div style={{ width: 96, height: 96, borderRadius: "50%", background: a.bg, overflow: "hidden", margin: "0 auto" }}>
-                  {a.imageUrl
-                    ? <img src={a.imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                    : <div style={{ width: "100%", height: "100%", display: "grid", placeItems: "center", fontSize: 30, fontWeight: 800, color: "rgba(255,255,255,0.85)" }}>{a.name[0]}</div>
-                  }
-                </div>
-                <div style={{ fontWeight: 700, fontSize: 13.5, color: C.text, marginTop: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</div>
-                <div style={{ fontSize: 11.5, color: C.muted }}>Artist</div>
-              </div>
-            ))}
-          </div>
+          <ArtistTiles picks={artistPicks} onPick={a => void playArtistShuffled(a.name, playTrack)} />
         </div>
       )}
 
