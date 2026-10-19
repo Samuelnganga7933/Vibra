@@ -41,8 +41,17 @@ export default defineConfig(({ mode }) => {
       },
     },
     define: {
+      // Build-time process env first (Vercel injects it at build), then the
+      // .env files, then the deployed Neon Auth branch as a last resort —
+      // "Continue with Google" must never be dead in a production build.
       'import.meta.env.VITE_NEON_AUTH_URL': JSON.stringify(
-        (env.VITE_NEON_AUTH_URL || env.NEON_AUTH_BASE_URL || '').trim(),
+        (
+          process.env.VITE_NEON_AUTH_URL ||
+          process.env.NEON_AUTH_BASE_URL ||
+          env.VITE_NEON_AUTH_URL ||
+          env.NEON_AUTH_BASE_URL ||
+          'https://ep-quiet-sunset-b55texgk.neonauth.c-7.us-east-2.aws.neon.tech/neondb/auth'
+        ).trim(),
       ),
     },
   }

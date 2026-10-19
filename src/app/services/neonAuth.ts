@@ -34,7 +34,9 @@ export async function signInWithGoogle(): Promise<string | null> {
       method: "POST",
       credentials: "include",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ provider: "google", callbackURL: "/" }),
+      // Absolute current origin (plus hash deep link) so Google's round-trip
+      // always lands back on this deployment — never a hardcoded domain.
+      body: JSON.stringify({ provider: "google", callbackURL: window.location.href }),
     });
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as { message?: string } | null;
