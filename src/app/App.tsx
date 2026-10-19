@@ -282,11 +282,16 @@ function HomeScreen() {
   // Filter chips (design: All / Music / Made for you / New) + per-shelf "more".
   const [chip, setChip] = useState("All");
   const [moreShelves, setMoreShelves] = useState<Record<string, HomeItem[]>>({});
+  /** True while a shelf's next page is in flight (also blocks scroll re-fires). */
+  const [moreBusy, setMoreBusy] = useState<Record<string, boolean>>({});
+  /** The engine has nothing new left for this shelf — stop asking. */
+  const [moreDone, setMoreDone] = useState<Record<string, boolean>>({});
+  const moreBusyRef = useRef<Set<string>>(new Set());
   const CHIPS = ["All", "Music", "Made for you", "New"] as const;
   const chipMatch = (s: HomeShelf) =>
     chip === "All" ? true
     : chip === "Music" ? (s.type === "shelf" || s.type === "recent")
-    : chip === "Made for you" ? (s.type === "jump_back_in" || s.type === "recent" || s.id.startsWith("because-"))
+    : chip === "Made for you" ? (s.type === "mix_row" || s.type === "recent" || s.id.startsWith("because-"))
     : s.id === "new-releases";
 
   /** Extra items for a shelf ("See all" / "Show more") come from the live engine. */
@@ -297,23 +302,48 @@ function HomeScreen() {
     : s.id === "new-releases" ? "new music releases"
     : null;
 
+  /**
+   * Next page for a shelf: the request limit grows with what's already shown
+   * so the engine keeps returning fresh rows, and ids already on screen are
+   * dropped. Scroll near the right edge (or the header button) keeps paging —
+   * a row ends only when the engine does.
+   */
   const loadMore = async (shelf: HomeShelf) => {
     const q = moreQuery(shelf);
-    if (!q) return;
-    const res = await searchTracks(q, 20);
-    const items: HomeItem[] = res.slice(0, 20).map((t, i) => {
-      const tr = fromApiTrack(t, i);
-      return { id: String(tr.id), title: tr.title, artist: tr.artist, imageUrl: tr.imageUrl, videoId: tr.videoId ?? String(tr.id), durationSec: tr.durationSec, bg: tr.bg };
-    });
-    setMoreShelves(prev => ({ ...prev, [shelf.id]: items }));
+    if (!q || moreBusyRef.current.has(shelf.id) || moreDone[shelf.id]) return;
+    moreBusyRef.current.add(shelf.id);
+    setMoreBusy(prev => ({ ...prev, [shelf.id]: true }));
+    try {
+      const have = moreShelves[shelf.id]?.length ?? 0;
+      const want = 20 + have;
+      const res = await searchTracks(q, want);
+      const seen = new Set((moreShelves[shelf.id] ?? []).map(e => e.id));
+      const fresh: HomeItem[] = [];
+      res.slice(0, want).forEach((t, i) => {
+        const tr = fromApiTrack(t, have + i);
+        const item: HomeItem = { id: String(tr.id), title: tr.title, artist: tr.artist, imageUrl: tr.imageUrl, videoId: tr.videoId ?? String(tr.id), durationSec: tr.durationSec, bg: tr.bg };
+        if (seen.has(item.id)) return;
+        seen.add(item.id);
+        fresh.push(item);
+      });
+      if (fresh.length === 0) setMoreDone(prev => ({ ...prev, [shelf.id]: true }));
+      else setMoreShelves(prev => ({ ...prev, [shelf.id]: [...(prev[shelf.id] ?? []), ...fresh] }));
+    } catch {
+      /* Transient engine failure: leave the row as-is; the next scroll retries. */
+    } finally {
+      moreBusyRef.current.delete(shelf.id);
+      setMoreBusy(prev => ({ ...prev, [shelf.id]: false }));
+    }
   };
 
   /** Opens a shelf item: tracks play directly; seeded mixes resolve via search. */
   const openItem = async (item: HomeItem, shelf: HomeShelf) => {
     if (item.query && !item.videoId) {
-      const results = await searchTracks(item.query, 10);
-      if (results.length === 0) { toast.error("Couldn\'t start that mix — try again."); return; }
-      const tracks = results.map((t, i) => fromApiTrack(t, i));
+      let results = await searchTracks(item.query, 10);
+      if (results.length === 0 && item.artist) results = await searchTracks(item.artist, 10);
+      const clean = sanitizeMusicItems(results);
+      if (clean.length === 0) { toast.error("Couldn\'t start that mix — try again."); return; }
+      const tracks = clean.map((t, i) => fromApiTrack(t, i));
       playTrack(tracks[0], tracks, shelf.id);
       return;
     }
@@ -341,7 +371,13 @@ function HomeScreen() {
   };
 
   const cardRow = (shelf: HomeShelf, items: HomeItem[]) => (
-    <div style={{ display: "flex", gap: 14, overflowX: "auto", scrollbarWidth: "none", paddingBottom: 6 }}>
+    <div
+      // Endless rows: approaching the right edge pages in the next batch.
+      onScroll={e => {
+        const el = e.currentTarget;
+        if (el.scrollLeft + el.clientWidth >= el.scrollWidth - 320) void loadMore(shelf);
+      }}
+      style={{ display: "flex", gap: 14, overflowX: "auto", scrollbarWidth: "none", paddingBottom: 6 }}>
       {items.map(item => (
         <div key={item.id} style={{ position: "relative", flexShrink: 0 }} {...revealOnHover}>
           <TrackCard track={toTrackItem(item)} size={140} radius={14} onPlay={() => openItem(item, shelf)} />
@@ -401,7 +437,7 @@ function HomeScreen() {
   const section = (shelf: HomeShelf) => {
     const base = visible(shelf);
     const extra = (moreShelves[shelf.id] ?? []).filter(e => !base.some(b => b.id === e.id));
-    const items = [...base, ...extra].slice(0, 24);
+    const items = [...base, ...extra].slice(0, 120);
     if (items.length === 0) return null;
     const q = moreQuery(shelf);
     const moreLabel = shelf.id.startsWith("because-") ? "Show more" : "See all";
@@ -412,12 +448,12 @@ function HomeScreen() {
             <h2 style={{ fontSize: 19, fontWeight: 800, color: C.text, margin: 0, letterSpacing: -0.3 }}>{shelf.title}</h2>
             {shelf.subtitle && <div style={{ fontSize: 12.5, color: C.muted, marginTop: 3 }}>{shelf.subtitle}</div>}
           </div>
-          {q && !moreShelves[shelf.id] && (
-            <button onClick={() => loadMore(shelf)}
-              style={{ background: "none", border: "none", cursor: "pointer", color: C.muted, fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", flexShrink: 0, padding: "4px 0" }}
+          {q && !moreDone[shelf.id] && (
+            <button onClick={() => loadMore(shelf)} disabled={moreBusy[shelf.id]}
+              style={{ background: "none", border: "none", cursor: moreBusy[shelf.id] ? "default" : "pointer", color: C.muted, fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", flexShrink: 0, padding: "4px 0" }}
               onMouseEnter={e => (e.currentTarget.style.color = C.text)}
               onMouseLeave={e => (e.currentTarget.style.color = C.muted)}>
-              {moreLabel}
+              {moreBusy[shelf.id] ? "Loading…" : extra.length > 0 ? "Show more" : moreLabel}
             </button>
           )}
         </div>
@@ -474,7 +510,7 @@ function HomeScreen() {
           {[...Array(5)].map((_, i) => <CardSkeleton key={i} size={140} />)}
         </div>
       ) : shelves.length > 0 ? (
-        shelves.filter(chipMatch).slice(0, 4).map(section)
+        shelves.filter(chipMatch).filter(s => s.type !== "jump_back_in").map(section)
       ) : (
         /* First run is never an empty room — one line, one action. */
         <div style={{ margin: "36px 28px 0", borderRadius: 18, border: `1px dashed ${C.border}`, background: C.surf, padding: "44px 28px", display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: 14 }}>
@@ -2844,7 +2880,12 @@ export default function App() {
    */
   const startVibeIfAny = useCallback((): boolean => {
     const queued = new Set(queue.map(t => String(t.id)));
-    const pick = vibePool.find(t => !queued.has(String(t.id)) && t.id !== currentTrack?.id);
+    const fresh = vibePool.filter(t => !queued.has(String(t.id)) && t.id !== currentTrack?.id);
+    // Continue the artist you're already on first — one feeling flows into the
+    // next instead of getting ambushed by whatever else sits in the pool.
+    const sameArtist = (t: Track) =>
+      !!currentTrack?.artist && t.artist.trim().toLowerCase() === currentTrack.artist.trim().toLowerCase();
+    const pick = fresh.find(sameArtist) ?? fresh[0];
     if (!pick) return false;
     setQueueIdx(queue.length);
     setQueue([...queue, pick]);

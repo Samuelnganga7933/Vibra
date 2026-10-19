@@ -191,7 +191,9 @@ async function shelvesFromLocalHistory(history: StoredTrack[]): Promise<HomeShel
  * when the BFF is unreachable or returns nothing renderable.
  */
 export async function fetchHome(): Promise<HomeShelf[]> {
-  const data = await bffJson<{ shelves?: unknown }>(`/api/home?${localeParam()}`);
+  // The BFF fans out several catalogue searches behind this one call; give the
+  // shelf build room to finish (the cache still paints instantly meanwhile).
+  const data = await bffJson<{ shelves?: unknown }>(`/api/home?${localeParam()}`, { timeoutMs: 20_000 } as RequestInit);
   const shelves = Array.isArray(data?.shelves)
     ? data.shelves.map(normalizeShelf).filter((s): s is HomeShelf => s !== null && s.items.length > 0)
     : [];

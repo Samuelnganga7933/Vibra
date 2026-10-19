@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from typing import Any
 
 import httpx
@@ -23,6 +24,12 @@ import httpx
 CATALOGUE_BASE = os.environ.get(
     "CATALOGUE_BASE", "https://lenium-music-api.onrender.com"
 ).rstrip("/")
+
+# Raw search results are reused for a few minutes: the external engine answers
+# in 3–15s, and Home rebuilds repeatedly on the same stable queries (region,
+# trending, an affinity artist). Stale-by-minutes is fine for shelf building.
+_QUERY_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_QUERY_CACHE_TTL = 300.0
 
 _ENVELOPE_KEYS = ("results", "tracks", "items", "videos", "entries", "data", "songs")
 
@@ -158,13 +165,18 @@ def search_catalogue(query: str, limit: int = 12) -> list[dict[str, Any]]:
     """
     if not query.strip():
         return []
+    cache_key = f"{query.strip().lower()}|{limit}"
+    cached = _QUERY_CACHE.get(cache_key)
+    now = time.monotonic()
+    if cached is not None and now - cached[0] < _QUERY_CACHE_TTL:
+        return cached[1]
     try:
         # Over-fetch: sanitizer + dedupe drop rows before the limit is met.
         want = min(max(limit * 2, 20), 50)
         response = httpx.get(
             f"{CATALOGUE_BASE}/api/v1/search",
             params={"query": query, "limit": str(want)},
-            timeout=7.0,
+            timeout=14.0,
             follow_redirects=True,
         )
         response.raise_for_status()
@@ -210,4 +222,8 @@ def search_catalogue(query: str, limit: int = 12) -> list[dict[str, Any]]:
                 "imageUrl": _image(row),
             }
         )
-    return dedupe_variants(candidates)[:limit]
+    result = dedupe_variants(candidates)[:limit]
+    if len(_QUERY_CACHE) > 256:
+        _QUERY_CACHE.clear()
+    _QUERY_CACHE[cache_key] = (now, result)
+    return result

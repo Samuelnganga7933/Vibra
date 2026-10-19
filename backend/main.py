@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import os
 import secrets
+import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -931,10 +932,21 @@ def ingest_event(payload: VibraEventIn, user: User = Depends(get_token_user), db
             db.add(BlockedItem(user_id=user.id, kind="track", value=payload.track_id))
 
     db.commit()
+    _invalidate_home(user.id)
     return Response(status_code=204)
 
 
 # ── Server-driven home feed ───────────────────────────────────────────────────
+
+# A finished shelf build is expensive (several external catalogue searches), so
+# it is reused for a short window; anything the learner consumes drops it first.
+_HOME_CACHE: dict[tuple[Optional[str], Optional[str]], tuple[float, list["HomeShelfOut"]]] = {}
+_HOME_CACHE_TTL = 120.0
+
+
+def _invalidate_home(user_id: Optional[str]) -> None:
+    for key in [k for k in _HOME_CACHE if k[0] == user_id]:
+        _HOME_CACHE.pop(key, None)
 
 
 def _items_from_tracks(tracks: list[dict]) -> list[HomeItemOut]:
@@ -965,17 +977,17 @@ def _items_from_events(events: list[PlayEventRow]) -> list[HomeItemOut]:
     ]
 
 
-def _guest_shelves(locale: Optional[str] = None) -> list[HomeShelfOut]:
-    """Cold start / signed out: region and trending shelves, same components.
-
-    `locale` (navigator.language from the client) picks the region market —
-    no fixed language: ko-KR gets Korean charts, en-KE gets Kenya, and a
-    locale-less client keeps the product default market.
-    """
+def _guest_shelves_from(
+    locale: Optional[str],
+    region_rows: list[dict],
+    trending_rows: list[dict],
+    fresh_rows: list[dict],
+) -> list[HomeShelfOut]:
+    """Shelf objects from pre-fetched region/trending/new rows."""
     market = market_label(locale)
-    region = _items_from_tracks(search_catalogue(region_query(locale), 10))
-    trending = _items_from_tracks(merged_catalogue(scene_queries(locale) + ["trending music"], 10))
-    fresh = _items_from_tracks(search_catalogue("new music releases", 10))
+    region = _items_from_tracks(region_rows)
+    trending = _items_from_tracks(trending_rows)
+    fresh = _items_from_tracks(fresh_rows)
 
     shelves: list[HomeShelfOut] = []
     if region:
@@ -988,6 +1000,38 @@ def _guest_shelves(locale: Optional[str] = None) -> list[HomeShelfOut]:
     if fresh:
         shelves.append(HomeShelfOut(id="new-releases", type="shelf", title="New releases", items=fresh))
     return shelves
+
+
+def _guest_shelves(locale: Optional[str] = None) -> list[HomeShelfOut]:
+    """Cold start / signed out: region and trending shelves, same components.
+
+    `locale` (navigator.language from the client) picks the region market —
+    no fixed language: ko-KR gets Korean charts, en-KE gets Kenya, and a
+    locale-less client keeps the product default market.
+    """
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        region_rows = pool.submit(search_catalogue, region_query(locale), 10)
+        trending_rows = pool.submit(
+            lambda: merged_catalogue(scene_queries(locale) + ["trending music"], 10)
+        )
+        fresh_rows = pool.submit(search_catalogue, "new music releases", 10)
+        return _guest_shelves_from(
+            locale, region_rows.result(), trending_rows.result(), fresh_rows.result(),
+        )
+
+
+def _because_rows(artist: str, recent: list[PlayEventRow], blocked_artists: set[str]) -> list[dict]:
+    """Catalogue rows for one "Because you played …" shelf, history as fallback."""
+    rows = [
+        t for t in search_catalogue(artist, 12)
+        if t.get("artist") is None or t["artist"] not in blocked_artists
+    ]
+    if rows:
+        return rows
+    return [
+        {"id": e.track_id, "videoId": e.track_id, "title": e.title, "artist": e.artist, "imageUrl": e.image_url}
+        for e in recent if e.artist == artist and e.track_id and e.title
+    ]
 
 
 def _home_for_user(db: Session, user: User, locale: Optional[str] = None) -> list[HomeShelfOut]:
@@ -1024,17 +1068,8 @@ def _home_for_user(db: Session, user: User, locale: Optional[str] = None) -> lis
         seen.add(event.track_id)
         recent.append(event)
 
-    shelves: list[HomeShelfOut] = [
-        HomeShelfOut(
-            id="jump-back-in",
-            type="jump_back_in",
-            title="Jump back in",
-            items=_items_from_events(recent[:4]),
-        )
-    ]
-
-    # Artist affinity → "Because you played X" + mixes. A single play or like
-    # already produced a score > 0, so this shelf appears from the first listen.
+    # Artist affinity → mixes and "Because you played X" shelves. A single play
+    # or like already produced a score > 0, so these appear from the first listen.
     scores = db.scalars(
         select(ArtistScore)
         .where(ArtistScore.user_id == user.id, ArtistScore.artist.notin_(blocked_artists))
@@ -1042,37 +1077,91 @@ def _home_for_user(db: Session, user: User, locale: Optional[str] = None) -> lis
         .limit(6)
     ).all()
     top_artists = [s.artist for s in scores if s.score > 0][:6]
+    focus = top_artists[:3]
 
-    if top_artists:
-        # Dynamic shelf FIRST — personalized beats generic trending.
-        top = top_artists[0]
-        because_tracks = [
-            t for t in search_catalogue(top, 12)
-            if t.get("artist") is None or t["artist"] not in blocked_artists
-        ][:10]
-        if not because_tracks:
-            because_tracks = [
-                {"id": e.track_id, "videoId": e.track_id, "title": e.title, "artist": e.artist, "imageUrl": e.image_url}
-                for e in recent if e.artist == top
+    # One pool, six workers: every "Because you played" search plus the guest
+    # shelves we keep alongside personalization ("Keep Trending") — the shared
+    # pool caps how many catalogue requests we burst at the external engine.
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        because_futures = [
+            pool.submit(_because_rows, artist, recent, blocked_artists)
+            for artist in focus
+        ]
+        region_future = pool.submit(search_catalogue, region_query(locale), 10)
+        trending_future = pool.submit(
+            lambda: merged_catalogue(scene_queries(locale) + ["trending music"], 10)
+        )
+        fresh_future = pool.submit(search_catalogue, "new music releases", 10)
+
+        shelves: list[HomeShelfOut] = [
+            HomeShelfOut(
+                id="jump-back-in",
+                type="jump_back_in",
+                title="Jump back in",
+                items=_items_from_events(recent[:4]),
+            )
+        ]
+        taken = {item.id for item in shelves[0].items}
+
+        # "Made for you" mixes — seed queries the client resolves on open.
+        # Radio/greatest-hits seeds pull the artist plus similar artists.
+        mixes: list[HomeItemOut] = []
+        for position, artist in enumerate(focus, start=1):
+            art = next((e.image_url for e in recent if e.artist == artist and e.image_url), None)
+            mixes.append(HomeItemOut(
+                id=f"mix-your-{position}",
+                title=f"Your Mix {position}",
+                artist=artist,
+                subtitle=artist,
+                imageUrl=art,
+                query=f"{artist} radio",
+            ))
+        last_art = next((e.image_url for e in recent if e.image_url), None)
+        mixes.append(HomeItemOut(
+            id="mix-late-night",
+            title="Late-night mix",
+            imageUrl=last_art,
+            query="lofi hip hop radio",
+        ))
+        shelves.append(HomeShelfOut(
+            id="made-for-you", type="mix_row", title="Made for you", items=mixes,
+        ))
+
+        for artist, future in zip(focus, because_futures):
+            rows = [
+                t for t in future.result()
+                if str(t.get("id")) and str(t.get("id")) not in taken
             ][:10]
-        if because_tracks:
+            if not rows:
+                continue
+            taken.update(str(t.get("id")) for t in rows)
             shelves.append(HomeShelfOut(
-                id=f"because-{top.lower().replace(' ', '-')[:40]}",
+                id=f"because-{artist.lower().replace(' ', '-')[:40]}",
                 type="shelf",
-                title=f"Because you played {top}",
-                items=_items_from_tracks(because_tracks),
+                title=f"Because you played {artist}",
+                items=_items_from_tracks(rows),
             ))
 
-    shelves.append(HomeShelfOut(
-        id="recently-played", type="recent", title="Recently played",
-        items=_items_from_events(recent[:10]),
-    ))
+        shelves.append(HomeShelfOut(
+            id="recently-played", type="recent", title="Recently played",
+            items=_items_from_events(recent[:10]),
+        ))
 
-    # Generic trending only when there is nothing learned yet — never next to
-    # a personalized shelf.
-    if not top_artists:
-        shelves.extend(s for s in _guest_shelves(locale) if not s.id.startswith("region-"))
-    return shelves
+        # Keep Trending (and the region/new shelves) next to personalization;
+        # drop only the items an earlier shelf already shows.
+        guest = _guest_shelves_from(
+            locale, region_future.result(), trending_future.result(), fresh_future.result(),
+        )
+        for shelf in guest:
+            items = [item for item in shelf.items if item.id not in taken]
+            if not items:
+                continue
+            taken.update(item.id for item in items)
+            shelves.append(HomeShelfOut(
+                id=shelf.id, type=shelf.type, title=shelf.title,
+                subtitle=shelf.subtitle, items=items,
+            ))
+        return shelves
 
 
 @app.get("/api/home", response_model=HomeOut)
@@ -1081,7 +1170,14 @@ def home(
     db: Session = Depends(get_db),
     locale: Optional[str] = None,
 ):
+    key = (user.id if user is not None else None, locale)
+    cached = _HOME_CACHE.get(key)
+    if cached is not None and time.monotonic() - cached[0] < _HOME_CACHE_TTL:
+        return HomeOut(shelves=cached[1])
     shelves = _home_for_user(db, user, locale) if user is not None else _guest_shelves(locale)
+    if len(_HOME_CACHE) > 64:
+        _HOME_CACHE.clear()
+    _HOME_CACHE[key] = (time.monotonic(), shelves)
     return HomeOut(shelves=shelves)
 
 
@@ -1092,6 +1188,7 @@ def reset_recommendations(user: User = Depends(get_token_user), db: Session = De
         db.query(model).filter(model.user_id == user.id).delete()
     db.query(PlayHistory).filter(PlayHistory.user_id == user.id).delete()
     db.commit()
+    _invalidate_home(user.id)
     return Response(status_code=204)
 
 
