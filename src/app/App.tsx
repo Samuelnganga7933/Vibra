@@ -270,6 +270,18 @@ function useAlbums(rows: Track[]): Record<string, string> {
   return map;
 }
 
+// ─── Curated artist row ──────────────────────────────────────────────────────
+/** Server liked-row snapshot → the client Track shape. */
+const mapLikedTrack = (t: any): Track => ({
+  id: String(t.id),
+  title: t.title,
+  artist: t.artist ?? "Unknown artist",
+  bg: t.coverColor || BG_PALETTE[0],
+  imageUrl: t.imageUrl,
+  durationSec: t.durationMs ? Math.round(t.durationMs / 1000) : undefined,
+  videoId: t.videoId,
+});
+
 // ─── HomeScreen ───────────────────────────────────────────────────────────────
 function HomeScreen() {
   const { C, navigate, playTrack, shelves, homeLoading, hiddenIds, hideItem, user, openTrackOptions, uiState, openCreatePlaylist, playlists, artists } = useApp();
@@ -1178,15 +1190,22 @@ function SettingsScreen() {
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
 
-  const saveName = () => {
+  const saveName = async () => {
     const next = nameDraft.trim();
     if (!next) return;
-    updateProfile({
-      name: next,
-      initials: next.split(/\s+/).map(w => w[0]).join("").toUpperCase().slice(0, 2),
-    });
-    setEditingName(false);
-    toast("Profile updated");
+    try {
+      // Persisted server-side first — the name must survive reloads, re-logins
+      // and other devices, not just this tab's local profile.
+      const u = await api<User>("/auth/me", { method: "PUT", body: JSON.stringify({ name: next }) });
+      updateProfile({
+        name: u?.name ?? next,
+        initials: u?.initials ?? next.split(/\s+/).map(w => w[0]).join("").toUpperCase().slice(0, 2),
+      });
+      setEditingName(false);
+      toast("Profile updated");
+    } catch {
+      toast.error("Couldn't save your name — try again.");
+    }
   };
 
   const saveSettings = async (patch: Record<string, unknown>) => {
@@ -1454,6 +1473,28 @@ function ProfileScreen() {
   const uniqueArtists = new Set(recentTracks.map(t => t.artist).filter(Boolean)).size;
   const playlistCount = playlists.filter(p => p.id !== "liked").length;
 
+  // “Artists discovered” expands into the real list (server affinity + photos).
+  const [discOpen, setDiscOpen] = useState(false);
+  const [discLoading, setDiscLoading] = useState(false);
+  const [discovered, setDiscovered] = useState<{ count: number; artists: { name: string; plays: number; imageUrl?: string }[] } | null>(null);
+
+  const toggleDiscovered = async () => {
+    if (discOpen) { setDiscOpen(false); return; }
+    setDiscOpen(true);
+    if (discovered) return;
+    setDiscLoading(true);
+    try {
+      const d = await api<{ count?: number; artists?: { name: string; plays: number; imageUrl?: string }[] }>(
+        "/auth/me/discovered-artists",
+      );
+      setDiscovered({ count: d?.count ?? 0, artists: d?.artists ?? [] });
+    } catch {
+      toast.error("Couldn't load your artists — try again.");
+    } finally {
+      setDiscLoading(false);
+    }
+  };
+
   if (userLoading) return (
     <div style={{ flex: 1, padding: "24px 28px", display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, padding: "24px 0" }}>
@@ -1515,22 +1556,51 @@ function ProfileScreen() {
           <div style={{ padding: "24px 28px 0" }}>
             <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: "0 0 12px" }}>Listening stats</h2>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-              {[
-                [user.stats?.weeklyMinutes ?? "0m",  "Listened this week"],
-                [String(uniqueArtists),              "Artists discovered"],
-                [String(likedTrackIds.size),         "Liked tracks"],
-              ].map(([val, label]) => (
-                <div key={label} style={{ background: C.pane, border: `1px solid ${C.border}`, borderRadius: 12, padding: "16px 14px", textAlign: "center" }}>
+              {([
+                [user.stats?.weeklyMinutes ?? "0m",                       "Listened this week", null],
+                [String(user.stats?.topArtists ?? uniqueArtists),        "Artists discovered", toggleDiscovered],
+                [String(likedTrackIds.size),                             "Liked tracks",       () => navigate({ id: "library", tab: "liked" })],
+              ] as [string, string, (() => void) | null][]).map(([val, label, go]) => (
+                <button key={label} onClick={go ?? undefined} disabled={!go}
+                  style={{ background: C.pane, border: `1px solid ${C.border}`, borderRadius: 12, padding: "16px 14px", textAlign: "center", cursor: go ? "pointer" : "default", fontFamily: "inherit", display: "block", width: "100%" }}>
                   <div style={{ fontSize: 22, fontWeight: 700, color: C.accent }}>{val}</div>
                   <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{label}</div>
-                </div>
+                </button>
               ))}
             </div>
+
+            {discOpen && (
+              <div style={{ marginTop: 12, background: C.pane, border: `1px solid ${C.border}`, borderRadius: 12, padding: 6 }}>
+                {discLoading ? (
+                  <div style={{ padding: "10px 8px", display: "flex", flexDirection: "column", gap: 10 }}>
+                    {[0, 1, 2].map(i => <Sk key={i} h={38} r={10} />)}
+                  </div>
+                ) : discovered && discovered.artists.length > 0 ? (
+                  discovered.artists.map(a => (
+                    <div key={a.name} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px" }}>
+                      <div style={{ width: 34, height: 34, borderRadius: "50%", overflow: "hidden", background: C.surf, flexShrink: 0 }}>
+                        {a.imageUrl
+                          ? <img src={a.imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                          : <div style={{ width: "100%", height: "100%", display: "grid", placeItems: "center", fontSize: 13, fontWeight: 800, color: C.muted }}>{a.name[0]}</div>}
+                      </div>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</div>
+                        <div style={{ fontSize: 11.5, color: C.muted }}>{a.plays} {a.plays === 1 ? "play" : "plays"}</div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div style={{ padding: "14px 10px", fontSize: 13, color: C.muted, textAlign: "center" }}>
+                    Artists will show up here once your listening history has a few plays.
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </>
       ) : (
         <div style={{ padding: "24px 28px 0" }}>
-          <EmptyState title="Make Vibra yours" sub="Sign in to keep your library, likes, and listening history across devices." action={
+          <EmptyState title="Make Vybra yours" sub="Sign in to keep your library, likes, and listening history across devices." action={
             <button onClick={() => navigate({ id: "auth", mode: "login" })}
               style={{ height: 40, padding: "0 20px", borderRadius: 20, border: "none", background: C.accent, color: C.bg, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
               Sign in
@@ -2468,6 +2538,8 @@ export default function App() {
   const [playlistsLoading, setPlaylistsLoading]     = useState(false);
   const [likedTrackIds, setLikedTrackIds]           = useState<Set<string | number>>(new Set());
   const [likedTracks, setLikedTracks]               = useState<Track[]>([]);
+  /** Metadata snapshots from GET /library/liked — render without local cache. */
+  const [serverLiked, setServerLiked]               = useState<Track[]>([]);
   const [downloadedTracks, setDownloadedTracks]     = useState<Track[]>([]);
   const [artists, setArtists]                       = useState<ArtistItem[]>([]);
 
@@ -2641,7 +2713,7 @@ export default function App() {
     setPlaylistsLoading(true);
     Promise.all([
       api<any[]>("/library/playlists"),
-      api<{ ids: string[] }>("/library/liked"),
+      api<{ ids: string[]; tracks?: any[] }>("/library/liked"),
       api<any[]>("/library/recent"),
       api<any[]>("/library/artists"),
       api<any[]>("/library/downloaded"),
@@ -2657,7 +2729,10 @@ export default function App() {
           ...stored.filter(s => !backendPls.some(b => b.id === s.id)),
         ]);
       }
-      if (liked)         setLikedTrackIds(new Set(liked.ids));
+      if (liked) {
+        setLikedTrackIds(new Set(liked.ids));
+        setServerLiked((liked.tracks ?? []).filter(t => t?.title).map(mapLikedTrack));
+      }
       if (recent)        setRecentTracks(mergeHistory(recent.map(mapAPITrack) as unknown as StoredTrack[]) as unknown as Track[]);
       if (arts)          setArtists(arts.map(mapAPIArtist));
       if (dl)            setDownloadedTracks(dl.map(mapAPITrack));
@@ -2736,11 +2811,33 @@ export default function App() {
     return () => { cancelled = true; };
   }, []);
 
-  // ── Liked tracks list ─────────────────────────────────────────────────────────
+  // The bar persists across reloads: as soon as stored history exists (e.g.
+  // after the library bootstrap merges it), it stays for the session.
   useEffect(() => {
-    if (likedTrackIds.size === 0) return;
-    setLikedTracks(discoveryTracks.filter(t => likedTrackIds.has(t.id)));
-  }, [likedTrackIds, discoveryTracks]);
+    if (getHistory().length > 0) setHasPlayback(true);
+  }, [recentTracks]);
+
+  // ── Liked tracks list ─────────────────────────────────────────────────────────
+  // Server snapshots carry the metadata (any device, any cache); tracks the
+  // client already knows fill rows liked before snapshots existed.
+  useEffect(() => {
+    if (likedTrackIds.size === 0) { setLikedTracks([]); return; }
+    const idSet = new Set([...likedTrackIds].map(String));
+    const byId = new Map<string, Track>();
+    for (const t of serverLiked) {
+      const k = String(t.id);
+      if (idSet.has(k)) byId.set(k, t);
+    }
+    const known: Track[] = [
+      ...recentTracks, ...discoveryTracks, ...queue, ...(currentTrack ? [currentTrack] : []),
+      ...shelves.flatMap(s => s.items.map(toTrackItem)),
+    ];
+    for (const t of known) {
+      const k = String(t.id);
+      if (idSet.has(k) && !byId.has(k)) byId.set(k, t);
+    }
+    setLikedTracks([...byId.values()]);
+  }, [likedTrackIds, serverLiked, recentTracks, discoveryTracks, queue, currentTrack, shelves]);
 
   // ── Lyrics for the current track ──────────────────────────────────────────────
   useEffect(() => {
@@ -3132,24 +3229,48 @@ export default function App() {
   // ── toggleLike ────────────────────────────────────────────────────────────────
   const toggleLike = useCallback((id: string | number) => {
     // Resolve the full track so the BFF like event carries artist/title —
-    // one heart is enough to move artist affinity.
-    const known = [currentTrack, ...queue, ...likedTracks, ...recentTracks, ...discoveryTracks]
+    // one heart is enough to move artist affinity. Home shelf items count too:
+    // liking straight from a shelf card must still snapshot the track.
+    const known = [currentTrack, ...queue, ...likedTracks, ...recentTracks, ...discoveryTracks,
+      ...shelves.flatMap(s => s.items.map(toTrackItem))]
       .find(t => t !== null && String(t.id) === String(id)) ?? null;
+    const key = String(id);
+    const wasLiked = [...likedTrackIds].map(String).includes(key);
     setLikedTrackIds(prev => {
-      const n = new Set(prev);
-      const wasLiked = n.has(id);
-      wasLiked ? n.delete(id) : n.add(id);
-      api(`/library/liked/${id}`, { method: "POST", body: JSON.stringify({ liked: !wasLiked }) });
-      sendEvent({
-        type: wasLiked ? "unlike" : "like",
-        trackId: id,
-        title: known?.title,
-        image: known?.imageUrl,
-        artist: known?.artist,
-      });
+      const n = new Set<string | number>();
+      for (const v of prev) n.add(String(v));
+      if (wasLiked) n.delete(key); else n.add(key);
       return n;
     });
-  }, [currentTrack, queue, likedTracks, recentTracks, discoveryTracks]);
+    // The snapshot rides along so the liked list renders on any device.
+    api(`/library/liked/${encodeURIComponent(key)}`, {
+      method: "POST",
+      body: JSON.stringify({
+        liked: !wasLiked,
+        track: known ? {
+          title: known.title,
+          artist: known.artist,
+          imageUrl: known.imageUrl,
+          coverColor: known.bg,
+          durationMs: Math.round((known.durationSec ?? 0) * 1000),
+          videoId: known.videoId,
+        } : null,
+      }),
+    }).catch(() => { /* heart stays optimistic; server reconciles on reload */ });
+    sendEvent({
+      type: wasLiked ? "unlike" : "like",
+      trackId: key,
+      title: known?.title,
+      image: known?.imageUrl,
+      artist: known?.artist,
+    });
+    // Mirror the server snapshot locally so the list re-renders immediately.
+    setServerLiked(prev => {
+      if (wasLiked) return prev.filter(t => String(t.id) !== key);
+      if (known && !prev.some(t => String(t.id) === key)) return [...prev, known];
+      return prev;
+    });
+  }, [currentTrack, queue, likedTracks, recentTracks, discoveryTracks, likedTrackIds, shelves]);
 
   const setVolume = useCallback((v: number) => {
     setVolumeState(v);
