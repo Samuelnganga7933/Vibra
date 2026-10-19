@@ -21,6 +21,26 @@ const NEON_AUTH_URL: string =
 
 export const neonAuthEnabled = NEON_AUTH_URL.length > 0;
 
+/**
+ * Neon Auth appends `?neon_auth_session_verifier=…` when it redirects back
+ * from Google. The exchange uses cookies, never the query string, so drop the
+ * param immediately — it would otherwise sit in the address bar forever (and
+ * get baked into the next `callbackURL`).
+ */
+export function clearOAuthQueryParams(): void {
+  try {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("neon_auth_session_verifier")) return;
+    url.searchParams.delete("neon_auth_session_verifier");
+    window.history.replaceState(
+      window.history.state, "",
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+  } catch {
+    /* exotic URL — leaving the parameter is cosmetic, never a blocker */
+  }
+}
+
 interface AuthResponse {
   token?: string;
   user?: SessionUser;

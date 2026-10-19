@@ -8,6 +8,7 @@
  */
 
 import { bffJson, bffSend, setSessionToken } from "./bff";
+import { clearUserProfile } from "./store";
 
 export interface SessionUser {
   id: string;
@@ -50,4 +51,7 @@ export async function loginUser(input: {
 export async function logoutUser(): Promise<void> {
   await bffSend("/auth/logout", { method: "POST" });
   setSessionToken(null);
+  // Explicit sign-out: the cached profile must not resurrect as a
+  // "Local profile" half-state on the next load (the gate owns that state).
+  clearUserProfile();
 }

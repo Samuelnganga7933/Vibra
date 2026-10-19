@@ -127,9 +127,18 @@ export function addHistoryTrack(track: StoredTrack): StoredTrack[] {
 
 /** Merges external (e.g. backend) tracks into the stored history. */
 export function mergeHistory(tracks: StoredTrack[]): StoredTrack[] {
-  const merged = [...tracks, ...getHistory()]
-    .filter((t, i, arr) => arr.findIndex(x => String(x.id) === String(t.id)) === i)
-    .slice(0, HISTORY_LIMIT);
+  // Rows played on this device carry full metadata — they win over the bare
+  // id-only rows GET /library/recent returns, so a sync can never blank out
+  // titles/artists the client already knows.
+  const byId = new Map<string, StoredTrack>();
+  for (const t of getHistory()) byId.set(String(t.id), t);
+  for (const t of tracks) {
+    if (typeof t.title !== "string") continue; // id-only: nothing to render or rank
+    const k = String(t.id);
+    const prev = byId.get(k);
+    byId.set(k, prev ? { ...t, ...prev } : t);
+  }
+  const merged = [...byId.values()].slice(0, HISTORY_LIMIT);
   writeJSON(HISTORY_KEY, merged);
   return merged;
 }

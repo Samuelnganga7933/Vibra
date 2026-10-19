@@ -27,6 +27,7 @@ import { addOfflineTrack, readOfflineTracks, clearOfflineTracks, unmarkOfflineCl
 import {
   getUserProfile,
   updateUserProfile,
+  clearUserProfile,
   getHistory,
   addHistoryTrack,
   mergeHistory,
@@ -58,7 +59,7 @@ import {
   type OutputDevice,
 } from "./services/devices";
 import { loginUser, registerUser, logoutUser } from "./services/auth";
-import { exchangeNeonSession, signOutNeon } from "./services/neonAuth";
+import { exchangeNeonSession, signOutNeon, clearOAuthQueryParams } from "./services/neonAuth";
 import {
   useApp, AppCtx, makeColors, fmtSec, fmtDur, cleanTitle, audioUrlFor, toTrackItem,
   fromApiTrack, mapAPITrack, mapAPIPlaylist, mapAPIAlbum, mapAPIArtist,
@@ -2474,7 +2475,9 @@ export default function App() {
   /** Failure shown in the main area; shell/sidebar/bar stay intact. */
   const [errorState, setErrorState] = useState<AppError | null>(null);
   /** Set on the first play this session — the player bar exists only after it. */
-  const [hasPlayback, setHasPlayback] = useState(false);
+  // A loaded track from a previous session shows the bar immediately: it
+  // persists across reloads and re-logins, not only until the first play.
+  const [hasPlayback, setHasPlayback] = useState(() => getHistory().length > 0);
   /** Bumped on login/logout so auth-derived state recomputes. */
   const [authVersion, setAuthVersion] = useState(0);
 
@@ -2558,6 +2561,7 @@ export default function App() {
     // Coming back from Google OAuth: trade the Neon Auth session for a Vibra
     // bearer first, so /auth/me below sees the fresh sign-in.
     const bootstrap = async () => {
+      clearOAuthQueryParams();
       if (!isSignedIn()) {
         await exchangeNeonSession();
       }
@@ -2572,8 +2576,8 @@ export default function App() {
           avatarUrl: u.avatarUrl,
           subscription: u.subscription === "premium" ? "premium" : "free",
         });
-      } else {
-        // Offline / no session: fall back to the persisted local profile.
+      } else if (isSignedIn()) {
+        // Offline with a live-looking token: keep working from the cached profile.
         const p = getUserProfile();
         if (p && p.name) {
           setUser({
@@ -2586,6 +2590,10 @@ export default function App() {
             subscription: p.subscription,
           });
         }
+      } else {
+        // No token at all — signed out. Drop any cached profile so the gate,
+        // not a "Local profile" half-state, owns this screen.
+        clearUserProfile();
       }
       setUserLoading(false);
     };
@@ -3272,6 +3280,9 @@ export default function App() {
 
   // Dead session (rotated/expired token) — drop to signed-out with a clear message.
   useEffect(() => onSessionExpired(() => {
+    // The server said this token is dead: drop the cached profile too, so the
+    // bootstrap fallback can't mask the gate with a stale "Local profile".
+    clearUserProfile();
     setUser(null);
     setAuthVersion(v => v + 1);
     toast("Your session expired — sign in again");
