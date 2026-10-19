@@ -2716,12 +2716,13 @@ export default function App() {
   // ── Bootstrap user ────────────────────────────────────────────────────────────
   useEffect(() => {
     // Coming back from Google OAuth: trade the Neon Auth session for a Vibra
-    // bearer first, so /auth/me below sees the fresh sign-in.
+    // bearer first, so /auth/me below sees the fresh sign-in. The exchange
+    // reads `neon_auth_session_verifier` from the URL — only strip it after.
     const bootstrap = async () => {
-      clearOAuthQueryParams();
       if (!isSignedIn()) {
         await exchangeNeonSession();
       }
+      clearOAuthQueryParams();
       const u = await api<User>("/auth/me");
       if (u) {
         setUser(u);

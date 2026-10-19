@@ -1,16 +1,16 @@
 /**
  * neonAuth.ts — Google OAuth via Neon Auth (Managed Better Auth).
  *
- * The "Continue with Google" button on AuthScreen starts the OAuth dance
- * against VITE_NEON_AUTH_URL by calling Better Auth's /sign-in/social
- * endpoint and following the returned Google redirect. After Google sends
- * the browser back, `exchangeNeonSession` reads the session JWT (GET /token)
- * and trades it at the Vibra BFF (/auth/neon) for the normal Vibra bearer,
- * so the rest of the app (library, history, playlists) works unchanged.
+ * Uses the official `@neondatabase/neon-js` auth client: it owns the OAuth
+ * dance (redirect/popup), reads the `neon_auth_session_verifier` that Neon
+ * appends on the return leg, and exposes `getSession()`/`getToken()` once the
+ * session is finalised. We then trade that JWT at the Vibra BFF (/auth/neon)
+ * for the normal Vibra bearer, so the rest of the app (library, history,
+ * playlists) works unchanged.
  *
- * Plain fetch instead of the better-auth package: the endpoints are the
- * stable Better Auth HTTP surface, and this keeps the client bundle free of
- * the SDK's optional peer-dependency tree.
+ * The verifier lives in `window.location.search` after Google sends the
+ * browser back — it must survive until `exchangeNeonSession()` runs; only
+ * then is it safe to strip from the address bar.
  */
 
 import { bffJson, setSessionToken } from "./bff";
@@ -21,11 +21,31 @@ const NEON_AUTH_URL: string =
 
 export const neonAuthEnabled = NEON_AUTH_URL.length > 0;
 
+// createAuthClient's public type is a union over its adapters; we use the
+// default Better Auth vanilla adapter, so narrow to its shape once here.
+type AuthClient = {
+  signIn: { social: (opts: { provider: "google"; callbackURL: string }) =>
+    Promise<{ data?: { url?: string; redirect?: boolean } | null; error?: { message?: string } | null }> };
+  getSession: () => Promise<{ data?: { session?: { access_token?: string } | null } | null; error?: unknown }>;
+  getToken: () => Promise<{ data?: { token?: string } | null }>;
+  signOut: () => Promise<unknown>;
+};
+
+let clientPromise: Promise<AuthClient | null> | null = null;
+const getClient = async (): Promise<AuthClient | null> => {
+  if (!neonAuthEnabled) return null;
+  if (!clientPromise) {
+    clientPromise = import("@neondatabase/neon-js/auth")
+      .then(m => m.createAuthClient(NEON_AUTH_URL) as unknown as AuthClient)
+      .catch(() => null);
+  }
+  return clientPromise;
+};
+
 /**
  * Neon Auth appends `?neon_auth_session_verifier=…` when it redirects back
- * from Google. The exchange uses cookies, never the query string, so drop the
- * param immediately — it would otherwise sit in the address bar forever (and
- * get baked into the next `callbackURL`).
+ * from Google. Call this only AFTER `exchangeNeonSession()` — the client
+ * forwards the verifier from the URL while finalising the session.
  */
 export function clearOAuthQueryParams(): void {
   try {
@@ -48,24 +68,19 @@ interface AuthResponse {
 
 /** Kick off Google OAuth. Redirects the browser away on success. */
 export async function signInWithGoogle(): Promise<string | null> {
-  if (!neonAuthEnabled) return "Google sign-in isn't configured on this branch.";
+  const auth = await getClient();
+  if (!auth) return "Google sign-in isn't configured on this branch.";
   try {
-    const response = await fetch(`${NEON_AUTH_URL}/sign-in/social`, {
-      method: "POST",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
-      // Absolute current origin (plus hash deep link) so Google's round-trip
-      // always lands back on this deployment — never a hardcoded domain.
-      body: JSON.stringify({ provider: "google", callbackURL: window.location.href }),
-    });
-    if (!response.ok) {
-      const body = (await response.json().catch(() => null)) as { message?: string } | null;
-      return body?.message || "Google sign-in failed. Try again.";
+    const res = (await auth.signIn.social({
+      provider: "google",
+      callbackURL: window.location.href,
+    })) as { data?: { url?: string; redirect?: boolean } | null; error?: { message?: string } | null };
+    if (res?.error) return res.error.message || "Google sign-in failed. Try again.";
+    const url = res?.data?.url;
+    // Some flows navigate on their own — only step in when we still have a URL.
+    if (url && !window.location.href.startsWith(url)) {
+      window.location.assign(url);
     }
-    const data = (await response.json().catch(() => null)) as { url?: string } | null;
-    if (!data?.url) return "Google sign-in failed. Try again.";
-    // Full page redirect to Google → Neon Auth callback → back to the app.
-    window.location.assign(data.url);
     return null;
   } catch {
     return "Couldn't reach the sign-in service. Check your connection.";
@@ -73,44 +88,43 @@ export async function signInWithGoogle(): Promise<string | null> {
 }
 
 /**
- * After the OAuth redirect: read the Better Auth session's JWT (GET /token,
- * signed EdDSA, verifiable by the BFF against NEON_AUTH_JWKS_URL) and
- * exchange it at the BFF (/auth/neon) for a Vibra bearer, so the rest of the
- * app (library, history, playlists) works unchanged.
+ * After the OAuth redirect: finalise the Neon session (verifier + cookies),
+ * read the JWT and exchange it at the BFF (/auth/neon) for a Vibra bearer,
+ * so the rest of the app works unchanged.
  */
 export async function exchangeNeonSession(): Promise<SessionUser | null> {
-  if (!neonAuthEnabled) return null;
-  let idToken: string | null = null;
+  const auth = await getClient();
+  if (!auth) return null;
   try {
-    const response = await fetch(`${NEON_AUTH_URL}/token`, {
-      credentials: "include",
-      headers: { accept: "application/json" },
+    const sessionRes = (await auth.getSession()) as {
+      data?: { session?: { access_token?: string } | null } | null;
+      error?: unknown;
+    };
+    if (sessionRes?.error) return null;
+
+    const tokenRes = (await auth.getToken()) as { data?: { token?: string } | null };
+    const idToken =
+      tokenRes?.data?.token ?? sessionRes?.data?.session?.access_token ?? null;
+    if (!idToken) return null;
+
+    const result = await bffJson<AuthResponse>("/auth/neon", {
+      method: "POST",
+      body: JSON.stringify({ token: idToken }),
     });
-    if (response.ok) {
-      const data = (await response.json().catch(() => null)) as { token?: string } | null;
-      idToken = data?.token ?? null;
-    }
+    if (!result?.token || !result.user) return null;
+    setSessionToken(result.token);
+    return result.user;
   } catch {
     return null;
   }
-  if (!idToken) return null;
-  const result = await bffJson<AuthResponse>("/auth/neon", {
-    method: "POST",
-    body: JSON.stringify({ token: idToken }),
-  });
-  if (!result?.token || !result.user) return null;
-  setSessionToken(result.token);
-  return result.user;
 }
 
 /** End the Neon Auth session (called on Vibra logout). */
 export async function signOutNeon(): Promise<void> {
-  if (!neonAuthEnabled) return;
+  const auth = await getClient();
+  if (!auth) return;
   try {
-    await fetch(`${NEON_AUTH_URL}/sign-out`, {
-      method: "POST",
-      credentials: "include",
-    });
+    await auth.signOut();
   } catch {
     /* best-effort — the Vibra token is already dropped */
   }
