@@ -74,6 +74,50 @@ class PlaylistCreate(BaseModel):
 
 class LikedIdsOut(BaseModel):
     ids: list[str] = []
+    tracks: list["LikedTrackOut"] = []
+
+
+class ProfileUpdate(BaseModel):
+    """Profile fields the app can edit (omitted fields are left untouched)."""
+
+    name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    username: Optional[str] = Field(default=None, min_length=1, max_length=60)
+    avatarUrl: Optional[str] = Field(default=None, max_length=512)
+
+
+class TrackMetaIn(BaseModel):
+    """Track snapshot sent when liking, so the liked list renders anywhere."""
+
+    title: Optional[str] = None
+    artist: Optional[str] = None
+    imageUrl: Optional[str] = None
+    coverColor: Optional[str] = None
+    durationMs: Optional[int] = None
+    videoId: Optional[str] = None
+
+
+class LikedTrackOut(BaseModel):
+    id: str
+    title: Optional[str] = None
+    artist: Optional[str] = None
+    imageUrl: Optional[str] = None
+    coverColor: Optional[str] = "#2C4A5E"
+    durationMs: int = 0
+    videoId: Optional[str] = None
+
+
+class ArtistDiscoveryOut(BaseModel):
+    """An artist surfaced from listening history (name-keyed id space)."""
+
+    name: str
+    plays: int = 0
+    imageUrl: Optional[str] = None
+    coverColor: str = "#2C4A5E"
+
+
+class DiscoveredArtistsOut(BaseModel):
+    count: int = 0
+    artists: list[ArtistDiscoveryOut] = []
 
 
 class FollowIn(BaseModel):
@@ -129,6 +173,7 @@ class AlbumLookupIn(BaseModel):
 
 class LikeToggle(BaseModel):
     liked: bool
+    track: Optional[TrackMetaIn] = None
 
 
 class LikeToggleOut(BaseModel):

@@ -101,6 +101,15 @@ class LikedTrack(Base):
     track_id: Mapped[str] = mapped_column(String(64))
     liked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
+    # Snapshot of the track at like-time — the catalogue is external, so the
+    # liked list must render (across devices) without a live engine lookup.
+    title: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    artist: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    image_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    cover_color: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    video_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
 
 class PlayHistory(Base):
     __tablename__ = "play_history"

@@ -23,7 +23,7 @@ import httpx
 import jwt
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import distinct, func, select
+from sqlalchemy import distinct, func, select, text
 from sqlalchemy.orm import Session
 
 from catalogue import search_catalogue
@@ -43,8 +43,10 @@ from models import (
 from schemas import (
     AlbumLookupIn,
     AlbumQueryIn,
+    ArtistDiscoveryOut,
     ArtistOut,
     AuthOut,
+    DiscoveredArtistsOut,
     DiscoverTrackOut,
     FollowIn,
     HistoryPauseIn,
@@ -54,6 +56,7 @@ from schemas import (
     LikeToggle,
     LikeToggleOut,
     LikedIdsOut,
+    LikedTrackOut,
     LoginIn,
     NeonSessionIn,
     NewReleaseOut,
@@ -64,6 +67,7 @@ from schemas import (
     PlaylistTrackIn,
     PlaylistTrackOrderIn,
     PlaylistTrackOut,
+    ProfileUpdate,
     RegisterIn,
     SettingsUpdate,
     Stats,
@@ -250,9 +254,44 @@ def _migrate_playlist_tracks() -> None:
         conn.close()
 
 
+def _migrate_liked_tracks() -> None:
+    """Add track-metadata columns to pre-existing liked_tracks installs."""
+    columns = {
+        "title": "TEXT",
+        "artist": "TEXT",
+        "image_url": "TEXT",
+        "cover_color": "TEXT",
+        "duration_ms": "INTEGER",
+        "video_id": "TEXT",
+    }
+    if engine.dialect.name == "postgresql":
+        # Production runs Postgres — it supports IF NOT EXISTS, SQLite doesn't.
+        with engine.begin() as conn:
+            for column, ddl_type in columns.items():
+                conn.execute(text(
+                    f"ALTER TABLE liked_tracks ADD COLUMN IF NOT EXISTS {column} {ddl_type}"
+                ))
+        return
+    import sqlite3
+    from database import BASE_DIR
+    db_path = BASE_DIR / "vibra_users.db"
+    if not db_path.exists():
+        return
+    conn = sqlite3.connect(db_path)
+    try:
+        existing = {row[1] for row in conn.execute("PRAGMA table_info(liked_tracks)")}
+        for column, ddl_type in columns.items():
+            if column not in existing:
+                conn.execute(f"ALTER TABLE liked_tracks ADD COLUMN {column} {ddl_type}")
+        conn.commit()
+    finally:
+        conn.close()
+
+
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     _migrate_playlist_tracks()
+    _migrate_liked_tracks()
     db = SessionLocal()
     try:
         _ensure_default_user(db)
@@ -458,8 +497,7 @@ def _weekly_minutes(db: Session, user_id: str) -> str:
     return f"{hours}h {mins}m" if mins else f"{hours}h"
 
 
-@app.get("/auth/me", response_model=UserOut)
-def read_me(user: User = Depends(get_token_user), db: Session = Depends(get_db)):
+def _me_out(db: Session, user: User) -> UserOut:
     playlist_count = db.scalar(
         select(func.count()).select_from(Playlist).where(Playlist.user_id == user.id)
     )
@@ -470,6 +508,7 @@ def read_me(user: User = Depends(get_token_user), db: Session = Depends(get_db))
         select(func.count(distinct(PlayHistory.artist_id))).where(
             PlayHistory.user_id == user.id,
             PlayHistory.artist_id.is_not(None),
+            PlayHistory.artist_id != "",
         )
     )
     stats = Stats(
@@ -490,6 +529,33 @@ def read_me(user: User = Depends(get_token_user), db: Session = Depends(get_db))
         subscription=user.subscription,  # type: ignore[arg-type]
         stats=stats,
     )
+
+
+@app.get("/auth/me", response_model=UserOut)
+def read_me(user: User = Depends(get_token_user), db: Session = Depends(get_db)):
+    return _me_out(db, user)
+
+
+@app.put("/auth/me", response_model=UserOut)
+def update_me(
+    payload: ProfileUpdate,
+    user: User = Depends(get_token_user),
+    db: Session = Depends(get_db),
+):
+    """Persists profile edits so the name survives logout, other devices, reloads."""
+    if payload.name is not None:
+        stripped = payload.name.strip()
+        if not stripped:
+            raise HTTPException(status_code=422, detail="Name can't be empty")
+        user.name = stripped
+        user.initials = _initials(stripped)
+    if payload.username is not None:
+        user.username = payload.username.strip()
+    if payload.avatarUrl is not None:
+        user.avatar_url = payload.avatarUrl
+    db.commit()
+    db.refresh(user)
+    return _me_out(db, user)
 
 
 @app.get("/library/playlists", response_model=list[PlaylistOut])
@@ -587,10 +653,25 @@ def reorder_playlist_tracks(
 
 @app.get("/library/liked", response_model=LikedIdsOut)
 def list_liked(user: User = Depends(get_token_user), db: Session = Depends(get_db)):
-    ids = db.scalars(
-        select(LikedTrack.track_id).where(LikedTrack.user_id == user.id).order_by(LikedTrack.liked_at.desc())
+    rows = db.scalars(
+        select(LikedTrack).where(LikedTrack.user_id == user.id).order_by(LikedTrack.liked_at.desc())
     ).all()
-    return LikedIdsOut(ids=list(ids))
+    # Rows liked before snapshots existed carry only the id — the client fills
+    # those from its own known tracks.
+    tracks = [
+        LikedTrackOut(
+            id=row.track_id,
+            title=row.title,
+            artist=row.artist,
+            imageUrl=row.image_url,
+            coverColor=row.cover_color or COVER_COLOR_FALLBACK,
+            durationMs=row.duration_ms or 0,
+            videoId=row.video_id,
+        )
+        for row in rows
+        if row.title
+    ]
+    return LikedIdsOut(ids=[r.track_id for r in rows], tracks=tracks)
 
 
 @app.post("/library/liked/{track_id}", response_model=LikeToggleOut)
@@ -604,8 +685,27 @@ def toggle_like(
         select(LikedTrack).where(LikedTrack.user_id == user.id, LikedTrack.track_id == track_id)
     )
     if payload.liked:
+        meta = payload.track
         if existing is None:
-            db.add(LikedTrack(user_id=user.id, track_id=track_id))
+            db.add(LikedTrack(
+                user_id=user.id,
+                track_id=track_id,
+                title=meta.title if meta else None,
+                artist=meta.artist if meta else None,
+                image_url=meta.imageUrl if meta else None,
+                cover_color=meta.coverColor if meta else None,
+                duration_ms=meta.durationMs if meta else None,
+                video_id=meta.videoId if meta else None,
+            ))
+            db.commit()
+        elif meta is not None and not existing.title and meta.title:
+            # Backfill metadata for rows liked before snapshots existed.
+            existing.title = meta.title
+            existing.artist = meta.artist
+            existing.image_url = meta.imageUrl
+            existing.cover_color = meta.coverColor
+            existing.duration_ms = meta.durationMs
+            existing.video_id = meta.videoId
             db.commit()
         return LikeToggleOut(liked=True)
     if existing is not None:
@@ -686,6 +786,55 @@ def root_ping():
 # ── Library: artists, downloads, following ────────────────────────────────────
 
 
+# ── Artist photos ─────────────────────────────────────────────────────────────
+# Artists are name-keyed and the engine carries audio metadata only, so photos
+# come from Deezer's keyless public search behind a small process cache.
+_ARTIST_IMG_TTL = 6 * 3600.0
+_ARTIST_IMG_CACHE: dict[str, tuple[float, Optional[str]]] = {}
+
+
+def _norm_name(value: str) -> str:
+    return " ".join(value.casefold().split())
+
+
+def _artist_image(name: str) -> Optional[str]:
+    key = _norm_name(name)
+    hit = _ARTIST_IMG_CACHE.get(key)
+    if hit is not None and time.time() - hit[0] < _ARTIST_IMG_TTL:
+        return hit[1]
+    picture: Optional[str] = None
+    try:
+        response = httpx.get(
+            "https://api.deezer.com/search/artist",
+            params={"q": name, "limit": 5},
+            timeout=3.0,
+        )
+        if response.status_code == 200:
+            for row in response.json().get("data") or []:
+                candidate = _norm_name(str(row.get("name") or ""))
+                if candidate and (candidate == key or key in candidate or candidate in key):
+                    pic = row.get("picture_big") or row.get("picture_medium")
+                    if isinstance(pic, str) and pic.startswith("http"):
+                        picture = pic
+                        break
+    except Exception:
+        picture = None
+    if len(_ARTIST_IMG_CACHE) > 400:
+        _ARTIST_IMG_CACHE.clear()
+    _ARTIST_IMG_CACHE[key] = (time.time(), picture)
+    return picture
+
+
+def _fill_artist_images(outs: list, limit: int = 12) -> None:
+    """Attach photos to the first rows; the rest fall back to initials."""
+    todo = [o for o in outs[:limit] if not o.imageUrl]
+    if not todo:
+        return
+    with ThreadPoolExecutor(max_workers=min(6, len(todo))) as pool:
+        for artist, picture in zip(todo, pool.map(_artist_image, [a.name for a in todo])):
+            artist.imageUrl = picture
+
+
 def _artist_out(name: str, followers: int | None = None) -> ArtistOut:
     """Artists are name-keyed (same id space as telemetry and follow routes)."""
     return ArtistOut(id=name, name=name, followers=followers)
@@ -709,7 +858,37 @@ def list_artists(user: User = Depends(get_current_user), db: Session = Depends(g
         if s.artist in seen or s.score <= 0:
             continue
         out.append(_artist_out(s.artist, followers=None))
+    _fill_artist_images(out)
     return out
+
+
+@app.get("/auth/me/discovered-artists", response_model=DiscoveredArtistsOut)
+def discovered_artists(user: User = Depends(get_token_user), db: Session = Depends(get_db)):
+    """The artists your listening actually surfaced — newest voices first.
+
+    Same source as the `topArtists` stat, so the count and the list agree.
+    """
+    rows = db.execute(
+        select(PlayHistory.artist_id, func.count(), func.max(PlayHistory.played_at))
+        .where(
+            PlayHistory.user_id == user.id,
+            PlayHistory.artist_id.is_not(None),
+            PlayHistory.artist_id != "",
+        )
+        .group_by(PlayHistory.artist_id)
+        .order_by(func.max(PlayHistory.played_at).desc())
+        .limit(50)
+    ).all()
+    artists = [ArtistDiscoveryOut(name=name, plays=int(plays)) for name, plays, _ in rows]
+    _fill_artist_images(artists)
+    count = db.scalar(
+        select(func.count(distinct(PlayHistory.artist_id))).where(
+            PlayHistory.user_id == user.id,
+            PlayHistory.artist_id.is_not(None),
+            PlayHistory.artist_id != "",
+        )
+    ) or 0
+    return DiscoveredArtistsOut(count=int(count), artists=artists)
 
 
 @app.get("/library/downloaded", response_model=list[TrackOut])
