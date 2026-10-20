@@ -1243,7 +1243,7 @@ def ingest_event(payload: VibraEventIn, user: User = Depends(get_token_user), db
 
 # A finished shelf build is expensive (several external catalogue searches), so
 # it is reused for a short window; anything the learner consumes drops it first.
-_HOME_CACHE: dict[tuple[Optional[str], Optional[str]], tuple[float, list["HomeShelfOut"]]] = {}
+_HOME_CACHE: dict[tuple[Optional[str], Optional[str]], tuple[float, list["HomeShelfOut"], float]] = {}
 _HOME_CACHE_TTL = 120.0
 
 
@@ -1538,12 +1538,15 @@ def home(
 ):
     key = (user.id if user is not None else None, locale)
     cached = _HOME_CACHE.get(key)
-    if cached is not None and time.monotonic() - cached[0] < _HOME_CACHE_TTL:
+    if cached is not None and time.monotonic() - cached[0] < cached[2]:
         return HomeOut(shelves=cached[1])
     shelves = _home_for_user(db, user, locale) if user is not None else _guest_shelves(locale)
     if len(_HOME_CACHE) > 64:
         _HOME_CACHE.clear()
-    _HOME_CACHE[key] = (time.monotonic(), shelves)
+    # A thin feed means the catalogue searches timed out mid-build — hold it
+    # only briefly so the full shelf set returns as soon as the engine is back.
+    ttl = _HOME_CACHE_TTL if len(shelves) >= 6 else 15.0
+    _HOME_CACHE[key] = (time.monotonic(), shelves, ttl)
     return HomeOut(shelves=shelves)
 
 

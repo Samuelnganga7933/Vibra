@@ -311,6 +311,18 @@ function curatedArtistPicks(all: ArtistItem[], limit = 6): ArtistItem[] {
     used.add(k);
     if (picks.length >= limit) break;
   }
+  // No followed/saved artists yet — the listeners' own history still names
+  // the artists they play, so the row is never just missing.
+  if (picks.length === 0) {
+    for (const t of getHistory()) {
+      const name = (t.artist ?? "").trim();
+      const k = name.toLowerCase();
+      if (!k || used.has(k)) continue;
+      used.add(k);
+      picks.push({ id: `history-${k}`, name, genre: "", bg: t.bg ?? BG_PALETTE[0] });
+      if (picks.length >= limit) break;
+    }
+  }
   return picks;
 }
 
@@ -597,7 +609,7 @@ function HomeScreen() {
           {[...Array(5)].map((_, i) => <CardSkeleton key={i} size={140} />)}
         </div>
       ) : shelves.length > 0 ? (
-        shelves.filter(chipMatch).filter(s => s.type !== "jump_back_in").map(section)
+        shelves.filter(chipMatch).map(section)
       ) : (
         /* First run is never an empty room — one line, one action. */
         <div style={{ margin: "36px 28px 0", borderRadius: 18, border: `1px dashed ${C.border}`, background: C.surf, padding: "44px 28px", display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: 14 }}>
