@@ -1,5 +1,5 @@
 {
-  "appId": "com.vybra.streamvy.me",
+  "appId": "vybra.streamvy.me",
   "appName": "Vybra",
   "webDir": "dist",
   "bundledWebRuntime": false
