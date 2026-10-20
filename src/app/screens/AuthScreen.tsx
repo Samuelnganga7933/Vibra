@@ -82,7 +82,8 @@ export function AuthScreen({ mode: initialMode }: { mode: "login" | "signup" }) 
   const inputStyle: React.CSSProperties = {
     width: "100%", height: 52, borderRadius: "var(--radius-input)", boxSizing: "border-box",
     padding: "0 16px", background: C.surf, border: `1px solid ${C.border}`,
-    color: C.text, fontSize: 15, fontFamily: "inherit", outline: "none",
+    // 16px minimum: anything smaller makes iOS Safari zoom the viewport on focus.
+    color: C.text, fontSize: 16, fontFamily: "inherit", outline: "none",
   };
 
   const labelStyle: React.CSSProperties = {
@@ -97,7 +98,10 @@ export function AuthScreen({ mode: initialMode }: { mode: "login" | "signup" }) 
       color: C.text, fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif",
     }}>
       {/* ── Form side ─────────────────────────────────────────────────────────── */}
-      <section style={{ position: "relative", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", padding: "0 clamp(20px, 6vw, 48px)" }}>
+      {/* The padding reserves the logo's strip: on short phones the grid row
+          can't stretch past the content, so without it the centered form
+          starts at y=0 and the absolutely-placed wordmark lands on the H1. */}
+      <section style={{ position: "relative", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", padding: "96px clamp(20px, 6vw, 48px) 48px" }}>
         <button onClick={goHome} aria-label={user ? "Back to Home" : "Vybra"} disabled={!user}
           style={{
             position: "absolute", top: 36, left: 48, fontSize: 28, fontWeight: 800,
