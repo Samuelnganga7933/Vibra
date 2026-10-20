@@ -189,29 +189,48 @@ async function fetchEngineShelves(): Promise<HomeShelf[]> {
 
 /** The BFF's blended feed — the fallback when the engine is unreachable. */
 async function fetchBffShelves(): Promise<HomeShelf[]> {
-  const data = await bffJson<{ shelves?: unknown }>(`/api/home?${localeParam()}`, { timeoutMs: 20_000 } as RequestInit);
+  const data = await bffJson<{ shelves?: unknown }>(`/api/home?${localeParam()}`, { timeoutMs: 30_000 } as RequestInit);
   return Array.isArray(data?.shelves)
     ? data.shelves.map(normalizeShelf).filter((s): s is HomeShelf => s !== null && s.items.length > 0)
     : [];
 }
 
 /**
+ * Render order: the mixes lead, NEW music comes immediately after (region
+ * charts, trending, releases, fresh finds), replay shelves sink below it.
+ * "Because you played" sits between discovery and history.
+ */
+export const shelfRank = (s: HomeShelf): number => {
+  if (s.type === "mix_row") return 0;
+  if (/^because/i.test(s.id)) return 2;
+  if (
+    s.id.startsWith("region-") ||
+    s.id.startsWith("trending") ||
+    s.id.startsWith("new-releases") ||
+    s.id.startsWith("fresh") ||
+    /^popular in/i.test(s.title) ||
+    /^trending/i.test(s.title) ||
+    /^new( |$)/i.test(s.title) ||
+    /^fresh/i.test(s.title)
+  ) return 1;
+  return 3;
+};
+
+/**
  * Fetches the user's home feed. The BFF leads: its shelves are personalised
  * from real play history ("Because you played …", region charts). The engine
  * only contributes extra categories the BFF doesn't produce (e.g. Fresh &
- * Smooth) — it never replaces the personalised rows. Everything degrades:
- * BFF → engine → synthesised trending shelves.
+ * Smooth) — it never replaces the personalised rows. If no discovery shelf
+ * survived the build (cold engine mid-build), trending/new are synthesised
+ * here so new music is on Home every single time.
  */
 export async function fetchHome(): Promise<HomeShelf[]> {
-  let bff: HomeShelf[] = [];
-  try {
-    bff = await fetchBffShelves();
-  } catch { /* BFF down — the engine still covers us */ }
-
-  let engine: HomeShelf[] = [];
-  try {
-    engine = await fetchEngineShelves();
-  } catch { /* engine cold start or offline */ }
+  // Both sources in parallel — the build already takes ~15s server-side;
+  // no reason to stack the engine's 20s window behind it.
+  const [bff, engine] = await Promise.all([
+    fetchBffShelves().catch(() => [] as HomeShelf[]),
+    fetchEngineShelves().catch(() => [] as HomeShelf[]),
+  ]);
 
   // Engine extras: skip its generic recommendation rows (the BFF owns those)
   // and anything already on screen under another id.
@@ -223,9 +242,19 @@ export async function fetchHome(): Promise<HomeShelf[]> {
         !seenTitles.has(s.title.toLowerCase()))
     : engine;
 
-  const shelves = [...bff, ...extras];
-  if (shelves.length > 0) return withDiversity(shelves);
-  return withDiversity(await synthesizeShelves());
+  const shelves = [...bff, ...extras].sort((a, b) => shelfRank(a) - shelfRank(b));
+  if (shelves.length === 0) return withDiversity(await synthesizeShelves());
+
+  // No discovery shelf made it through? Ask the engine directly for
+  // trending/new right now — new music is not optional.
+  if (!shelves.some(s => shelfRank(s) === 1)) {
+    try {
+      const knownIds = new Set(shelves.map(s => s.id));
+      const fresh = (await synthesizeShelves()).filter(s => !knownIds.has(s.id));
+      shelves.push(...fresh);
+    } catch { /* engine unreachable — thin-cache rebuild retries shortly */ }
+  }
+  return withDiversity(shelves);
 }
 
 // ─── Home shelf cache ─────────────────────────────────────────────────────────

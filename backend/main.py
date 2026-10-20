@@ -372,16 +372,17 @@ def _migrate_liked_tracks() -> None:
 
 
 def _engine_keepalive() -> None:
-    """Pings the audio engine every 8 minutes so the free-tier instance never
-    sleeps — playback, radio queues, search and catalogue shelves all live
-    there, and a cold start costs the client ~15s of dead UI."""
+    """Pings the audio engine every 7 minutes (and once at startup) so the
+    free-tier instance never sleeps — playback, radio queues, search, trending
+    and every new-music shelf live there, and a cold start costs the client
+    ~15s of dead UI plus an empty discovery feed."""
     from catalogue import CATALOGUE_BASE
     while True:
-        time.sleep(8 * 60)
         try:
             httpx.get(f"{CATALOGUE_BASE}/", timeout=10.0)
         except Exception:
             pass  # transient — the next tick retries
+        time.sleep(7 * 60)
 
 
 async def lifespan(app: FastAPI):

@@ -51,7 +51,7 @@ import {
 import { bffJson, BFF_BASE, isSignedIn, onSessionExpired } from "./services/bff";
 import { sendEvent, isHistoryPaused, setHistoryPaused as persistHistoryPaused } from "./services/events";
 import { sanitizeMusicItems } from "./services/smartQueue";
-import { fetchHome, readCachedShelves, writeCachedShelves, type HomeShelf, type HomeItem } from "./services/home";
+import { fetchHome, readCachedShelves, writeCachedShelves, shelfRank, type HomeShelf, type HomeItem } from "./services/home";
 import { localeParam, marketChartQuery, marketLabel } from "./services/locale";
 import { fetchAlbums } from "./services/metadata";
 import {
@@ -2723,6 +2723,9 @@ export default function App() {
   // ── Listening-history privacy ─────────────────────────────────────────────────
   const [historyPaused, setHistoryPausedState] = useState(() => isHistoryPaused());
 
+  /** Bounded self-retry when a build lands with no new-music shelf (cold engine). */
+  const homeRetryRef = useRef(0);
+  const refreshHomeFn = useRef<() => void>(() => {});
   const refreshHome = useCallback(() => {
     // Keep what's on screen while refreshing; only show the skeleton on a
     // true first load with nothing cached.
@@ -2733,11 +2736,22 @@ export default function App() {
           setShelves(s);
           hasShelvesRef.current = true;
           writeCachedShelves(s);
+          if (s.some(x => shelfRank(x) === 1)) {
+            homeRetryRef.current = 0;
+            return;
+          }
+          // The engine was cold mid-build: no trending/new/fresh came back.
+          // Re-fetch shortly — the BFF keepalive wakes the engine meanwhile.
+          if (homeRetryRef.current < 3) {
+            homeRetryRef.current += 1;
+            window.setTimeout(() => refreshHomeFn.current(), 8000);
+          }
         }
       })
       .catch(() => { /* fetchHome already degrades to synthesised shelves */ })
       .finally(() => setHomeLoading(false));
   }, []);
+  refreshHomeFn.current = refreshHome;
 
   // ── Vibe queue: recent-artist matches that continue the queue ────────────────
   /** Sanitised pool of tracks drawn from what the listener has been playing. */
