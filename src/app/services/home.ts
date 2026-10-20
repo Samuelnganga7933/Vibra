@@ -189,22 +189,36 @@ async function fetchBffShelves(): Promise<HomeShelf[]> {
 }
 
 /**
- * Fetches the user's home feed: the engine's shelf endpoint first, then the
- * BFF blend, then synthesised trending shelves — Home is never empty when the
- * network is up, and never shows a local-profile half-state when it isn't.
+ * Fetches the user's home feed. The BFF leads: its shelves are personalised
+ * from real play history ("Because you played …", region charts). The engine
+ * only contributes extra categories the BFF doesn't produce (e.g. Fresh &
+ * Smooth) — it never replaces the personalised rows. Everything degrades:
+ * BFF → engine → synthesised trending shelves.
  */
 export async function fetchHome(): Promise<HomeShelf[]> {
-  let shelves: HomeShelf[] = [];
+  let bff: HomeShelf[] = [];
   try {
-    shelves = await fetchEngineShelves();
-  } catch { /* engine cold start or offline — try the BFF next */ }
-  if (shelves.length === 0) {
-    try {
-      shelves = await fetchBffShelves();
-    } catch { /* BFF down too — synthesise below */ }
-  }
-  if (shelves.length === 0) shelves = await synthesizeShelves();
-  return withDiversity(shelves);
+    bff = await fetchBffShelves();
+  } catch { /* BFF down — the engine still covers us */ }
+
+  let engine: HomeShelf[] = [];
+  try {
+    engine = await fetchEngineShelves();
+  } catch { /* engine cold start or offline */ }
+
+  // Engine extras: skip its generic recommendation rows (the BFF owns those)
+  // and anything already on screen under another id.
+  const seenTitles = new Set(bff.map(s => s.title.toLowerCase()));
+  const extras = bff.length > 0
+    ? engine.filter(s =>
+        s.id !== "jump_back_in" &&
+        !s.id.startsWith("because") &&
+        !seenTitles.has(s.title.toLowerCase()))
+    : engine;
+
+  const shelves = [...bff, ...extras];
+  if (shelves.length > 0) return withDiversity(shelves);
+  return withDiversity(await synthesizeShelves());
 }
 
 // ─── Home shelf cache ─────────────────────────────────────────────────────────
