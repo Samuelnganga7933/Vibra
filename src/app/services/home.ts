@@ -6,9 +6,8 @@
  * the same cold-start shelves from the audio engine so Home is never empty.
  */
 
-import { bffJson, isSignedIn } from "./bff";
-import { searchTracks, type ApiTrack } from "./api";
-import { getHistory, type StoredTrack } from "./store";
+import { bffJson } from "./bff";
+import { API_BASE, searchTracks, type ApiTrack } from "./api";
 import { sanitizeMusicItems, diversifyByArtist } from "./smartQueue";
 import { localeParam, marketChartQuery, marketLabel } from "./locale";
 
@@ -57,10 +56,11 @@ function num(value: unknown): number | undefined {
   return undefined;
 }
 
-function shelfType(value: unknown): ShelfType {
-  return value === "jump_back_in" || value === "mix_row" || value === "recent"
-    ? value
-    : "shelf";
+function shelfType(value: unknown, id: string): ShelfType {
+  if (value === "jump_back_in" || value === "mix_row" || value === "recent") return value;
+  // The engine's home feed sends shelves without a `type` — the id decides.
+  if (id === "jump_back_in") return "jump_back_in";
+  return "shelf";
 }
 
 function normalizeItem(raw: unknown): HomeItem | null {
@@ -88,9 +88,10 @@ function normalizeShelf(raw: unknown): HomeShelf | null {
   const title = str(r.title) ?? str(r.name);
   if (!title) return null;
   const rawItems = Array.isArray(r.items) ? r.items : [];
+  const id = str(r.id) ?? `shelf-${title.toLowerCase().replace(/\W+/g, "-")}`;
   return {
-    id: str(r.id) ?? `shelf-${title.toLowerCase().replace(/\W+/g, "-")}`,
-    type: shelfType(r.type),
+    id,
+    type: shelfType(r.type, id),
     title,
     subtitle: str(r.subtitle),
     items: rawItems.map(normalizeItem).filter((i): i is HomeItem => i !== null),
@@ -120,9 +121,10 @@ function fromApiTracks(tracks: ApiTrack[], title: string, id: string, type: Shel
 // charts keep their native order: a chart is a chart.
 const DIVERSE_SHELF = (shelf: HomeShelf): boolean =>
   shelf.type === "shelf" && (
-    shelf.id.startsWith("because-") ||
+    shelf.id.startsWith("because") ||
     shelf.id.startsWith("more-like-") ||
-    shelf.id === "trending-now"
+    shelf.id === "trending-now" ||
+    shelf.id === "fresh_vibes"
   );
 
 function withDiversity(shelves: HomeShelf[]): HomeShelf[] {
@@ -158,76 +160,51 @@ async function synthesizeShelves(): Promise<HomeShelf[]> {
 }
 
 /**
- * Guest taste: one listen is enough. Signed-out listeners get a Home feed
- * derived from the device's own history — "Jump back in" plus a live
- * "More like {artist}" search seeded by the most recent play — before the
- * generic trending shelves.
+ * The Lenium engine's multi-category home feed: shelves like "Jump Back In",
+ * "Because you played …" and "Fresh & Smooth" straight from
+ * `GET /discover/home-shelves`.
  */
-async function shelvesFromLocalHistory(history: StoredTrack[]): Promise<HomeShelf[]> {
-  if (history.length === 0) return [];
-  const shelves: HomeShelf[] = [{
-    id: "local-jump-back-in",
-    type: "jump_back_in",
-    title: "Jump back in",
-    subtitle: "From this device",
-    items: history.slice(0, 10).map(t => ({
-      id: String(t.id),
-      title: t.title,
-      artist: t.artist,
-      durationSec: t.durationSec,
-      imageUrl: t.imageUrl,
-      bg: t.bg,
-      videoId: t.videoId ?? String(t.id),
-    })),
-  }];
-
-  const seed = history[0];
-  if (seed?.artist) {
-    try {
-      const similar = await searchTracks(seed.artist, 8);
-      const clean = sanitizeMusicItems(similar);
-      if (clean.length > 0) {
-        shelves.push({
-          id: `more-like-${seed.artist.toLowerCase().replace(/\W+/g, "-").slice(0, 32)}`,
-          type: "shelf",
-          title: `More like ${seed.artist}`,
-          items: clean.map(t => ({
-            id: t.id,
-            title: t.title,
-            artist: t.artist,
-            durationSec: t.durationSec,
-            imageUrl: t.imageUrl,
-            videoId: t.videoId ?? t.id,
-          })),
-        });
-      }
-    } catch { /* engine unreachable — the history shelf alone still renders */ }
+async function fetchEngineShelves(): Promise<HomeShelf[]> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 20_000);
+  try {
+    const res = await fetch(`${API_BASE}/discover/home-shelves`, { signal: controller.signal });
+    if (!res.ok) return [];
+    const data: unknown = await res.json();
+    const shelves = Array.isArray(asRecord(data)?.shelves) ? (asRecord(data)!.shelves as unknown[]) : [];
+    return shelves
+      .map(normalizeShelf)
+      .filter((s): s is HomeShelf => s !== null && s.items.length > 0);
+  } finally {
+    window.clearTimeout(timer);
   }
-  return shelves;
+}
+
+/** The BFF's blended feed — the fallback when the engine is unreachable. */
+async function fetchBffShelves(): Promise<HomeShelf[]> {
+  const data = await bffJson<{ shelves?: unknown }>(`/api/home?${localeParam()}`, { timeoutMs: 20_000 } as RequestInit);
+  return Array.isArray(data?.shelves)
+    ? data.shelves.map(normalizeShelf).filter((s): s is HomeShelf => s !== null && s.items.length > 0)
+    : [];
 }
 
 /**
- * Fetches the user's home feed. Falls back to synthesised trending shelves
- * when the BFF is unreachable or returns nothing renderable.
+ * Fetches the user's home feed: the engine's shelf endpoint first, then the
+ * BFF blend, then synthesised trending shelves — Home is never empty when the
+ * network is up, and never shows a local-profile half-state when it isn't.
  */
 export async function fetchHome(): Promise<HomeShelf[]> {
-  // The BFF fans out several catalogue searches behind this one call; give the
-  // shelf build room to finish (the cache still paints instantly meanwhile).
-  const data = await bffJson<{ shelves?: unknown }>(`/api/home?${localeParam()}`, { timeoutMs: 20_000 } as RequestInit);
-  const shelves = Array.isArray(data?.shelves)
-    ? data.shelves.map(normalizeShelf).filter((s): s is HomeShelf => s !== null && s.items.length > 0)
-    : [];
-  const base = withDiversity(
-    shelves.length > 0 ? shelves : await synthesizeShelves(),
-  );
-  // Signed-out listeners: local history leads the feed (see shelvesFromLocalHistory).
-  if (isSignedIn()) return base;
+  let shelves: HomeShelf[] = [];
   try {
-    const local = await shelvesFromLocalHistory(getHistory());
-    return local.length > 0 ? [...local, ...base] : base;
-  } catch {
-    return base;
+    shelves = await fetchEngineShelves();
+  } catch { /* engine cold start or offline — try the BFF next */ }
+  if (shelves.length === 0) {
+    try {
+      shelves = await fetchBffShelves();
+    } catch { /* BFF down too — synthesise below */ }
   }
+  if (shelves.length === 0) shelves = await synthesizeShelves();
+  return withDiversity(shelves);
 }
 
 // ─── Home shelf cache ─────────────────────────────────────────────────────────

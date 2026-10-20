@@ -378,7 +378,7 @@ function HomeScreen() {
   const chipMatch = (s: HomeShelf) =>
     chip === "All" ? true
     : chip === "Music" ? (s.type === "shelf" || s.type === "recent")
-    : chip === "Made for you" ? (s.type === "mix_row" || s.type === "recent" || s.id.startsWith("because-"))
+    : chip === "Made for you" ? (s.type === "mix_row" || s.type === "recent" || s.id.startsWith("because"))
     : s.id === "new-releases";
 
   /** Extra items for a shelf ("See all" / "Show more") come from the live engine. */
@@ -1953,15 +1953,9 @@ function LeftSidebar() {
           {user?.name ?? "Your profile"}
         </div>
         <div style={{ fontSize: 11, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {uiState.signedIn ? "Signed in" : "Local profile"}
+          Signed in
         </div>
       </button>
-      {!uiState.signedIn && (
-        <button onClick={() => navigate({ id: "auth", mode: "login" })}
-          style={{ height: 26, padding: "0 12px", borderRadius: 999, border: "none", background: C.accent, color: "#fff", fontSize: 11.5, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>
-          Sign in
-        </button>
-      )}
       <button onClick={() => navigate({ id: "settings" })} aria-label="Settings"
         style={{ width: 30, height: 30, borderRadius: "50%", background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.muted, flexShrink: 0 }}>
         <Settings size={15} />
@@ -2052,9 +2046,9 @@ function LeftSidebar() {
         </div>
       </div>
 
-      {/* Bottom — profile when we know who you are, otherwise the sign-in card */}
+      {/* Bottom — profile when we're signed in, otherwise the sign-in card */}
       <div style={{ borderTop: `1px solid ${C.border}`, padding: "8px 8px 10px" }}>
-        {uiState.signedIn || user ? profileBlock : (
+        {uiState.signedIn && user ? profileBlock : (
           <div style={{ margin: "4px 4px 2px", padding: 14, borderRadius: 14, background: C.surf, border: `1px solid ${C.border}` }}>
             <div style={{ fontSize: 13.5, fontWeight: 800, color: C.text }}>Save your music</div>
             <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.5, margin: "4px 0 12px" }}>
@@ -2804,22 +2798,13 @@ export default function App() {
           subscription: u.subscription === "premium" ? "premium" : "free",
         });
       } else if (isSignedIn()) {
-        // Offline with a live-looking token: keep working from the cached profile.
-        const p = getUserProfile();
-        if (p && p.name) {
-          setUser({
-            id: "local",
-            name: p.name,
-            email: p.email,
-            username: p.username,
-            initials: p.initials,
-            avatarUrl: p.avatarUrl,
-            subscription: p.subscription,
-          });
-        }
+        // Token present but the server wouldn't confirm it (expired, revoked,
+        // or offline): the gate owns this screen — there is no local profile.
+        // A still-valid session re-verifies itself on the next launch.
+        clearUserProfile();
       } else {
         // No token at all — signed out. Drop any cached profile so the gate,
-        // not a "Local profile" half-state, owns this screen.
+        // not a half-state, owns this screen.
         clearUserProfile();
       }
       setUserLoading(false);
@@ -3520,19 +3505,9 @@ export default function App() {
     patch: Partial<{ name: string; username: string; initials: string; email: string; avatarUrl: string; subscription: "premium" | "free"; accentColor: string; audioQuality: string }>,
   ) => {
     updateUserProfile(patch);
-    setUser(prev => {
-      if (prev) return { ...prev, ...patch };
-      if (!patch.name) return prev;
-      return {
-        id: "local",
-        name: patch.name,
-        email: patch.email ?? "",
-        username: patch.username ?? "",
-        initials: patch.initials ?? patch.name.slice(0, 2).toUpperCase(),
-        avatarUrl: patch.avatarUrl,
-        subscription: patch.subscription ?? "free",
-      };
-    });
+    // No account, no profile: the gate owns the signed-out screen, so there is
+    // nothing to patch into until a real session exists.
+    setUser(prev => (prev ? { ...prev, ...patch } : prev));
   }, []);
 
   // ── Session: register / login / logout (services/auth.ts) ─────────────────────
