@@ -78,6 +78,7 @@ import { PlayerPage } from "./components/player/PlayerPage";
 import { LyricsPanel } from "./components/player/LyricsPanel";
 import { ErrorScreen } from "./screens/ErrorScreen";
 import { AuthScreen } from "./screens/AuthScreen";
+import { DownloadScreen } from "./screens/DownloadScreen";
 
 // ─── Backend API helper ────────────────────────────────────────────────────────
 // User-BFF endpoints (see backend/main.py): everything resolves through
@@ -1932,6 +1933,7 @@ function ScreenView({ s }: { s: Screen }) {
     case "playlist": return <PlaylistScreen item={s.item} />;
     case "settings": return <SettingsScreen />;
     case "profile":  return <ProfileScreen />;
+    case "download": return <DownloadScreen />;
     // auth/notfound are intercepted by App (main area) before reaching here.
     default:         return null;
   }
@@ -2585,19 +2587,27 @@ export default function App() {
   const navigate = useCallback((s: Screen) => setNavStack(p => [...p, s]), []);
   const goBack   = useCallback(() => setNavStack(p => p.length > 1 ? p.slice(0, -1) : p), []);
 
-  // Hash route guard: known deep links (#/search, #/library, …) navigate there;
-  // anything else resolves to the NotFound screen instead of a silent home.
+  // Route guard: the path (`/download`) or a known deep link (`#/search`, …)
+  // navigates there; an unknown hash resolves to NotFound instead of a silent
+  // home. Pathnames only map when they name a known screen, so the hosted root
+  // and any base path stay untouched.
   useEffect(() => {
-    const KNOWN = new Set(["home", "search", "discover", "library", "settings", "profile"]);
-    const applyHash = () => {
-      const id = window.location.hash.replace(/^#\/?/, "").split("/")[0].trim();
+    const KNOWN = new Set(["home", "search", "discover", "library", "settings", "profile", "download"]);
+    const applyRoute = () => {
+      const fromPath = window.location.pathname.replace(/\/+$/, "").split("/").pop() ?? "";
+      const fromHash = window.location.hash.replace(/^#\/?/, "").split("/")[0].trim();
+      const id = KNOWN.has(fromPath) ? fromPath : fromHash;
       if (!id) return;
       if (KNOWN.has(id)) navigate({ id } as Screen);
       else navigate({ id: "notfound" });
     };
-    applyHash();
-    window.addEventListener("hashchange", applyHash);
-    return () => window.removeEventListener("hashchange", applyHash);
+    applyRoute();
+    window.addEventListener("hashchange", applyRoute);
+    window.addEventListener("popstate", applyRoute);
+    return () => {
+      window.removeEventListener("hashchange", applyRoute);
+      window.removeEventListener("popstate", applyRoute);
+    };
   }, [navigate]);
 
   // ⌘⇧L (Ctrl⇧L) — jump to Search from anywhere and focus the field, the
@@ -3737,8 +3747,9 @@ export default function App() {
             vybra<span style={{ color: C.accent }}>.</span>
           </div>
         </div>
-      ) : authGate ? (
-        /* Hard gate — no shell, no deep links, no escape until signed in. */
+      ) : authGate && screen.id !== "download" ? (
+        /* Hard gate — no shell, no deep links, no escape until signed in.
+           The one exception is /download: installing the APK needs no account. */
         <AuthScreen mode={screen.id === "auth" ? screen.mode : "login"} />
       ) : (
         <>

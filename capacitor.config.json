@@ -2,5 +2,15 @@
   "appId": "vybra.streamvy.me",
   "appName": "Vybra",
   "webDir": "dist",
-  "bundledWebRuntime": false
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https",
+    "hostname": "vybra.streamvy.me",
+    "allowNavigation": [
+      "vybra.streamvy.me",
+      "*.google.com",
+      "*.googleapis.com",
+      "lenium-music-api.onrender.com"
+    ]
+  }
 }
