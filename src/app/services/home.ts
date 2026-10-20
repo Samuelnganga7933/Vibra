@@ -9,7 +9,7 @@
 import { bffJson, isSignedIn } from "./bff";
 import { searchTracks, type ApiTrack } from "./api";
 import { getHistory, type StoredTrack } from "./store";
-import { sanitizeMusicItems } from "./smartQueue";
+import { sanitizeMusicItems, diversifyByArtist } from "./smartQueue";
 import { localeParam, marketChartQuery, marketLabel } from "./locale";
 
 export type ShelfType = "jump_back_in" | "mix_row" | "shelf" | "recent";
@@ -113,6 +113,26 @@ function fromApiTracks(tracks: ApiTrack[], title: string, id: string, type: Shel
   };
 }
 
+// ─── Shelf diversity ───────────────────────────────────────────────────────────
+// Recommendation rows ("Because you played …", "More like …", trending) never
+// let one artist occupy more than three slots — the same cap the BFF applies
+// server-side, kept here so cached/older shelf payloads self-heal too. Market
+// charts keep their native order: a chart is a chart.
+const DIVERSE_SHELF = (shelf: HomeShelf): boolean =>
+  shelf.type === "shelf" && (
+    shelf.id.startsWith("because-") ||
+    shelf.id.startsWith("more-like-") ||
+    shelf.id === "trending-now"
+  );
+
+function withDiversity(shelves: HomeShelf[]): HomeShelf[] {
+  return shelves.map(shelf =>
+    DIVERSE_SHELF(shelf)
+      ? { ...shelf, items: diversifyByArtist(shelf.items, 10, 3) }
+      : shelf,
+  );
+}
+
 /** Cold-start shelves built from the audio engine when the BFF is down. */
 async function synthesizeShelves(): Promise<HomeShelf[]> {
   const market = marketLabel();
@@ -197,7 +217,9 @@ export async function fetchHome(): Promise<HomeShelf[]> {
   const shelves = Array.isArray(data?.shelves)
     ? data.shelves.map(normalizeShelf).filter((s): s is HomeShelf => s !== null && s.items.length > 0)
     : [];
-  const base = shelves.length > 0 ? shelves : await synthesizeShelves();
+  const base = withDiversity(
+    shelves.length > 0 ? shelves : await synthesizeShelves(),
+  );
   // Signed-out listeners: local history leads the feed (see shelvesFromLocalHistory).
   if (isSignedIn()) return base;
   try {
@@ -218,7 +240,7 @@ export function readCachedShelves(): HomeShelf[] {
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed as HomeShelf[];
+    return withDiversity(parsed as HomeShelf[]);
   } catch {
     return [];
   }

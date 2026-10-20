@@ -97,3 +97,26 @@ export function sanitizeMusicItems<T extends MusicLike>(items: T[]): T[] {
   });
   return [...groups.values()].sort((a, b) => a.pos - b.pos).map(g => g.item);
 }
+
+/**
+ * Keeps one artist from swallowing a discovery shelf: rows beyond
+ * `perArtist` from the same artist drop out, original order preserved —
+ * "Because you played X" reads as a mix, not a single-artist echo.
+ */
+export function diversifyByArtist<T extends { artist?: string }>(
+  items: T[],
+  limit = 10,
+  perArtist = 3,
+): T[] {
+  const counts = new Map<string, number>();
+  const out: T[] = [];
+  for (const item of items) {
+    const key = (item.artist ?? "").trim().toLowerCase() || "?";
+    const seen = counts.get(key) ?? 0;
+    if (seen >= perArtist) continue;
+    counts.set(key, seen + 1);
+    out.push(item);
+    if (out.length >= limit) break;
+  }
+  return out;
+}

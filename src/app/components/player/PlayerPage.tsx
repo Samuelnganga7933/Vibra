@@ -47,7 +47,7 @@ export function PlayerPage() {
   };
 
   return (
-    <div style={{
+    <div className="player-page" style={{
       position: "fixed", left: 12, right: 12, top: 12, bottom: 112,
       zIndex: 40, borderRadius: 18, border: `1px solid ${C.border}`,
       background: `linear-gradient(180deg, ${C.pane} 0%, ${C.bg} 130%)`,
@@ -56,14 +56,14 @@ export function PlayerPage() {
       animation: "fadeIn .18s ease",
     }}>
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", flexShrink: 0 }}>
+      <div className="player-page-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", flexShrink: 0 }}>
         <button onClick={() => setPlayerPageOpen(false)} aria-label="Close full-screen player"
           style={{ width: 36, height: 36, borderRadius: "50%", background: C.surf, border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.text }}>
           <ChevronDown size={18} />
         </button>
         <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: 1 }}>
           {/* Song/Lyrics/Video toggle — video hands the canvas to the YouTube embed */}
-          <div style={{ display: "flex", background: C.surf, borderRadius: 999, padding: 3, fontWeight: 600, fontSize: 12.5, textTransform: "none", letterSpacing: 0 }}>
+          <div className="player-page-modes" style={{ display: "flex", background: C.surf, borderRadius: 999, padding: 3, fontWeight: 600, fontSize: 12.5, textTransform: "none", letterSpacing: 0 }}>
             {(hasLyricsOption ? (["song", "lyrics", "video"] as const) : (["song", "video"] as const)).map(mode => (
               <button key={mode} onClick={() => {
                 if (mode === "video" && isPlaying) togglePlay(); // audio hands off to the embed
@@ -88,11 +88,11 @@ export function PlayerPage() {
         </button>
       </div>
 
-      {/* Body: artwork + meta + context */}
-      <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "minmax(280px, 1fr) minmax(300px, 420px)", gap: 24, padding: "4px 28px 20px" }}>
+      {/* Body: artwork + meta + context (stacks under 1200px — see index.css) */}
+      <div className="player-page-body" style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "minmax(280px, 1fr) minmax(300px, 420px)", gap: 24, padding: "4px 28px 20px" }}>
         {/* Left: artwork, title, seek */}
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 22, minWidth: 0 }}>
-          <div style={{
+        <div className="player-page-main" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 22, minWidth: 0 }}>
+          <div className="player-page-art" style={{
             width: "min(46vh, 100%)", maxWidth: 440,
             ...(mediaMode === "lyrics"
               ? { height: "min(42vh, 440px)" }
@@ -152,7 +152,7 @@ export function PlayerPage() {
         </div>
 
         {/* Right: context tabs */}
-        <div style={{ display: "flex", flexDirection: "column", minHeight: 0, background: C.pane, border: `1px solid ${C.border}`, borderRadius: 16, overflow: "hidden" }}>
+        <div className="player-page-context" style={{ display: "flex", flexDirection: "column", minHeight: 0, background: C.pane, border: `1px solid ${C.border}`, borderRadius: 16, overflow: "hidden" }}>
           <div style={{ display: "flex", gap: 4, padding: "12px 12px 0", flexShrink: 0 }}>
             <button onClick={() => setCtxTab("queue")} style={{
               flex: 1, height: 34, borderRadius: 9, border: "none", cursor: "pointer",

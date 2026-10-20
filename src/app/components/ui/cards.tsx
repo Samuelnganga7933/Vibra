@@ -1,5 +1,6 @@
 import React from "react";
 import { ImageWithFallback } from "./ImageWithFallback";
+import { CoverGrid, type CoverTile } from "../CoverArt";
 import { UiThemeContext, type UiColors } from "./ui-theme";
 
 interface MediaCardProps {
@@ -11,6 +12,8 @@ interface MediaCardProps {
   /** Cover colour hex — drives the gradient fallback. */
   coverColor?: string;
   imageUrl?: string;
+  /** Replaces the plain artwork (playlist 2×2 grids render here). */
+  coverNode?: React.ReactNode;
   /** Cover edge length in px. */
   size?: number;
   /** Corner radius for the cover. */
@@ -34,6 +37,7 @@ function MediaCard({
   meta,
   coverColor,
   imageUrl,
+  coverNode,
   size = 140,
   radius = 14,
   variant = "bare",
@@ -86,7 +90,7 @@ function MediaCard({
         ...(pane && !row ? { width: "100%", height: "auto" } : null),
       }}
     >
-      <ImageWithFallback src={imageUrl} coverColor={coverColor} alt={title} />
+      {coverNode ?? <ImageWithFallback src={imageUrl} coverColor={coverColor} alt={title} />}
     </div>
   );
 
@@ -213,6 +217,8 @@ interface PlaylistCardData {
   trackCount?: number;
   bg?: string;
   imageUrl?: string;
+  /** Songs for the 2×2 fallback cover when the playlist has no image. */
+  tracks?: CoverTile[];
 }
 
 const withMeta = (count?: number, unit = "tracks") =>
@@ -301,6 +307,10 @@ export function PlaylistItemCard({
   layout?: "stack" | "row";
   onClick?: () => void;
 }) {
+  // No playlist image of its own → the first four songs as a 2×2 grid.
+  const grid = !playlist.imageUrl && (playlist.tracks?.length ?? 0) > 0
+    ? <CoverGrid bg={playlist.bg} tracks={playlist.tracks ?? []} />
+    : undefined;
   return (
     <MediaCard
       title={playlist.name ?? "Untitled playlist"}
@@ -308,6 +318,7 @@ export function PlaylistItemCard({
       meta={withMeta(playlist.trackCount, "songs")}
       coverColor={playlist.bg}
       imageUrl={playlist.imageUrl}
+      coverNode={grid}
       size={size}
       radius={radius}
       variant={variant}

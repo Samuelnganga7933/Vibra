@@ -256,6 +256,9 @@ export function removeTrackFromPlaylist(playlistId: string, trackId: string | nu
     ...playlist,
     tracks,
     trackCount: tracks.length,
+    // The cover follows the first song — recompute after a removal.
+    imageUrl: tracks[0]?.imageUrl || undefined,
+    bg: tracks[0]?.bg || playlist.bg,
   };
   savePlaylist(updated);
   return updated;
@@ -270,7 +273,13 @@ export function reorderPlaylistTracks(playlistId: string, from: number, to: numb
   const tracks = [...playlist.tracks];
   const [moved] = tracks.splice(from, 1);
   tracks.splice(to, 0, moved);
-  const updated: StoredPlaylist = { ...playlist, tracks };
+  const updated: StoredPlaylist = {
+    ...playlist,
+    tracks,
+    // Dragging a new song to the front moves the cover with it.
+    imageUrl: tracks[0]?.imageUrl || undefined,
+    bg: tracks[0]?.bg || playlist.bg,
+  };
   savePlaylist(updated);
   return updated;
 }

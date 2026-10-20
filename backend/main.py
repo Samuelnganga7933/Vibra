@@ -13,7 +13,9 @@ from __future__ import annotations
 import hashlib
 import os
 import secrets
+import threading
 import time
+from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -21,7 +23,7 @@ from typing import Optional
 
 import httpx
 import jwt
-from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Response
+from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import distinct, func, select, text
 from sqlalchemy.orm import Session
@@ -143,6 +145,86 @@ def _verify_password(password: str, stored: Optional[str]) -> bool:
     salt, _, digest_hex = stored.partition("$")
     candidate = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100_000)
     return secrets.compare_digest(candidate.hex(), digest_hex)
+
+
+# ── Password strength (registration only) ─────────────────────────────────────
+# Length + variety + a blocklist of the passwords credential-stuffing runs
+# try first. Never applied at login — old accounts keep working.
+
+_COMMON_PASSWORDS = frozenset({
+    "password", "password1", "password123", "passw0rd", "p@ssw0rd", "p@ssword",
+    "12345678", "123456789", "1234567890", "11111111", "00000000", "87654321",
+    "qwerty123", "qwertyuiop", "1q2w3e4r", "1qaz2wsx", "zaq12wsx", "asdfghjkl",
+    "iloveyou", "iloveyou1", "letmein1", "letmein123", "welcome1", "welcome123",
+    "admin123", "root123", "abc12345", "abcd1234", "monkey123", "dragon123",
+    "sunshine1", "princess1", "football1", "baseball1", "superman1", "trustno1",
+    "starwars1", "whatever1", "qwerty12", "michael1", "shadow123", "master123",
+    "jennifer1", "jordan123", "harley123", "ranger123", "buster123", "soccer123",
+    "internet1", "computer1", "secret123", "summer2024", "summer2025", "winter2024",
+    "winter2025", "spring2025", "january1", "february1", "chocolate1",
+    "changeme1", "letmein12", "test1234", "demo1234", "temp1234", "user1234",
+})
+
+
+def _validate_password(password: str, email: str = "") -> None:
+    """Raise 400 unless the password clears the registration policy."""
+    if len(password) < 8 or len(password) > 128:
+        raise HTTPException(status_code=400, detail="Password must be 8–128 characters long.")
+    classes = sum((
+        any(c.islower() for c in password),
+        any(c.isupper() for c in password),
+        any(c.isdigit() for c in password),
+        any(not c.isalnum() for c in password),
+    ))
+    if classes < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="Password must mix letter case, a number or a symbol.",
+        )
+    if len(set(password)) <= 2:
+        raise HTTPException(status_code=400, detail="Password is too easy to guess.")
+    lowered = password.strip().lower()
+    if lowered in _COMMON_PASSWORDS:
+        raise HTTPException(status_code=400, detail="That password is too common — please pick another.")
+    local = email.split("@")[0].strip().lower() if email else ""
+    if local and len(local) >= 3 and local in lowered:
+        raise HTTPException(status_code=400, detail="Password shouldn't contain your email address.")
+
+
+# ── Rate limiting (per-IP sliding window) ─────────────────────────────────────
+# In-memory, per-process — right for the single uvicorn worker the BFF runs
+# as today; swap for Redis if the service is ever scaled out. Client IPs come
+# from X-Forwarded-For when behind Render/proxy, else the socket peer.
+
+_RATE_LOCK = threading.Lock()
+_RATE_HITS: dict[str, deque] = defaultdict(deque)
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    if forwarded:
+        return forwarded
+    return request.client.host if request.client else "unknown"
+
+
+def _rate_limit(bucket: str, limit: int, window_sec: int, retry_detail: str = "Too many attempts. Please wait a few minutes and try again.") -> None:
+    now = time.monotonic()
+    with _RATE_LOCK:
+        hits = _RATE_HITS[bucket]
+        while hits and now - hits[0] >= window_sec:
+            hits.popleft()
+        if len(hits) >= limit:
+            raise HTTPException(status_code=429, detail=retry_detail)
+        hits.append(now)
+
+
+def _auth_rate_limit(scope: str, limit: int, window_sec: int):
+    """FastAPI dependency: per-IP cap on one auth endpoint."""
+
+    def dependency(request: Request) -> None:
+        _rate_limit(f"{scope}:{_client_ip(request)}", limit, window_sec)
+
+    return dependency
 
 
 def _bearer(authorization: Optional[str]) -> Optional[str]:
@@ -318,8 +400,15 @@ app.add_middleware(
 
 
 @app.post("/auth/register", response_model=AuthOut)
-def register(payload: RegisterIn, response: Response, db: Session = Depends(get_db)):
+def register(
+    payload: RegisterIn,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    _limit: None = Depends(_auth_rate_limit("register", 10, 15 * 60)),
+):
     email = payload.email.strip().lower()
+    _validate_password(payload.password, email)
     if db.scalar(select(User).where(User.email == email)) is not None:
         raise HTTPException(status_code=409, detail="An account with this email already exists")
     username_base = email.split("@")[0].replace(".", "")[:40] or "listener"
@@ -347,8 +436,17 @@ def register(payload: RegisterIn, response: Response, db: Session = Depends(get_
 
 
 @app.post("/auth/login", response_model=AuthOut)
-def login(payload: LoginIn, response: Response, db: Session = Depends(get_db)):
-    user = db.scalar(select(User).where(User.email == payload.email.strip().lower()))
+def login(
+    payload: LoginIn,
+    response: Response,
+    db: Session = Depends(get_db),
+    _limit: None = Depends(_auth_rate_limit("login", 15, 5 * 60)),
+):
+    email = payload.email.strip().lower()
+    # Per-account cap on top of the per-IP one: a distributed guessing run
+    # still can't outpace a single victim's inbox.
+    _rate_limit(f"login-email:{email}", 8, 5 * 60)
+    user = db.scalar(select(User).where(User.email == email))
     if user is None or not _verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Wrong email or password")
     user.session_token = secrets.token_hex(24)
@@ -374,7 +472,13 @@ def logout(response: Response, user: User = Depends(get_token_user), db: Session
 
 
 @app.post("/auth/neon", response_model=AuthOut)
-def auth_neon(payload: NeonSessionIn, response: Response, db: Session = Depends(get_db)):
+def auth_neon(
+    payload: NeonSessionIn,
+    response: Response,
+    db: Session = Depends(get_db),
+    # Also shields the per-call JWKS fetch from being hammered.
+    _limit: None = Depends(_auth_rate_limit("neon", 30, 5 * 60)),
+):
     """Exchange a Neon Auth (Better Auth) JWT for a Vibra BFF session.
 
     The client finishes Google OAuth against NEON_AUTH_BASE_URL, then posts
@@ -465,12 +569,17 @@ def _playlist_out(db: Session, playlist: Playlist, with_tracks: bool = False) ->
         select(PlaylistTrack).where(PlaylistTrack.playlist_id == playlist.id)
         .order_by(PlaylistTrack.position)
     ).all()
+    # The playlist's cover is its first song's artwork: an explicit cover wins,
+    # otherwise the first stored track image (tracks are position-ordered).
+    cover_url = playlist.cover_url or next(
+        (r.image_url for r in track_rows if r.image_url), None
+    )
     return PlaylistOut(
         id=playlist.id,
         name=playlist.name,
         description=playlist.description,
         coverColor=playlist.cover_color,
-        coverUrl=playlist.cover_url,
+        coverUrl=cover_url,
         trackCount=len(track_rows),
         creator=PlaylistCreator(id=playlist.user_id, name=playlist.owner.name) if playlist.owner else None,
         tracks=[_playlist_track_out(r) for r in track_rows] if with_tracks else [],
@@ -1199,12 +1308,64 @@ def _guest_shelves(locale: Optional[str] = None) -> list[HomeShelfOut]:
         )
 
 
-def _because_rows(artist: str, recent: list[PlayEventRow], blocked_artists: set[str]) -> list[dict]:
-    """Catalogue rows for one "Because you played …" shelf, history as fallback."""
-    rows = [
-        t for t in search_catalogue(artist, 12)
-        if t.get("artist") is None or t["artist"] not in blocked_artists
-    ]
+def _diverse_rows(rows: list[dict], limit: int = 10, per_artist: int = 3) -> list[dict]:
+    """Cap how much of a shelf one artist may occupy; order stays intact."""
+    out: list[dict] = []
+    counts: dict[str, int] = {}
+    for row in rows:
+        who = str(row.get("artist") or "").strip().lower() or "?"
+        if counts.get(who, 0) >= per_artist:
+            continue
+        counts[who] = counts.get(who, 0) + 1
+        out.append(row)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _because_rows(
+    artist: str,
+    recent: list[PlayEventRow],
+    blocked_artists: set[str],
+    siblings: Optional[list[str]] = None,
+) -> list[dict]:
+    """Catalogue rows for one "Because you played …" shelf, history as fallback.
+
+    The seed artist leads; rows from the listener's other top artists are
+    interleaved after it (each artist capped at three) so the shelf reads as a
+    mix instead of a single artist's search echo. History fills the hole when
+    the engine has nothing.
+    """
+
+    def run(query: str) -> list[dict]:
+        return [
+            t for t in search_catalogue(query, 8)
+            if t.get("artist") is None or t["artist"] not in blocked_artists
+        ]
+
+    queries = [artist, *(a for a in (siblings or []) if a and a != artist)][:3]
+    if len(queries) == 1:
+        batches = [run(queries[0])]
+    else:
+        with ThreadPoolExecutor(max_workers=min(3, len(queries))) as pool:
+            batches = list(pool.map(run, queries))
+
+    # Round-robin across the batches: the seed artist comes first, siblings
+    # land right behind its first rows instead of at the very end.
+    merged: list[dict] = []
+    seen: set[str] = set()
+    for depth in range(max((len(b) for b in batches), default=0)):
+        for batch in batches:
+            if depth >= len(batch):
+                continue
+            row = batch[depth]
+            key = str(row.get("id") or "")
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            merged.append(row)
+
+    rows = _diverse_rows(merged, limit=10, per_artist=3)
     if rows:
         return rows
     return [
@@ -1263,7 +1424,7 @@ def _home_for_user(db: Session, user: User, locale: Optional[str] = None) -> lis
     # many catalogue requests we burst at the external engine.
     with ThreadPoolExecutor(max_workers=6) as pool:
         because_future = (
-            pool.submit(_because_rows, focus[0], recent, blocked_artists)
+            pool.submit(_because_rows, focus[0], recent, blocked_artists, focus[1:3])
             if focus else None
         )
         region_future = pool.submit(search_catalogue, region_query(locale), 10)

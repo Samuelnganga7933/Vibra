@@ -32,3 +32,21 @@
   .mcard:hover, .mcard:focus-visible { transform: none; }
   .mcard, .mcard-glow, .mcard-cover::after { transition: none; }
 }
+
+/* ─── Full-screen player below the 1200px shell breakpoint ───────────────────
+   The page keeps clear of the mobile chrome (mini player bar + bottom nav)
+   and its context column stacks under the artwork instead of beside it. */
+@media (max-width: 1199.98px) {
+  .player-page { bottom: calc(140px + env(safe-area-inset-bottom, 0px)) !important; }
+  .player-page-header { padding: 10px 10px !important; }
+  .player-page-modes { padding: 3px !important; }
+  .player-page-modes button { padding: 6px 12px !important; }
+  .player-page-body {
+    grid-template-columns: 1fr !important;
+    gap: 16px !important;
+    padding: 4px 16px 16px !important;
+    overflow-y: auto;
+  }
+  .player-page-art { width: min(40vh, 100%) !important; }
+  .player-page-context { max-height: 42dvh; flex-shrink: 0; }
+}

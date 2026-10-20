@@ -45,6 +45,7 @@ import {
 import {
   searchTracks,
   toApiTracks,
+  fetchRadioQueue,
   fetchLyrics as fetchLyricsFromApi,
 } from "./services/api";
 import { bffJson, BFF_BASE, isSignedIn, onSessionExpired } from "./services/bff";
@@ -58,8 +59,8 @@ import {
   getActiveOutput, subscribeOutput, registerSinkElement,
   type OutputDevice,
 } from "./services/devices";
-import { loginUser, registerUser, logoutUser } from "./services/auth";
-import { exchangeNeonSession, signOutNeon, clearOAuthQueryParams } from "./services/neonAuth";
+import { loginUser, registerUser, logoutUser, passwordStrengthError } from "./services/auth";
+import { exchangeNeonSession, signOutNeon, clearOAuthQueryParams, hasOAuthVerifier } from "./services/neonAuth";
 import {
   useApp, AppCtx, makeColors, fmtSec, fmtDur, cleanTitle, audioUrlFor, toTrackItem,
   fromApiTrack, mapAPITrack, mapAPIPlaylist, mapAPIAlbum, mapAPIArtist,
@@ -72,7 +73,7 @@ import { ImageWithFallback } from "./components/ui/ImageWithFallback";
 import { UiThemeContext } from "./components/ui/ui-theme";
 import { TrackCard, AlbumCard, PlaylistItemCard } from "./components/ui/cards";
 import { DownloadsView } from "./components/vibra/DownloadsView";
-import { CoverArt } from "./components/CoverArt";
+import { CoverArt, PlaylistCover } from "./components/CoverArt";
 import { PlayerPage } from "./components/player/PlayerPage";
 import { LyricsPanel } from "./components/player/LyricsPanel";
 import { ErrorScreen } from "./screens/ErrorScreen";
@@ -422,7 +423,7 @@ function HomeScreen() {
     }
   };
 
-  /** Opens a shelf item: tracks play directly; seeded mixes resolve via search. */
+  /** Opens a shelf item: tracks play as a single + radio; mixes resolve first. */
   const openItem = async (item: HomeItem, shelf: HomeShelf) => {
     if (item.query && !item.videoId) {
       let results = await searchTracks(item.query, 10);
@@ -430,13 +431,12 @@ function HomeScreen() {
       const clean = sanitizeMusicItems(results);
       if (clean.length === 0) { toast.error("Couldn\'t start that mix — try again."); return; }
       const tracks = clean.map((t, i) => fromApiTrack(t, i));
-      playTrack(tracks[0], tracks, shelf.id);
+      playTrack(tracks[0], undefined, shelf.id);
       return;
     }
-    const playable = shelf.items.filter(i => i.videoId || !i.query).map(toTrackItem);
     const track = toTrackItem(item);
-    // Up Next = the rest of this shelf after the clicked card, in order.
-    playTrack(track, playable.length > 0 ? queueRest(playable, track) : [track], shelf.id);
+    // Track card → just this track; the radio queue continues from it.
+    playTrack(track, undefined, shelf.id);
   };
 
   const visible = (shelf: HomeShelf) => shelf.items.filter(i => !hiddenIds[i.id]);
@@ -559,9 +559,9 @@ function HomeScreen() {
           style={{ flex: 1, minWidth: 0, maxWidth: 520, height: 42, display: "flex", alignItems: "center", gap: 10, padding: "0 14px", borderRadius: 999, border: `1px solid ${C.border}`, background: C.surf, color: C.muted, cursor: "pointer", textAlign: "left", fontSize: 13.5, fontWeight: 500 }}>
           <Search size={17} style={{ flexShrink: 0 }} />
           <span style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>What do you want to play?</span>
-          <span className="hidden md:inline-block" style={{ fontSize: 11, color: C.dim, border: `1px solid ${C.border}`, borderRadius: 6, padding: "2px 6px" }}>⌘⇧L</span>
+          <span className="hidden min-[1200px]:inline-block" style={{ fontSize: 11, color: C.dim, border: `1px solid ${C.border}`, borderRadius: 6, padding: "2px 6px" }}>⌘⇧L</span>
         </button>
-        <div className="hidden md:block" style={{ flex: 1 }} />
+        <div className="hidden min-[1200px]:block" style={{ flex: 1 }} />
         {user && <button onClick={() => navigate({ id: "profile" })} aria-label="Open profile"
           style={{ display: "flex", alignItems: "center", gap: 9, border: "none", background: "transparent", color: C.text, cursor: "pointer", minWidth: 0 }}>
           <span style={{ width: 32, height: 32, borderRadius: "50%", display: "grid", placeItems: "center", background: C.accent, color: C.bg, fontSize: 11, fontWeight: 800, overflow: "hidden", flexShrink: 0 }}>
@@ -678,6 +678,12 @@ function SearchScreen({ seed }: { seed?: string }) {
   // A genre tile (or any deep-link) can carry a query into this screen.
   useEffect(() => { if (seed) setQuery(seed); }, [seed]);
 
+  // Fallback reads the latest cache without re-running the search: the query
+  // is the only input — a vibe refresh updating discoveryTracks while results
+  // are on screen must never blank them back out.
+  const discoveryRef = useRef(discoveryTracks);
+  discoveryRef.current = discoveryTracks;
+
   useEffect(() => {
     clearTimeout(debounceRef.current);
     if (!query.trim()) { setResults([]); setSearching(false); return; }
@@ -696,7 +702,7 @@ function SearchScreen({ seed }: { seed?: string }) {
       }
       // 2. Fallback: filter whatever is already cached locally.
       const q = query.toLowerCase();
-      const local = discoveryTracks.filter(t =>
+      const local = discoveryRef.current.filter(t =>
         t.title.toLowerCase().includes(q) || t.artist.toLowerCase().includes(q)
       );
       setResults(local);
@@ -705,7 +711,7 @@ function SearchScreen({ seed }: { seed?: string }) {
     }, 300);
 
     return () => clearTimeout(debounceRef.current);
-  }, [query, discoveryTracks]);
+  }, [query]);
 
   return (
     <div style={{ flex: 1, overflowY: "auto", scrollbarWidth: "none", padding: "24px 28px", paddingBottom: 32 }}>
@@ -734,10 +740,9 @@ function SearchScreen({ seed }: { seed?: string }) {
               <h2 style={{ fontSize: 17, fontWeight: 700, color: C.text, margin: "0 0 12px" }}>{results.length} result{results.length !== 1 ? "s" : ""}</h2>
               <TrackTableHead showLike />
               {results.map((t, i) => (
-                <TrackRow key={t.id} track={t} index={i} showLike showAlbum album={albumMap[String(t.id)]}
-                  // Up Next = the remaining search results after this one, in
-                  // order; a vibe match continues the queue once they run out.
-                  queue={queueRest(results, t)} />
+                // A result row plays just this track — the radio queue takes
+                // over from here instead of dumping the whole result list.
+                <TrackRow key={t.id} track={t} index={i} showLike showAlbum album={albumMap[String(t.id)]} />
               ))}
             </>
           ) : (
@@ -1108,7 +1113,7 @@ function PlaylistScreen({ item }: { item: PlaylistItem }) {
 
       <div style={{ display: "flex", gap: 24, padding: "0 28px", alignItems: "flex-end", flexWrap: "wrap" }}>
         <div style={{ width: 176, height: 176, borderRadius: 16, background: fullPlaylist.bg, flexShrink: 0, overflow: "hidden", boxShadow: `0 8px 32px ${fullPlaylist.bg}66`, position: "relative" }}>
-          {fullPlaylist.imageUrl && <img src={fullPlaylist.imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
+          <PlaylistCover bg={fullPlaylist.bg} imageUrl={fullPlaylist.imageUrl} tracks={fullPlaylist.tracks} size={176} radius={16} />
           <div style={{ position: "absolute", width: "60%", height: "60%", borderRadius: "50%", right: "-14%", bottom: "-14%", background: "rgba(255,255,255,0.14)" }} />
         </div>
         <div style={{ flex: 1, minWidth: 160 }}>
@@ -1817,7 +1822,7 @@ function TrackOptionsSheet({ track, onClose }: { track: Track; onClose: () => vo
                 style={{ width: "100%", display: "flex", alignItems: "center", gap: 14, padding: "8px 20px", background: "none", border: "none", cursor: "pointer", color: C.text, fontSize: 14.5, fontWeight: 500, textAlign: "left" }}
                 onMouseEnter={e => (e.currentTarget.style.background = C.surf)}
                 onMouseLeave={e => (e.currentTarget.style.background = "none")}>
-                <CoverArt bg={p.bg} imageUrl={p.imageUrl} size={40} radius={8} />
+                <PlaylistCover bg={p.bg} imageUrl={p.imageUrl} tracks={p.tracks} size={40} radius={8} />
                 <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
               </button>
             ))}
@@ -2032,7 +2037,7 @@ function LeftSidebar() {
               style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, height: 52, padding: "0 10px", borderRadius: 10, border: "none", cursor: "pointer", background: rowBg(activePl === pl.id), transition: "background .15s", textAlign: "left" }}
               onMouseEnter={e => (e.currentTarget.style.background = C.surf)}
               onMouseLeave={e => (e.currentTarget.style.background = rowBg(activePl === pl.id))}>
-              <CoverArt bg={pl.bg} imageUrl={pl.imageUrl} size={36} radius={8} />
+              <PlaylistCover bg={pl.bg} imageUrl={pl.imageUrl} tracks={pl.tracks} size={36} radius={8} />
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{pl.name}</div>
                 <div style={{ fontSize: 11, color: C.muted }}>Playlist · {pl.trackCount}</div>
@@ -2082,7 +2087,7 @@ function RightPanel() {
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
 
-  const tab: PanelTab = panelTab === "lyrics" && uiState.hasLyrics ? "lyrics" : (panelTab ?? "nowplaying");
+  const tab: PanelTab = panelTab ?? "nowplaying";
   const isLiked = currentTrack ? likedTrackIds.has(currentTrack.id) : false;
   const queued = queue;
   // The suggested continuation prefers vibe matches (recent artists) over the
@@ -2102,7 +2107,7 @@ function RightPanel() {
   const tabs: { id: PanelTab; label: string }[] = [
     { id: "nowplaying", label: "Now playing" },
     { id: "queue", label: "Queue" },
-    ...(uiState.hasLyrics ? [{ id: "lyrics" as PanelTab, label: "Lyrics" }] : []),
+    { id: "lyrics", label: "Lyrics" },
   ];
 
   return (
@@ -2434,9 +2439,16 @@ function PlayerBar() {
 }
 
 // ─── MobileLayout ──────────────────────────────────────────────────────────────
+/**
+ * Layout below the 1200px shell breakpoint: content column, the player bar
+ * (the one transport cluster on small screens — prev/play/next plus the panel
+ * openers) and the bottom nav. The right column becomes a slide-up sheet
+ * opened from the bar, per the design spec.
+ */
 function MobileLayout() {
-  const { C, screen, navigate, currentTrack, isPlaying, togglePlay, progress,
-    uiState, errorState } = useApp();
+  const { C, screen, navigate, currentTrack, isPlaying, togglePlay, playNext, playPrev,
+    progress, handleSeek, uiState, errorState, panelTab, togglePanel,
+    setPlayerPageOpen } = useApp();
 
   const TABS = [
     { id: "home",     label: "Home",     Icon: Home },
@@ -2446,6 +2458,12 @@ function MobileLayout() {
   ] as const;
 
   const activeTab = (["home", "search", "discover", "library"] as const).find(id => id === screen.id) ?? null;
+
+  const iconBtn = (active = false): React.CSSProperties => ({
+    width: 30, height: 30, background: "none", border: "none", cursor: "pointer",
+    display: "grid", placeItems: "center", color: active ? C.accent : C.muted,
+    flexShrink: 0, padding: 0,
+  });
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", background: C.bg, overflow: "hidden" }}>
@@ -2470,19 +2488,52 @@ function MobileLayout() {
       {currentTrack && (
         <div
           style={{ margin: "0 8px 6px", background: C.pane, borderRadius: 16, padding: "10px 12px 14px", position: "relative", border: `1px solid ${C.border}`, flexShrink: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <CoverArt bg={currentTrack.bg} imageUrl={currentTrack.imageUrl} size={44} radius={10} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 700, fontSize: 14, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentTrack.title}</div>
-              <div style={{ fontSize: 12, color: C.muted }}>{currentTrack.artist}</div>
-            </div>
-            <button onClick={e => { e.stopPropagation(); togglePlay(); }}
-              style={{ width: 40, height: 40, borderRadius: "50%", background: C.accent, border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.bg }}>
-              {isPlaying ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" />}
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            {/* Details → the Now playing tab of the bottom sheet */}
+            <button onClick={() => togglePanel("nowplaying")} aria-label="Now playing details"
+              style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0, background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
+              <CoverArt bg={currentTrack.bg} imageUrl={currentTrack.imageUrl} size={40} radius={10} />
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ display: "block", fontWeight: 700, fontSize: 13.5, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentTrack.title}</span>
+                <span style={{ display: "block", fontSize: 11.5, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentTrack.artist}</span>
+              </span>
+            </button>
+
+            {/* Transport — the bar owns it on every screen size */}
+            <button onClick={playPrev} aria-label="Previous track" style={iconBtn()}>
+              <SkipBack size={16} />
+            </button>
+            <button onClick={togglePlay} aria-label={isPlaying ? "Pause" : "Play"}
+              style={{ width: 38, height: 38, borderRadius: "50%", background: C.accent, border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.bg, flexShrink: 0, padding: 0 }}>
+              {isPlaying ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}
+            </button>
+            <button onClick={playNext} aria-label="Next track" style={iconBtn()}>
+              <SkipForward size={16} />
+            </button>
+
+            {/* Panel openers → the bottom sheet (lyrics only when it exists) */}
+            {uiState.hasLyrics && (
+              <button onClick={() => togglePanel("lyrics")} aria-label="Lyrics" style={iconBtn(panelTab === "lyrics")}>
+                <Mic size={15} />
+              </button>
+            )}
+            {uiState.hasQueue && (
+              <button onClick={() => togglePanel("queue")} aria-label="Queue" style={iconBtn(panelTab === "queue")}>
+                <ListMusic size={15} />
+              </button>
+            )}
+            <button onClick={() => setPlayerPageOpen(true)} aria-label="Full-screen player" style={iconBtn()}>
+              <ChevronUp size={16} />
             </button>
           </div>
-          <div style={{ position: "absolute", left: 12, right: 12, bottom: 5, height: 2, background: C.border, borderRadius: 1 }}>
-            <div style={{ width: `${progress * 100}%`, height: "100%", background: C.accent, borderRadius: 1, transition: "width .5s linear" }} />
+          <div role="button" tabIndex={0} aria-label="Seek"
+            onClick={e => { const r = e.currentTarget.getBoundingClientRect(); handleSeek((e.clientX - r.left) / r.width); }}
+            onKeyDown={e => {
+              if (e.key === "ArrowRight") { e.preventDefault(); handleSeek(Math.min(1, progress + 0.02)); }
+              if (e.key === "ArrowLeft")  { e.preventDefault(); handleSeek(Math.max(0, progress - 0.02)); }
+            }}
+            style={{ position: "absolute", left: 12, right: 12, bottom: 5, height: 3, background: C.border, borderRadius: 2, cursor: "pointer" }}>
+            <div style={{ width: `${Math.min(progress, 1) * 100}%`, height: "100%", background: C.accent, borderRadius: 2, transition: "width .5s linear" }} />
           </div>
         </div>
       )}
@@ -2496,6 +2547,27 @@ function MobileLayout() {
           </button>
         ))}
       </nav>
+
+      {/* Right column as a drawer — slide-up sheet with the same tabs */}
+      {panelTab && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 60 }}>
+          <div onClick={() => togglePanel(panelTab)} aria-hidden
+            style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.55)", animation: "fadeIn .18s ease" }} />
+          <div role="dialog" aria-label="Player panel"
+            style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: "min(84dvh, 760px)", background: C.pane, borderRadius: "20px 20px 0 0", border: `1px solid ${C.border}`, borderBottom: "none", display: "flex", flexDirection: "column", overflow: "hidden", animation: "slideUp .24s ease", boxShadow: "0 -18px 60px rgba(0,0,0,0.5)", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
+            <div style={{ position: "relative", padding: "10px 0 4px", display: "grid", placeItems: "center", flexShrink: 0 }}>
+              <div style={{ width: 40, height: 4, borderRadius: 2, background: C.border }} />
+              <button onClick={() => togglePanel(panelTab)} aria-label="Close panel"
+                style={{ position: "absolute", right: 10, top: 4, width: 30, height: 30, borderRadius: "50%", background: C.surf, border: `1px solid ${C.border}`, cursor: "pointer", display: "grid", placeItems: "center", color: C.muted, padding: 0 }}>
+                <X size={15} />
+              </button>
+            </div>
+            <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+              <RightPanel />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2700,16 +2772,23 @@ export default function App() {
 
   const openPanel = useCallback((tab: PanelTab) => setPanelTab(tab), []);
   const togglePanel = useCallback((tab: PanelTab) => setPanelTab(p => (p === tab ? null : tab)), []);
+  /** Opening the full player below the shell breakpoint replaces the sheet. */
+  const openPlayerPage = useCallback((open: boolean) => {
+    setPlayerPageOpen(open);
+    if (open && window.matchMedia("(max-width: 1199.98px)").matches) setPanelTab(null);
+  }, []);
   const showError = useCallback((error: AppError) => setErrorState(error), []);
   const clearError = useCallback(() => setErrorState(null), []);
 
   // ── Bootstrap user ────────────────────────────────────────────────────────────
   useEffect(() => {
-    // Coming back from Google OAuth: trade the Neon Auth session for a Vibra
-    // bearer first, so /auth/me below sees the fresh sign-in. The exchange
-    // reads `neon_auth_session_verifier` from the URL — only strip it after.
     const bootstrap = async () => {
-      if (!isSignedIn()) {
+      // The verifier is live evidence of the OAuth return leg — always
+      // exchange it, even when a stale stored token still claims we're signed
+      // in (that shadowing is what used to destroy the verifier and bounce
+      // sign-ins back to the gate). The exchange reads the verifier from the
+      // URL, so only strip it after.
+      if (hasOAuthVerifier() || !isSignedIn()) {
         await exchangeNeonSession();
       }
       clearOAuthQueryParams();
@@ -3071,6 +3150,44 @@ export default function App() {
   }, [queue, queueIdx, shuffleOn, repeatMode, beginPlayback, currentTrack, audioDuration, scheduleVibeRefresh, startVibeIfAny]);
   handleTrackEndRef.current = handleTrackEnd;
 
+  // ── Infinite radio queue ─────────────────────────────────────────────────────
+  // Whenever only a few tracks remain after the cursor (a single-track play, or
+  // the tail of a playlist), ask the engine's radio endpoint for the next
+  // stretch seeded by the queue's tail and append what's new — playback never
+  // runs dry while the engine answers. Failures fall back to the vibe pool.
+  const radioBusyRef = useRef(false);
+  const [radioTick, setRadioTick] = useState(0);
+
+  useEffect(() => {
+    if (!hasPlayback || !currentTrack) return;
+    const remaining = queue.length - Math.max(queueIdx, 0);
+    if (remaining > 3) return;
+    if (radioBusyRef.current) return;
+    radioBusyRef.current = true;
+    const seed = queue[queue.length - 1] ?? currentTrack;
+    const queuedIds = new Set(queue.map(x => x.id));
+    let cancelled = false;
+    void fetchRadioQueue({ seed: seed.title, artist: seed.artist, limit: 12 })
+      .then(rows => {
+        if (cancelled || rows.length === 0) return;
+        const fresh = sanitizeMusicItems(rows.map((t, i) => fromApiTrack(t, i)))
+          .filter(t => !queuedIds.has(t.id));
+        if (fresh.length === 0) return;
+        setQueue(prev => {
+          const seen = new Set(prev.map(x => x.id));
+          const add = fresh.filter(t => !seen.has(t.id));
+          return add.length > 0 ? [...prev, ...add] : prev;
+        });
+      })
+      .catch(() => { /* engine offline — the vibe pool still covers the tail */ })
+      .finally(() => {
+        radioBusyRef.current = false;
+        // A newer track superseded this seed mid-flight → retry for it now.
+        if (cancelled) setRadioTick(n => n + 1);
+      });
+    return () => { cancelled = true; };
+  }, [hasPlayback, currentTrack, queue, queueIdx, radioTick]);
+
   // ── playTrack ─────────────────────────────────────────────────────────────────
   const playTrack = useCallback((t: Track, newQueue?: Track[], sourceShelfId?: string) => {
     if (currentTrack && currentTrack.id !== t.id) {
@@ -3091,9 +3208,14 @@ export default function App() {
     }
     setCurrentTrack(t);
     setProgress(0); setElapsed(0);
-    if (newQueue) {
+    // Explicit lists (>1 track) replace the queue; a lone track starts a fresh
+    // one-entry queue that the radio effect above immediately extends forever.
+    if (newQueue && newQueue.length > 1) {
       setQueue(newQueue);
-      setQueueIdx(newQueue.findIndex(x => x.id === t.id));
+      setQueueIdx(Math.max(0, newQueue.findIndex(x => x.id === t.id)));
+    } else {
+      setQueue([t]);
+      setQueueIdx(0);
     }
     beginPlayback(t);
     // Shelf attribution teaches GET /api/home which rows land (title+image
@@ -3388,7 +3510,8 @@ export default function App() {
           body: JSON.stringify({ track_ids: tracks.map(t => String(t.id)) }),
         });
       }
-      return { ...pl, tracks };
+      // Cover follows the first song after a reorder, too.
+      return { ...pl, tracks, imageUrl: tracks[0]?.imageUrl || pl.imageUrl, bg: tracks[0]?.bg || pl.bg };
     }));
   }, []);
 
@@ -3423,18 +3546,21 @@ export default function App() {
 
   /** Resolves `null` on success, or the inline error message to render. */
   const login = useCallback(async (email: string, password: string): Promise<string | null> => {
-    const res = await loginUser({ email, password });
-    if (!res) return "We couldn't sign you in. Check your email and password.";
-    applySessionUser(res.user);
+    const { data, error } = await loginUser({ email, password });
+    if (!data) return error ?? "We couldn't sign you in. Check your email and password.";
+    applySessionUser(data.user);
     setAuthVersion(v => v + 1);
-    toast.success(`Welcome back, ${res.user.name.split(" ")[0]}`);
+    toast.success(`Welcome back, ${data.user.name.split(" ")[0]}`);
     return null;
   }, [applySessionUser]);
 
   const register = useCallback(async (name: string, email: string, password: string): Promise<string | null> => {
-    const res = await registerUser({ name, email, password });
-    if (!res) return "Couldn't create that account. The email may already be registered.";
-    applySessionUser(res.user);
+    // Same policy the BFF enforces — weak passwords never leave the device.
+    const weak = passwordStrengthError(password);
+    if (weak) return weak;
+    const { data, error } = await registerUser({ name, email, password });
+    if (!data) return error ?? "Couldn't create that account. The email may already be registered.";
+    applySessionUser(data.user);
     setAuthVersion(v => v + 1);
     toast.success("Account created");
     return null;
@@ -3540,7 +3666,7 @@ export default function App() {
     volume, setVolume,
     lyrics, plainLyrics, lyricsLoading,
     uiState, panelTab, openPanel, togglePanel,
-    playerPageOpen, setPlayerPageOpen,
+    playerPageOpen, setPlayerPageOpen: openPlayerPage,
     errorState, showError, clearError,
     user, userLoading, login, register, logout,
     playlists, playlistsLoading,
@@ -3624,8 +3750,9 @@ export default function App() {
         />
       )}
 
-      {/* Desktop — 240px sidebar · main · 320px panel; bar on its row */}
-      <div className="hidden md:grid"
+      {/* Desktop — 240px sidebar · main · 320px panel; bar on its row.
+          Below 1200px (spec) the shell yields to the mobile layout. */}
+      <div className="hidden min-[1200px]:grid"
         style={{
           height: "100dvh",
           position: "relative",
@@ -3655,7 +3782,7 @@ export default function App() {
       {playerPageOpen && currentTrack && <PlayerPage />}
 
       {/* Mobile */}
-      <div className="md:hidden" style={{ height: "100dvh", position: "relative", overflow: "hidden", background: C.bg }}>
+      <div className="min-[1200px]:hidden" style={{ height: "100dvh", position: "relative", overflow: "hidden", background: C.bg }}>
         <MobileLayout />
       </div>
         </>

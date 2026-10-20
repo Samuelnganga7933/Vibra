@@ -160,7 +160,7 @@ export function AuthScreen({ mode: initialMode }: { mode: "login" | "signup" }) 
                   type={reveal ? "text" : "password"}
                   value={password}
                   onChange={e => setPassword(e.target.value)}
-                  placeholder={isSignup ? "At least 8 characters" : "••••••••"}
+                  placeholder={isSignup ? "8+ characters, mixed case" : "••••••••"}
                   autoComplete={isSignup ? "new-password" : "current-password"}
                   style={{ ...inputStyle, paddingRight: 46 }}
                 />

@@ -112,6 +112,9 @@ export async function bffSend(path: string, init?: RequestInit): Promise<boolean
     ...init,
     quiet: true,
     timeoutMs: 6000,
+    // Same as bffJson: the HttpOnly session cookie rides along cross-origin,
+    // so cookie-auth calls (events, settings, logout) work without a bearer.
+    credentials: "include",
     headers: headers(init),
     accept: r => r.status === 401,
   });

@@ -115,7 +115,7 @@ function extractTracks(data: unknown): unknown[] {
   if (Array.isArray(data)) return data;
   const r = asRecord(data);
   if (!r) return [];
-  for (const key of ["results", "tracks", "items", "videos", "entries", "data", "songs"]) {
+  for (const key of ["results", "tracks", "items", "videos", "entries", "data", "songs", "queue"]) {
     const value = r[key];
     if (Array.isArray(value)) return value;
   }
@@ -152,6 +152,35 @@ export async function searchTracks(query: string, limit = 20): Promise<ApiTrack[
 
   const data = await safeJson<unknown>(
     `${API_BASE}/api/v1/search?query=${encodeURIComponent(q)}&limit=${encodeURIComponent(String(limit))}`,
+    { quiet: true, timeoutMs: 12_000 },
+  );
+
+  const seen = new Set<string>();
+  const out: ApiTrack[] = [];
+  for (const row of extractTracks(data)) {
+    const track = normalizeTrack(row);
+    if (!track || seen.has(track.id)) continue;
+    seen.add(track.id);
+    out.push(track);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+/**
+ * Infinite continuation queue from the engine's radio endpoint
+ * (`GET /api/v1/queue/radio?seed=&artist=&limit=`). Rows share the search
+ * payload shape (`{ seed, queue: [...] }`). Resolves to `[]` on every failure
+ * so playback simply keeps falling back to the local vibe pool.
+ */
+export async function fetchRadioQueue(opts: { seed?: string; artist?: string; limit?: number } = {}): Promise<ApiTrack[]> {
+  const limit = Math.max(1, Math.min(opts.limit ?? 12, 50));
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (opts.seed?.trim()) params.set("seed", opts.seed.trim());
+  if (opts.artist?.trim()) params.set("artist", opts.artist.trim());
+
+  const data = await safeJson<unknown>(
+    `${API_BASE}/api/v1/queue/radio?${params.toString()}`,
     { quiet: true, timeoutMs: 12_000 },
   );
 
