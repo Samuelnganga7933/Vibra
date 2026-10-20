@@ -89,13 +89,20 @@ function normalizeShelf(raw: unknown): HomeShelf | null {
   if (!title) return null;
   const rawItems = Array.isArray(r.items) ? r.items : [];
   const id = str(r.id) ?? `shelf-${title.toLowerCase().replace(/\W+/g, "-")}`;
-  return {
-    id,
-    type: shelfType(r.type, id),
-    title,
-    subtitle: str(r.subtitle),
-    items: rawItems.map(normalizeItem).filter((i): i is HomeItem => i !== null),
-  };
+  // The same song often exists as several uploads — one card per song.
+  const seenIds = new Set<string>();
+  const seenTitles = new Set<string>();
+  const items: HomeItem[] = [];
+  for (const rawItem of rawItems) {
+    const item = normalizeItem(rawItem);
+    if (!item) continue;
+    const tkey = item.title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    if (seenIds.has(item.id) || (tkey.length > 0 && seenTitles.has(tkey))) continue;
+    seenIds.add(item.id);
+    if (tkey.length > 0) seenTitles.add(tkey);
+    items.push(item);
+  }
+  return { id, type: shelfType(r.type, id), title, subtitle: str(r.subtitle), items };
 }
 
 function fromApiTracks(tracks: ApiTrack[], title: string, id: string, type: ShelfType = "shelf"): HomeShelf {

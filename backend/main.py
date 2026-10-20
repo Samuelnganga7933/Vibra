@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import os
 import secrets
+import re
 import threading
 import time
 from collections import defaultdict, deque
@@ -1365,18 +1366,27 @@ def _because_rows(
             batches = list(pool.map(run, queries))
 
     # Round-robin across the batches: the seed artist comes first, siblings
-    # land right behind its first rows instead of at the very end.
+    # land right behind its first rows instead of at the very end. The same
+    # song often exists as several uploads — dedupe by id AND cleaned title.
     merged: list[dict] = []
     seen: set[str] = set()
+    seen_titles: set[str] = set()
+
+    def title_key(row: dict) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", str(row.get("title") or "").lower()).strip()
+
     for depth in range(max((len(b) for b in batches), default=0)):
         for batch in batches:
             if depth >= len(batch):
                 continue
             row = batch[depth]
             key = str(row.get("id") or "")
-            if not key or key in seen:
+            tkey = title_key(row)
+            if not key or key in seen or (tkey and tkey in seen_titles):
                 continue
             seen.add(key)
+            if tkey:
+                seen_titles.add(tkey)
             merged.append(row)
 
     rows = _diverse_rows(merged, limit=10, per_artist=3)

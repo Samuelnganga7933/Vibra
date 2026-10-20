@@ -294,15 +294,18 @@ export async function fetchLyrics(title: string, artist: string): Promise<Lyrics
 
   let result = empty;
   try {
-    const params = new URLSearchParams({ track_name: track, artist_name: who, track, artist: who });
-    const data = await safeJson<Record<string, unknown>>(
-      `${API_BASE}/api/v1/lyrics?${params.toString()}`,
-      { quiet: true },
-    );
-    if (data) result = toLyricsResult(asString(data.syncedLyrics) ?? "", asString(data.plainLyrics) ?? "");
+    // lrclib first: keyless, CORS-open, answers in well under a second. The
+    // engine's own lookup is the fallback (it covers mixtapes/unofficial
+    // uploads lrclib misses) — but a cold engine must never stall the panel.
+    const fb = await lrclibLyrics(track, who);
+    if (fb && (fb.synced.length > 0 || fb.plain)) result = fb;
     if (result.synced.length === 0 && !result.plain) {
-      const fb = await lrclibLyrics(track, who);
-      if (fb && (fb.synced.length > 0 || fb.plain)) result = fb;
+      const params = new URLSearchParams({ track_name: track, artist_name: who, track, artist: who });
+      const data = await safeJson<Record<string, unknown>>(
+        `${API_BASE}/api/v1/lyrics?${params.toString()}`,
+        { quiet: true },
+      );
+      if (data) result = toLyricsResult(asString(data.syncedLyrics) ?? "", asString(data.plainLyrics) ?? "");
     }
   } catch {
     /* empty result — panel shows its calm empty copy */
