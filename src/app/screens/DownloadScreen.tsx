@@ -1,5 +1,5 @@
 import React from "react";
-import { ArrowLeft, Download, Package, ShieldCheck, Smartphone } from "lucide-react";
+import { ArrowLeft, Download } from "lucide-react";
 import { useApp } from "../context";
 
 /** Where CI publishes the raw APK — a rolling prerelease asset, replaced on
@@ -10,17 +10,11 @@ const APK_URL =
 const ZIP_URL =
   "https://nightly.link/Samuelnganga7933/Vibra/workflows/build-apk/main/vybra-debug-apk.zip";
 
-const STEPS = [
-  { Icon: Package,   text: "Open the downloaded .zip and tap the APK inside." },
-  { Icon: Smartphone, text: "Pick Vybra as your installer if Android asks." },
-  { Icon: ShieldCheck, text: "Allow installs from this source once — that's it." },
-] as const;
-
 /**
  * /download — public APK page for Android. Deliberately plain: one badge, one
- * headline, one download pill, the three install steps. Reachable signed out
- * (the auth gate lets this screen through) and from both layout branches, since
- * ScreenView renders it inside the shell.
+ * headline, one download pill. Reachable signed out (the auth gate lets this
+ * screen through) and from both layout branches, since ScreenView renders it
+ * inside the shell.
  */
 export function DownloadScreen() {
   const { C, navigate } = useApp();
@@ -70,21 +64,6 @@ export function DownloadScreen() {
           >
             Prefer a .zip? Get the CI package instead
           </a>
-        </div>
-
-        <div style={{
-          background: C.surf, border: `1px solid ${C.border}`, borderRadius: 16,
-          padding: "6px 16px", display: "flex", flexDirection: "column",
-        }}>
-          {STEPS.map(({ Icon, text }, i) => (
-            <div key={text} style={{
-              display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 0",
-              borderTop: i === 0 ? "none" : `1px solid ${C.border}`,
-            }}>
-              <span style={{ color: C.accent, marginTop: 1 }}><Icon size={16} /></span>
-              <span style={{ fontSize: 13.5, color: C.muted, lineHeight: 1.5 }}>{text}</span>
-            </div>
-          ))}
         </div>
 
         <button
