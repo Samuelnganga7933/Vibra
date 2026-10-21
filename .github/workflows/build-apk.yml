@@ -7,6 +7,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     
     steps:
     - name: Checkout Repository
@@ -52,3 +54,15 @@ jobs:
       with:
         name: vybra-debug-apk
         path: android/app/build/outputs/apk/debug/app-debug.apk
+
+    - name: Publish APK to nightly release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        cp android/app/build/outputs/apk/debug/app-debug.apk vybra-latest.apk
+        gh release view nightly --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+          gh release create nightly --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Vybra nightly build" \
+            --notes "Latest APK built by CI. Rebuilt on every push to main."
+        gh release upload nightly vybra-latest.apk --repo "$GITHUB_REPOSITORY" --clobber

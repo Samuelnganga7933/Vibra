@@ -2,8 +2,12 @@ import React from "react";
 import { ArrowLeft, Download, Package, ShieldCheck, Smartphone } from "lucide-react";
 import { useApp } from "../context";
 
-/** CI's latest artifact — nightly.link streams the newest build of this repo's APK. */
+/** Where CI publishes the raw APK — a rolling prerelease asset, replaced on
+ *  every green build. Browsers download the .apk itself, no unzip step. */
 const APK_URL =
+  "https://github.com/Samuelnganga7933/Vibra/releases/download/nightly/vybra-latest.apk";
+/** The CI artifact zip, for desktop users who want the package. */
+const ZIP_URL =
   "https://nightly.link/Samuelnganga7933/Vibra/workflows/build-apk/main/vybra-debug-apk.zip";
 
 const STEPS = [
@@ -59,6 +63,13 @@ export function DownloadScreen() {
           <span style={{ fontSize: 12.5, color: C.dim }}>
             Nightly build · about 4 MB · Android 6.0 and up
           </span>
+          <a
+            href={ZIP_URL}
+            rel="noopener"
+            style={{ fontSize: 12.5, color: C.dim, textDecoration: "underline", textUnderlineOffset: 3 }}
+          >
+            Prefer a .zip? Get the CI package instead
+          </a>
         </div>
 
         <div style={{
