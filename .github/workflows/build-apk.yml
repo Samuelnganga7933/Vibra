@@ -76,6 +76,4 @@ jobs:
         # is CORS-open; the asset host is not). Edited after the upload so a
         # device never sees a bundleId whose zip is not live yet.
         gh release edit nightly --repo "$GITHUB_REPOSITORY" \
-          --notes "Bundle: nightly-${GITHUB_SHA:0:7}
-
-Latest APK + OTA web bundle built by CI. Rebuilt on every push to main."
+          --notes "Bundle: nightly-${GITHUB_SHA:0:7} — Latest APK + OTA web bundle built by CI. Rebuilt on every push to main."
