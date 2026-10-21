@@ -86,6 +86,7 @@ export type Screen =
   | { id: "profile" }
   | { id: "auth"; mode: "login" | "signup" }
   | { id: "download" }
+  | { id: "downloads" }
   | { id: "notfound" };
 
 export type RepeatMode = "off" | "one" | "all";

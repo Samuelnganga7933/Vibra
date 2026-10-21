@@ -79,6 +79,7 @@ import { LyricsPanel } from "./components/player/LyricsPanel";
 import { ErrorScreen } from "./screens/ErrorScreen";
 import { AuthScreen } from "./screens/AuthScreen";
 import { DownloadScreen } from "./screens/DownloadScreen";
+import { MobileScreenView } from "./screens/mobile";
 
 // ─── Backend API helper ────────────────────────────────────────────────────────
 // User-BFF endpoints (see backend/main.py): everything resolves through
@@ -1934,6 +1935,8 @@ function ScreenView({ s }: { s: Screen }) {
     case "settings": return <SettingsScreen />;
     case "profile":  return <ProfileScreen />;
     case "download": return <DownloadScreen />;
+    // Desktop deep-link for the mobile-only downloads screen.
+    case "downloads": return <LibraryScreen tab="downloaded" />;
     // auth/notfound are intercepted by App (main area) before reaching here.
     default:         return null;
   }
@@ -2454,9 +2457,8 @@ function PlayerBar() {
  * opened from the bar, per the design spec.
  */
 function MobileLayout() {
-  const { C, screen, navigate, currentTrack, isPlaying, togglePlay, playNext, playPrev,
-    progress, handleSeek, uiState, errorState, panelTab, togglePanel,
-    setPlayerPageOpen } = useApp();
+  const { C, screen, navigate, currentTrack, isPlaying, togglePlay, playNext,
+    progress, handleSeek, errorState, panelTab, togglePanel } = useApp();
 
   const TABS = [
     { id: "home",     label: "Home",     Icon: Home },
@@ -2465,17 +2467,19 @@ function MobileLayout() {
     { id: "library",  label: "Library",  Icon: Library },
   ] as const;
 
+  // Profile/downloads inherit no tab — only the four tabs light themselves.
   const activeTab = (["home", "search", "discover", "library"] as const).find(id => id === screen.id) ?? null;
+  /** Screens the mobile boards define; everything else falls back to desktop. */
+  const MOBILE_SCREENS = new Set(["home", "search", "discover", "library", "profile", "downloads"]);
 
-  const iconBtn = (active = false): React.CSSProperties => ({
-    width: 30, height: 30, background: "none", border: "none", cursor: "pointer",
-    display: "grid", placeItems: "center", color: active ? C.accent : C.muted,
-    flexShrink: 0, padding: 0,
-  });
+  const seek = (e: React.MouseEvent<HTMLDivElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    handleSeek((e.clientX - r.left) / r.width);
+  };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", background: C.bg, overflow: "hidden" }}>
-      <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", background: C.bg, overflow: "hidden", position: "relative" }}>
+      <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column", paddingTop: "env(safe-area-inset-top, 0px)" }}>
         {errorState ? (
           <ErrorScreen error={errorState} />
         ) : screen.id === "auth" ? (
@@ -2488,73 +2492,62 @@ function MobileLayout() {
           }} />
         ) : (
           <ErrorBoundary colors={C} compact onReset={() => navigate({ id: "home" })}>
-            <ScreenView s={screen} />
+            {MOBILE_SCREENS.has(screen.id) ? <MobileScreenView s={screen} /> : <ScreenView s={screen} />}
           </ErrorBoundary>
         )}
       </div>
 
-      {currentTrack && (
-        <div
-          style={{ margin: "0 8px 6px", background: C.pane, borderRadius: 16, padding: "10px 12px 14px", position: "relative", border: `1px solid ${C.border}`, flexShrink: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            {/* Details → the Now playing tab of the bottom sheet */}
-            <button onClick={() => togglePanel("nowplaying")} aria-label="Now playing details"
-              style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0, background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
-              <CoverArt bg={currentTrack.bg} imageUrl={currentTrack.imageUrl} size={40} radius={10} />
-              <span style={{ flex: 1, minWidth: 0 }}>
-                <span style={{ display: "block", fontWeight: 700, fontSize: 13.5, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentTrack.title}</span>
-                <span style={{ display: "block", fontSize: 11.5, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentTrack.artist}</span>
-              </span>
-            </button>
+      {/* Quiet fade so content dissolves behind the dock instead of clipping. */}
+      <div aria-hidden style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 230, background: `linear-gradient(to bottom, ${C.bg}00, ${C.bg} 72%)`, pointerEvents: "none", zIndex: 2 }} />
 
-            {/* Transport — the bar owns it on every screen size */}
-            <button onClick={playPrev} aria-label="Previous track" style={iconBtn()}>
-              <SkipBack size={16} />
-            </button>
-            <button onClick={togglePlay} aria-label={isPlaying ? "Pause" : "Play"}
-              style={{ width: 38, height: 38, borderRadius: "50%", background: C.accent, border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.bg, flexShrink: 0, padding: 0 }}>
-              {isPlaying ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}
-            </button>
-            <button onClick={playNext} aria-label="Next track" style={iconBtn()}>
-              <SkipForward size={16} />
-            </button>
-
-            {/* Panel openers → the bottom sheet (lyrics only when it exists) */}
-            {uiState.hasLyrics && (
-              <button onClick={() => togglePanel("lyrics")} aria-label="Lyrics" style={iconBtn(panelTab === "lyrics")}>
-                <Mic size={15} />
+      {/* Floating dock — mini player over nav, the boards' single cluster. */}
+      <div style={{ position: "absolute", left: 12, right: 12, bottom: "calc(24px + env(safe-area-inset-bottom, 0px))", zIndex: 3, borderRadius: 30, background: `color-mix(in srgb, ${C.pane} 74%, transparent)`, backdropFilter: "blur(26px) saturate(1.4)", WebkitBackdropFilter: "blur(26px) saturate(1.4)", border: `1px solid color-mix(in srgb, ${C.text} 9%, transparent)`, boxShadow: "0 18px 44px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.06)", overflow: "hidden" }}>
+        {currentTrack && (
+          <>
+            <div role="button" tabIndex={0} aria-label="Seek"
+              onClick={seek}
+              onKeyDown={e => {
+                if (e.key === "ArrowRight") { e.preventDefault(); handleSeek(Math.min(1, progress + 0.02)); }
+                if (e.key === "ArrowLeft")  { e.preventDefault(); handleSeek(Math.max(0, progress - 0.02)); }
+              }}
+              style={{ position: "absolute", left: 0, right: 0, top: 0, height: 2, zIndex: 1, cursor: "pointer" }}>
+              <div style={{ width: `${Math.min(progress, 1) * 100}%`, height: "100%", background: C.accent, transition: "width .5s linear" }} />
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "12px 14px" }}>
+              {/* Details → the Now playing tab of the bottom sheet */}
+              <button onClick={() => togglePanel("nowplaying")} aria-label="Now playing details"
+                style={{ display: "flex", alignItems: "center", gap: 11, flex: 1, minWidth: 0, background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
+                <CoverArt bg={currentTrack.bg} imageUrl={currentTrack.imageUrl} size={44} radius={12} />
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: "block", fontWeight: 700, fontSize: 12.5, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentTrack.title}</span>
+                  <span style={{ display: "block", fontSize: 11, color: C.muted, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentTrack.artist}</span>
+                </span>
               </button>
-            )}
-            {uiState.hasQueue && (
-              <button onClick={() => togglePanel("queue")} aria-label="Queue" style={iconBtn(panelTab === "queue")}>
-                <ListMusic size={15} />
+              <button onClick={playNext} aria-label="Next track"
+                style={{ width: 34, height: 34, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.muted, flexShrink: 0, padding: 0 }}>
+                <SkipForward size={20} />
               </button>
-            )}
-            <button onClick={() => setPlayerPageOpen(true)} aria-label="Full-screen player" style={iconBtn()}>
-              <ChevronUp size={16} />
-            </button>
-          </div>
-          <div role="button" tabIndex={0} aria-label="Seek"
-            onClick={e => { const r = e.currentTarget.getBoundingClientRect(); handleSeek((e.clientX - r.left) / r.width); }}
-            onKeyDown={e => {
-              if (e.key === "ArrowRight") { e.preventDefault(); handleSeek(Math.min(1, progress + 0.02)); }
-              if (e.key === "ArrowLeft")  { e.preventDefault(); handleSeek(Math.max(0, progress - 0.02)); }
-            }}
-            style={{ position: "absolute", left: 12, right: 12, bottom: 5, height: 3, background: C.border, borderRadius: 2, cursor: "pointer" }}>
-            <div style={{ width: `${Math.min(progress, 1) * 100}%`, height: "100%", background: C.accent, borderRadius: 2, transition: "width .5s linear" }} />
-          </div>
-        </div>
-      )}
-
-      <nav style={{ display: "flex", background: C.pane, borderTop: `1px solid ${C.border}`, paddingBottom: "env(safe-area-inset-bottom, 8px)", flexShrink: 0 }}>
-        {TABS.map(({ id, label, Icon }) => (
-          <button key={id} onClick={() => navigate({ id } as Screen)}
-            style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "10px 0 6px", background: "none", border: "none", cursor: "pointer", color: activeTab === id ? C.accent : C.muted, fontSize: 11, fontWeight: 500 }}>
-            <Icon size={22} />
-            {label}
-          </button>
-        ))}
-      </nav>
+              <button onClick={togglePlay} aria-label={isPlaying ? "Pause" : "Play"}
+                style={{ width: 42, height: 42, borderRadius: "50%", background: C.text, border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.pane, flexShrink: 0, padding: 0 }}>
+                {isPlaying ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" />}
+              </button>
+            </div>
+            <div style={{ height: 1, background: `color-mix(in srgb, ${C.text} 10%, transparent)`, margin: "0 14px" }} />
+          </>
+        )}
+        <nav style={{ display: "flex", alignItems: "center", justifyContent: "space-around", padding: "10px 10px 12px" }}>
+          {TABS.map(({ id, label, Icon }) => {
+            const active = activeTab === id;
+            return (
+              <button key={id} onClick={() => navigate({ id } as Screen)} aria-label={label}
+                style={{ display: "inline-flex", alignItems: "center", gap: 7, border: "none", cursor: "pointer", fontFamily: "inherit", transition: "all .15s", background: active ? `color-mix(in srgb, ${C.accent} 17%, transparent)` : "none", color: active ? `color-mix(in srgb, ${C.accent} 72%, #ffffff)` : C.dim, borderRadius: 999, padding: active ? "11px 18px" : "11px 14px", fontWeight: active ? 800 : 500, fontSize: 13, flexShrink: 0 }}>
+                <Icon size={active ? 18 : 22} />
+                {active && <span>{label}</span>}
+              </button>
+            );
+          })}
+        </nav>
+      </div>
 
       {/* Right column as a drawer — slide-up sheet with the same tabs */}
       {panelTab && (
@@ -2592,7 +2585,7 @@ export default function App() {
   // home. Pathnames only map when they name a known screen, so the hosted root
   // and any base path stay untouched.
   useEffect(() => {
-    const KNOWN = new Set(["home", "search", "discover", "library", "settings", "profile", "download"]);
+    const KNOWN = new Set(["home", "search", "discover", "library", "settings", "profile", "download", "downloads"]);
     const applyRoute = () => {
       const fromPath = window.location.pathname.replace(/\/+$/, "").split("/").pop() ?? "";
       const fromHash = window.location.hash.replace(/^#\/?/, "").split("/")[0].trim();
