@@ -63,6 +63,10 @@ import { loginUser, registerUser, logoutUser, passwordStrengthError } from "./se
 import { exchangeNeonSession, signOutNeon, clearOAuthQueryParams, hasOAuthVerifier } from "./services/neonAuth";
 import { markBundleReady, checkForOtaUpdates, reloadIntoLatestBundle, isNativeApp } from "./services/ota";
 import {
+  mediaInit, mediaSetNowPlaying, mediaSetState, mediaRelease,
+  mediaRequestNotificationPermission,
+} from "./services/mediaSession";
+import {
   useApp, AppCtx, makeColors, fmtSec, fmtDur, cleanTitle, audioUrlFor, toTrackItem,
   fromApiTrack, mapAPITrack, mapAPIPlaylist, mapAPIAlbum, mapAPIArtist,
   ACCENT_OPTIONS, BROWSE_CATEGORIES, BG_PALETTE,
@@ -3449,6 +3453,75 @@ export default function App() {
     setElapsed(audioDuration * c);
   }, [audioDuration]);
 
+  // ── System media controls (notification / lock screen) ────────────────────────
+  /** The APK must always render the mobile shell — see the .native-app CSS. */
+  useEffect(() => {
+    if (isNativeApp()) document.documentElement.classList.add("native-app");
+  }, []);
+
+  // Live refs so transport callbacks from the system UI never act on a stale
+  // closure — the lock screen can outlive any given render.
+  const isPlayingRef = useRef(isPlaying);
+  isPlayingRef.current = isPlaying;
+  const audioDurRef = useRef(audioDuration);
+  audioDurRef.current = audioDuration;
+  const mediaControlsRef = useRef({ togglePlay, playNext, playPrev, handleSeek, openLyrics: () => openPanel("lyrics") });
+  mediaControlsRef.current = { togglePlay, playNext, playPrev, handleSeek, openLyrics: () => openPanel("lyrics") };
+
+  useEffect(() => {
+    mediaInit({
+      onPlay: () => { if (!isPlayingRef.current) mediaControlsRef.current.togglePlay(); },
+      onPause: () => { if (isPlayingRef.current) mediaControlsRef.current.togglePlay(); },
+      onNext: () => mediaControlsRef.current.playNext(),
+      onPrev: () => mediaControlsRef.current.playPrev(),
+      onSeek: posSec => {
+        const dur = audioDurRef.current;
+        if (dur > 0) mediaControlsRef.current.handleSeek(Math.max(0, Math.min(1, posSec / dur)));
+      },
+      onOpenLyrics: () => mediaControlsRef.current.openLyrics(),
+    });
+    return () => mediaRelease();
+  }, []);
+
+  // Now-playing metadata + artwork for the notification and lock screen.
+  useEffect(() => {
+    if (!currentTrack) { mediaSetNowPlaying(null); return; }
+    mediaSetNowPlaying({
+      title: currentTrack.title,
+      artist: currentTrack.artist,
+      album: currentTrack.album,
+      artworkUrl: currentTrack.imageUrl,
+      durationSec: audioDuration || currentTrack.durationSec || 0,
+    });
+  }, [currentTrack, audioDuration]);
+
+  // Play/pause flips always reach the system UI; position ticks only while the
+  // app is visible (background ticks would just churn the foreground service).
+  useEffect(() => {
+    mediaSetState(
+      { playing: isPlaying, positionSec: elapsed },
+      audioDuration || currentTrack?.durationSec || 0,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPlaying, currentTrack?.id]);
+  useEffect(() => {
+    if (document.hidden) return;
+    mediaSetState(
+      { playing: isPlaying, positionSec: elapsed },
+      audioDuration || currentTrack?.durationSec || 0,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [elapsed]);
+
+  // Android 13+: ask for the notification permission once, before first play.
+  const mediaPermAsked = useRef(false);
+  useEffect(() => {
+    if (isPlaying && !mediaPermAsked.current) {
+      mediaPermAsked.current = true;
+      mediaRequestNotificationPermission();
+    }
+  }, [isPlaying]);
+
   // ── toggleLike ────────────────────────────────────────────────────────────────
   const toggleLike = useCallback((id: string | number) => {
     // Resolve the full track so the BFF like event carries artist/title —
@@ -3778,6 +3851,11 @@ export default function App() {
         @keyframes scaleIn { from{transform:scale(.94);opacity:0} to{transform:scale(1);opacity:1} }
         @keyframes fadeIn  { from{opacity:0} to{opacity:1} }
         @keyframes spin    { to{transform:rotate(360deg)} }
+        /* The APK must never fall back to the desktop shell — some WebViews
+           report a desktop-ish width, so the breakpoint classes alone aren't
+           a safe guard on native. */
+        .native-app .desktop-shell { display: none !important; }
+        .native-app .mobile-shell { display: block !important; }
       `}</style>
 
       {userLoading ? (
@@ -3805,7 +3883,7 @@ export default function App() {
 
       {/* Desktop — 240px sidebar · main · 320px panel; bar on its row.
           Below 1200px (spec) the shell yields to the mobile layout. */}
-      <div className="hidden min-[1200px]:grid"
+      <div className="hidden min-[1200px]:grid desktop-shell"
         style={{
           height: "100dvh",
           position: "relative",
@@ -3835,7 +3913,7 @@ export default function App() {
       {playerPageOpen && currentTrack && <PlayerPage />}
 
       {/* Mobile */}
-      <div className="min-[1200px]:hidden" style={{ height: "100dvh", position: "relative", overflow: "hidden", background: C.bg }}>
+      <div className="min-[1200px]:hidden mobile-shell" style={{ height: "100dvh", position: "relative", overflow: "hidden", background: C.bg }}>
         <MobileLayout />
       </div>
         </>
