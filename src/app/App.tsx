@@ -61,6 +61,7 @@ import {
 } from "./services/devices";
 import { loginUser, registerUser, logoutUser, passwordStrengthError } from "./services/auth";
 import { exchangeNeonSession, signOutNeon, clearOAuthQueryParams, hasOAuthVerifier } from "./services/neonAuth";
+import { markBundleReady, checkForOtaUpdates, reloadIntoLatestBundle, isNativeApp } from "./services/ota";
 import {
   useApp, AppCtx, makeColors, fmtSec, fmtDur, cleanTitle, audioUrlFor, toTrackItem,
   fromApiTrack, mapAPITrack, mapAPIPlaylist, mapAPIAlbum, mapAPIArtist,
@@ -1255,6 +1256,22 @@ function SettingsScreen() {
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
 
+  // OTA: manual check from Settings — spinner while the bundle sync runs.
+  const [otaBusy, setOtaBusy] = useState(false);
+  const checkUpdates = async () => {
+    if (otaBusy) return;
+    setOtaBusy(true);
+    const result = await checkForOtaUpdates();
+    setOtaBusy(false);
+    if (result === "update-installed") {
+      toast.success("Update downloaded — applying…");
+      // Reload now: localStorage (session tokens) survives, the user stays in.
+      await reloadIntoLatestBundle();
+    } else if (result === "up-to-date") toast.success("You're on the latest version");
+    else if (result === "skipped") toast("Live updates run in the Android app");
+    else toast.error("Couldn't check for updates — try again.");
+  };
+
   const saveName = async () => {
     const next = nameDraft.trim();
     if (!next) return;
@@ -1508,6 +1525,15 @@ function SettingsScreen() {
           <Row label="Connection"
             sub={conn === "online" ? "Streaming is ready" : conn === "degraded" ? "A few features may be limited" : "Offline — downloaded tracks still play"}
             right={<div style={{ width: 8, height: 8, borderRadius: "50%", background: conn === "online" ? "#34C759" : conn === "degraded" ? "#FF9F0A" : "#E5484D", flexShrink: 0 }} />} />
+          {isNativeApp() && (
+            <Row label="Check for Updates"
+              sub={otaBusy ? "Checking the nightly channel…" : "Download the latest build if one exists"}
+              onClick={checkUpdates}
+              right={
+                <RefreshCw size={16} color={otaBusy ? C.accent : C.muted}
+                  style={otaBusy ? { animation: "spin 1s linear infinite" } : undefined} />
+              } />
+          )}
           <Row label="Version" sub="Vybra 2.1.0" right={<span style={{ fontSize: 13, color: C.accent, fontWeight: 600 }}>Latest</span>} />
           <Row label="Terms of service" onClick={() => toast("Opening terms…")} right={<ChevronRight size={16} color={C.muted} />} />
           <Row label="Privacy policy" onClick={() => toast("Opening privacy policy…")} last right={<ChevronRight size={16} color={C.muted} />} />
@@ -2617,6 +2643,27 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [screen.id, navigate]);
+
+  // OTA: confirm the running bundle is healthy, then silently check the
+  // nightly release for a newer web bundle. A staged update gets a
+  // non-blocking toast — Reload applies it on the login screen or inside
+  // the app alike (localStorage survives the WebView reload).
+  useEffect(() => {
+    let cancelled = false;
+    void markBundleReady();
+    void checkForOtaUpdates().then(result => {
+      if (cancelled || result !== "update-installed") return;
+      toast("New version available!", {
+        description: "A fresh build is ready — reload to get it.",
+        duration: 60_000,
+        action: {
+          label: "Reload App",
+          onClick: () => { void reloadIntoLatestBundle(); },
+        },
+      });
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   // Playback state — the player always opens on the most recently played song.
   const [currentTrack, setCurrentTrack]   = useState<Track | null>(
@@ -3730,6 +3777,7 @@ export default function App() {
         @keyframes slideUp { from{transform:translateY(100%);opacity:0} to{transform:translateY(0);opacity:1} }
         @keyframes scaleIn { from{transform:scale(.94);opacity:0} to{transform:scale(1);opacity:1} }
         @keyframes fadeIn  { from{opacity:0} to{opacity:1} }
+        @keyframes spin    { to{transform:rotate(360deg)} }
       `}</style>
 
       {userLoading ? (

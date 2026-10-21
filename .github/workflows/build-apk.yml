@@ -27,6 +27,11 @@ jobs:
       run: |
         npm run build
 
+    - name: Package OTA bundle
+      run: |
+        cd dist
+        zip -qr ../vybra-bundle.zip .
+
     - name: Sync Capacitor Android Assets
       run: |
         npx cap sync android
@@ -55,7 +60,7 @@ jobs:
         name: vybra-debug-apk
         path: android/app/build/outputs/apk/debug/app-debug.apk
 
-    - name: Publish APK to nightly release
+    - name: Publish APK + OTA bundle to nightly release
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
@@ -64,5 +69,13 @@ jobs:
           gh release create nightly --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" --prerelease \
             --title "Vybra nightly build" \
-            --notes "Latest APK built by CI. Rebuilt on every push to main."
-        gh release upload nightly vybra-latest.apk --repo "$GITHUB_REPOSITORY" --clobber
+            --notes "Latest APK + OTA web bundle built by CI. Rebuilt on every push to main."
+        gh release upload nightly vybra-latest.apk vybra-bundle.zip \
+          --repo "$GITHUB_REPOSITORY" --clobber
+        # The notes carry the bundle id the app matches against (api.github.com
+        # is CORS-open; the asset host is not). Edited after the upload so a
+        # device never sees a bundleId whose zip is not live yet.
+        gh release edit nightly --repo "$GITHUB_REPOSITORY" \
+          --notes "Bundle: nightly-${GITHUB_SHA:0:7}
+
+Latest APK + OTA web bundle built by CI. Rebuilt on every push to main."

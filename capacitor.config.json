@@ -12,5 +12,14 @@
       "*.googleapis.com",
       "lenium-music-api.onrender.com"
     ]
+  },
+  "plugins": {
+    "LiveUpdate": {
+      "defaultChannel": "nightly",
+      "readyTimeout": 10000,
+      "autoUpdateStrategy": "none",
+      "autoDeleteBundles": true,
+      "autoBlockRolledBackBundles": true
+    }
   }
 }
