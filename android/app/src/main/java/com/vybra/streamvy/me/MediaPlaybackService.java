@@ -10,7 +10,6 @@ import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.media.AudioAttributes;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -20,7 +19,6 @@ import android.support.v4.media.MediaMetadataCompat;
 import android.support.v4.media.session.MediaSessionCompat;
 import android.support.v4.media.session.PlaybackStateCompat;
 import androidx.core.app.NotificationCompat;
-import androidx.media.app.MediaStyle;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -97,13 +95,6 @@ public class MediaPlaybackService extends Service {
                 if (LYRICS_ACTION.equals(action)) openLyrics();
             }
         });
-        session.setAudioAttributes(
-            new AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_MEDIA)
-                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                .build(),
-            true
-        );
         session.setActive(true);
         running = true;
     }
@@ -116,12 +107,13 @@ public class MediaPlaybackService extends Service {
             teardown();
             return START_NOT_STICKY;
         }
-        // Transport buttons arrive as intents against this service.
-        if ("me.streamvy.media PLAY".equals(action)) { dispatchPlay(); return START_NOT_STICKY; }
-        if ("me.streamvy.media PAUSE".equals(action)) { dispatchPause(); return START_NOT_STICKY; }
-        if ("me.streamvy.media NEXT".equals(action)) { session.getController().getTransportControls().skipToNext(); return START_NOT_STICKY; }
-        if ("me.streamvy.media PREV".equals(action)) { session.getController().getTransportControls().skipToPrevious(); return START_NOT_STICKY; }
-        if (LYRICS_ACTION.equals(action)) { openLyrics(); return START_NOT_STICKY; }
+        // Transport buttons arrive as intents against this service. publish()
+        // first: startForegroundService promises a foreground within 5s.
+        if ("me.streamvy.media PLAY".equals(action)) { publish(); dispatchPlay(); return START_NOT_STICKY; }
+        if ("me.streamvy.media PAUSE".equals(action)) { publish(); dispatchPause(); return START_NOT_STICKY; }
+        if ("me.streamvy.media NEXT".equals(action)) { publish(); session.getController().getTransportControls().skipToNext(); return START_NOT_STICKY; }
+        if ("me.streamvy.media PREV".equals(action)) { publish(); session.getController().getTransportControls().skipToPrevious(); return START_NOT_STICKY; }
+        if (LYRICS_ACTION.equals(action)) { publish(); openLyrics(); return START_NOT_STICKY; }
 
         if (intent != null) {
             if (ACTION_UPDATE.equals(action)) {
@@ -251,7 +243,7 @@ public class MediaPlaybackService extends Service {
             .addAction(new NotificationCompat.Action(
                 R.drawable.ic_media_lyrics, "Lyrics",
                 servicePending(LYRICS_ACTION, 4)))
-            .setStyle(new MediaStyle()
+            .setStyle(new androidx.media.app.NotificationCompat.MediaStyle()
                 .setMediaSession(session.getSessionToken())
                 .setShowActionsInCompactView(0, 1, 2));
 

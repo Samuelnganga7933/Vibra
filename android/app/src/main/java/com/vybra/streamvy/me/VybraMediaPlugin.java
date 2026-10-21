@@ -3,15 +3,15 @@ package com.vybra.streamvy.me;
 import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
-import android.content.pm.PackageManager;
 import android.os.Build;
-import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
 import com.getcapacitor.JSObject;
+import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import com.getcapacitor.annotation.Permission;
+import com.getcapacitor.annotation.PermissionCallback;
 
 /**
  * VybraMedia — JS bridge for the playback media session.
@@ -21,10 +21,11 @@ import com.getcapacitor.annotation.CapacitorPlugin;
  * forwards state into the service and relays user actions from the
  * system UI (notification / lock screen) back to the WebView as events.
  */
-@CapacitorPlugin(name = "VybraMedia")
+@CapacitorPlugin(
+    name = "VybraMedia",
+    permissions = { @Permission(strings = Manifest.permission.POST_NOTIFICATIONS, alias = "notifications") }
+)
 public class VybraMediaPlugin extends Plugin {
-
-    private static final int NOTIFICATION_PERMISSION_REQ = 7231;
 
     /**
      * Strongest link from the service to JS. The service can outlive a
@@ -32,7 +33,6 @@ public class VybraMediaPlugin extends Plugin {
      * on every resume.
      */
     private static volatile VybraMediaPlugin activePlugin;
-    private PluginCall permissionCall;
 
     @Override
     public void load() {
@@ -92,7 +92,7 @@ public class VybraMediaPlugin extends Plugin {
         intent.putExtra(MediaPlaybackService.EXTRA_ARTIST, opts.getString("artist", ""));
         intent.putExtra(MediaPlaybackService.EXTRA_ALBUM, opts.getString("album", ""));
         intent.putExtra(MediaPlaybackService.EXTRA_ARTWORK, opts.getString("artworkUrl", ""));
-        intent.putExtra(MediaPlaybackService.EXTRA_DURATION_SEC, opts.getDouble("durationSec", 0d));
+        intent.putExtra(MediaPlaybackService.EXTRA_DURATION_SEC, opts.optDouble("durationSec", 0d));
         startServiceSafely(intent);
         call.resolve();
     }
@@ -101,9 +101,9 @@ public class VybraMediaPlugin extends Plugin {
     public void setPlaybackState(PluginCall call) {
         JSObject opts = call.getData();
         Intent intent = serviceIntent(MediaPlaybackService.ACTION_STATE);
-        intent.putExtra(MediaPlaybackService.EXTRA_PLAYING, opts.getBool("playing", false));
-        intent.putExtra(MediaPlaybackService.EXTRA_POSITION_SEC, opts.getDouble("positionSec", 0d));
-        intent.putExtra(MediaPlaybackService.EXTRA_DURATION_SEC, opts.getDouble("durationSec", 0d));
+        intent.putExtra(MediaPlaybackService.EXTRA_PLAYING, opts.getBoolean("playing", false));
+        intent.putExtra(MediaPlaybackService.EXTRA_POSITION_SEC, opts.optDouble("positionSec", 0d));
+        intent.putExtra(MediaPlaybackService.EXTRA_DURATION_SEC, opts.optDouble("durationSec", 0d));
         startServiceSafely(intent);
         call.resolve();
     }
@@ -116,30 +116,16 @@ public class VybraMediaPlugin extends Plugin {
 
     @PluginMethod
     public void requestNotificationPermission(PluginCall call) {
-        Activity activity = getActivity();
-        if (activity == null || Build.VERSION.SDK_INT < 33) {
+        if (Build.VERSION.SDK_INT < 33 || getPermissionState("notifications") == PermissionState.GRANTED) {
             call.resolve();
             return;
         }
-        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS)
-                == PackageManager.PERMISSION_GRANTED) {
-            call.resolve();
-            return;
-        }
-        permissionCall = call;
-        ActivityCompat.requestPermissions(
-            activity,
-            new String[] { Manifest.permission.POST_NOTIFICATIONS },
-            NOTIFICATION_PERMISSION_REQ
-        );
+        requestPermissionForAlias("notifications", call, "handleNotificationPermissionResult");
     }
 
-    @Override
-    public void handleOnRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
-        if (requestCode == NOTIFICATION_PERMISSION_REQ && permissionCall != null) {
-            permissionCall.resolve();
-            permissionCall = null;
-        }
+    @PermissionCallback
+    private void handleNotificationPermissionResult(PluginCall call) {
+        call.resolve();
     }
 
     private Intent serviceIntent(String action) {
@@ -152,7 +138,13 @@ public class VybraMediaPlugin extends Plugin {
     private void startServiceSafely(Intent intent) {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                getContext().startForegroundService(intent);
+                // Already-running services take plain startService even from
+                // the background; only a cold start needs the FGS variant.
+                if (MediaPlaybackService.isRunning()) {
+                    getContext().startService(intent);
+                } else {
+                    getContext().startForegroundService(intent);
+                }
             } else {
                 getContext().startService(intent);
             }
