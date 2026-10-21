@@ -10,7 +10,8 @@
       "vybra.streamvy.me",
       "*.google.com",
       "*.googleapis.com",
-      "lenium-music-api.onrender.com"
+      "lenium-music-api.onrender.com",
+      "*.neonauth.c-7.us-east-2.aws.neon.tech"
     ]
   },
   "plugins": {

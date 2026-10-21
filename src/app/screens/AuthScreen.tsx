@@ -1,8 +1,10 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { AlertCircle, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { useApp } from "../context";
 import { signInWithGoogle } from "../services/neonAuth";
+import { BFF_BASE } from "../services/bff";
+import { safeFetch } from "../services/safeFetch";
 
 /**
  * Log in / Sign up — the full-screen split layout from the design boards
@@ -27,6 +29,13 @@ export function AuthScreen({ mode: initialMode }: { mode: "login" | "signup" }) 
     email.trim().length > 3 &&
     password.length >= 8 &&
     (!isSignup || name.trim().length >= 2);
+
+  // Warm the BFF the moment this screen mounts: Render cold-starts take tens
+  // of seconds on the first request, so spin it up while the user types
+  // instead of burning the submit's timeout on it. Quiet — no status flips.
+  useEffect(() => {
+    if (BFF_BASE) void safeFetch(`${BFF_BASE}/health`, { quiet: true, timeoutMs: 30_000 });
+  }, []);
 
   const switchMode = () => {
     setError(null);

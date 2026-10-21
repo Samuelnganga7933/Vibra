@@ -8,6 +8,7 @@
  */
 
 import { BFF_BASE, bffSend, setSessionToken } from "./bff";
+import { safeFetch } from "./safeFetch";
 import { clearUserProfile } from "./store";
 
 export interface SessionUser {
@@ -47,17 +48,19 @@ export function passwordStrengthError(password: string): string | null {
 
 async function postAuth(path: string, body: Record<string, unknown>): Promise<AuthResult> {
   if (!BFF_BASE) return { data: null, error: null };
-  let response: Response;
-  try {
-    response = await fetch(`${BFF_BASE}${path}`, {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-  } catch {
-    return { data: null, error: null }; // offline / BFF down — caller's fallback copy
-  }
+  // Through safeFetch like every other call: a hard timeout so a cold Render
+  // start can never hang the button; 15s because auth also runs bcrypt.
+  // 4xx (wrong password, policy) returns the response so the server's
+  // `detail` shows inline — 5xx/timeout/offline fall back to the generic copy.
+  const response = await safeFetch(`${BFF_BASE}${path}`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    timeoutMs: 15_000,
+    accept: r => r.status >= 400 && r.status < 500,
+  });
+  if (!response) return { data: null, error: null }; // offline / timed out / BFF down
   let parsed: unknown = null;
   try {
     parsed = await response.json();
