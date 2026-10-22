@@ -1538,6 +1538,12 @@ function SettingsScreen() {
                   style={otaBusy ? { animation: "spin 1s linear infinite" } : undefined} />
               } />
           )}
+          {!isNativeApp() && (
+            <Row label="Get the app"
+              sub="Vibra on every screen — install the Android APK"
+              onClick={() => navigate({ id: "download" })}
+              right={<ChevronRight size={16} color={C.muted} />} />
+          )}
           <Row label="Version" sub="Vybra 2.1.0" right={<span style={{ fontSize: 13, color: C.accent, fontWeight: 600 }}>Latest</span>} />
           <Row label="Terms of service" onClick={() => toast("Opening terms…")} right={<ChevronRight size={16} color={C.muted} />} />
           <Row label="Privacy policy" onClick={() => toast("Opening privacy policy…")} last right={<ChevronRight size={16} color={C.muted} />} />
