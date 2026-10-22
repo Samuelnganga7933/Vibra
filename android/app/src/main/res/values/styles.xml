@@ -13,10 +13,20 @@
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
+        <!-- Keep the WebView between the system bars: opaque bars in the app
+             background so window/env() sizes just work, and opt out of the
+             targetSdk-35 edge-to-edge enforcement (the web layer doesn't read
+             Android insets reliably). -->
+        <item name="android:statusBarColor">#0B0A10</item>
+        <item name="android:navigationBarColor">#0B0A10</item>
+        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
     </style>
 
 
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
         <item name="android:background">@drawable/splash</item>
+        <item name="android:statusBarColor">#0B0A10</item>
+        <item name="android:navigationBarColor">#0B0A10</item>
+        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
     </style>
 </resources>

@@ -25,8 +25,8 @@ import { bffJson } from "../services/bff";
    browse-category palette and the offline-green semantic.
    ──────────────────────────────────────────────────────────────────────────── */
 
-/** Clears the floating dock (mini player + nav) so content never hides under it. */
-const DOCK_PAD = 176;
+/** Fallback clearance while MobileLayout measures the real dock height. */
+const DOCK_PAD = "var(--vibra-dock-h, 176px)";
 const OFFLINE_GREEN = "#1ED760";
 
 const pad = (px: number): React.CSSProperties => ({ paddingLeft: px, paddingRight: px });

@@ -2488,7 +2488,32 @@ function PlayerBar() {
  */
 function MobileLayout() {
   const { C, screen, navigate, currentTrack, isPlaying, togglePlay, playNext,
-    progress, handleSeek, errorState, panelTab, togglePanel } = useApp();
+    progress, handleSeek, errorState, panelTab, togglePanel, setPlayerPageOpen } = useApp();
+
+  const rootRef = useRef<HTMLDivElement>(null);
+  const dockRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * Publish the exact clearance the floating dock needs as --vibra-dock-h on
+   * this layout (distance from the bottom edge to the dock top + 16px gap,
+   * so the safe-area offset and the mini-player appearing/disappearing are
+   * both accounted for). Every page reads it instead of guessing a pixel
+   * value — that's what keeps scroll views from running under the dock.
+   */
+  useEffect(() => {
+    const root = rootRef.current, dock = dockRef.current;
+    if (!root || !dock) return;
+    const measure = () => {
+      const r = root.getBoundingClientRect(), d = dock.getBoundingClientRect();
+      root.style.setProperty("--vibra-dock-h", `${Math.max(0, Math.round(r.bottom - d.top + 16))}px`);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(root);
+    ro.observe(dock);
+    return () => ro.disconnect();
+  }, []);
 
   const TABS = [
     { id: "home",     label: "Home",     Icon: Home },
@@ -2508,7 +2533,7 @@ function MobileLayout() {
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", background: C.bg, overflow: "hidden", position: "relative" }}>
+    <div ref={rootRef} style={{ display: "flex", flexDirection: "column", height: "100%", background: C.bg, overflow: "hidden", position: "relative" }}>
       <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column", paddingTop: "env(safe-area-inset-top, 0px)" }}>
         {errorState ? (
           <ErrorScreen error={errorState} />
@@ -2522,7 +2547,13 @@ function MobileLayout() {
           }} />
         ) : (
           <ErrorBoundary colors={C} compact onReset={() => navigate({ id: "home" })}>
-            {MOBILE_SCREENS.has(screen.id) ? <MobileScreenView s={screen} /> : <ScreenView s={screen} />}
+            {MOBILE_SCREENS.has(screen.id) ? <MobileScreenView s={screen} /> : (
+              /* Fallback (desktop-designed) screens scroll inside a box that
+                 already stops above the dock — they don't know about it. */
+              <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", paddingBottom: "var(--vibra-dock-h, 176px)" }}>
+                <ScreenView s={screen} />
+              </div>
+            )}
           </ErrorBoundary>
         )}
       </div>
@@ -2531,7 +2562,7 @@ function MobileLayout() {
       <div aria-hidden style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 230, background: `linear-gradient(to bottom, ${C.bg}00, ${C.bg} 72%)`, pointerEvents: "none", zIndex: 2 }} />
 
       {/* Floating dock — mini player over nav, the boards' single cluster. */}
-      <div style={{ position: "absolute", left: 12, right: 12, bottom: "calc(24px + env(safe-area-inset-bottom, 0px))", zIndex: 3, borderRadius: 30, background: `color-mix(in srgb, ${C.pane} 74%, transparent)`, backdropFilter: "blur(26px) saturate(1.4)", WebkitBackdropFilter: "blur(26px) saturate(1.4)", border: `1px solid color-mix(in srgb, ${C.text} 9%, transparent)`, boxShadow: "0 18px 44px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.06)", overflow: "hidden" }}>
+      <div ref={dockRef} style={{ position: "absolute", left: 12, right: 12, bottom: "calc(24px + env(safe-area-inset-bottom, 0px))", zIndex: 3, borderRadius: 30, background: `color-mix(in srgb, ${C.pane} 74%, transparent)`, backdropFilter: "blur(26px) saturate(1.4)", WebkitBackdropFilter: "blur(26px) saturate(1.4)", border: `1px solid color-mix(in srgb, ${C.text} 9%, transparent)`, boxShadow: "0 18px 44px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.06)", overflow: "hidden" }}>
         {currentTrack && (
           <>
             <div role="button" tabIndex={0} aria-label="Seek"
@@ -2544,8 +2575,9 @@ function MobileLayout() {
               <div style={{ width: `${Math.min(progress, 1) * 100}%`, height: "100%", background: C.accent, transition: "width .5s linear" }} />
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "12px 14px" }}>
-              {/* Details → the Now playing tab of the bottom sheet */}
-              <button onClick={() => togglePanel("nowplaying")} aria-label="Now playing details"
+              {/* Details → the full-screen player (the sheet's Now playing tab
+                  was the old half-screen path; the boards show the player) */}
+              <button onClick={() => setPlayerPageOpen(true)} aria-label="Now playing details"
                 style={{ display: "flex", alignItems: "center", gap: 11, flex: 1, minWidth: 0, background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
                 <CoverArt bg={currentTrack.bg} imageUrl={currentTrack.imageUrl} size={44} radius={12} />
                 <span style={{ flex: 1, minWidth: 0 }}>
@@ -2850,6 +2882,26 @@ export default function App() {
   const openPlayerPage = useCallback((open: boolean) => {
     setPlayerPageOpen(open);
     if (open && window.matchMedia("(max-width: 1199.98px)").matches) setPanelTab(null);
+  }, []);
+  /**
+   * Live viewport height for the shells — tracks keyboard (adjustResize),
+   * rotation and toolbar collapse without trusting dvh alone. Published as
+   * --app-h on :root; the shells read var(--app-h, 100dvh).
+   */
+  useEffect(() => {
+    const setH = () => {
+      const h = window.visualViewport?.height ?? window.innerHeight;
+      document.documentElement.style.setProperty("--app-h", `${Math.round(h)}px`);
+    };
+    setH();
+    window.addEventListener("resize", setH);
+    window.addEventListener("orientationchange", setH);
+    window.visualViewport?.addEventListener("resize", setH);
+    return () => {
+      window.removeEventListener("resize", setH);
+      window.removeEventListener("orientationchange", setH);
+      window.visualViewport?.removeEventListener("resize", setH);
+    };
   }, []);
   const showError = useCallback((error: AppError) => setErrorState(error), []);
   const clearError = useCallback(() => setErrorState(null), []);
@@ -3885,7 +3937,7 @@ export default function App() {
           Below 1200px (spec) the shell yields to the mobile layout. */}
       <div className="hidden min-[1200px]:grid desktop-shell"
         style={{
-          height: "100dvh",
+          height: "var(--app-h, 100dvh)",
           position: "relative",
           gridTemplateColumns: "240px minmax(0,1fr) 320px",
           gridTemplateRows: uiState.hasPlayback ? "minmax(0,1fr) 88px" : "minmax(0,1fr)",
@@ -3913,7 +3965,7 @@ export default function App() {
       {playerPageOpen && currentTrack && <PlayerPage />}
 
       {/* Mobile */}
-      <div className="min-[1200px]:hidden mobile-shell" style={{ height: "100dvh", position: "relative", overflow: "hidden", background: C.bg }}>
+      <div className="min-[1200px]:hidden mobile-shell" style={{ height: "var(--app-h, 100dvh)", position: "relative", overflow: "hidden", background: C.bg }}>
         <MobileLayout />
       </div>
         </>

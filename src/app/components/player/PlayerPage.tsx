@@ -1,13 +1,17 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ChevronDown, Heart, ListMusic, Mic2, MoreHorizontal } from "lucide-react";
+import {
+  ChevronDown, Heart, ListMusic, Mic2, MoreHorizontal,
+  Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward,
+} from "lucide-react";
 import { useApp, fmtSec } from "../../context";
 import { CoverArt } from "../CoverArt";
 import { LyricsPanel } from "./LyricsPanel";
 
 /**
  * Full-screen player — artwork, metadata, seek and queue context.
- * Transport controls live only in the bottom bar, which stays visible below
- * this overlay, so nothing is duplicated here.
+ * Transport lives in the bottom bar on desktop (which stays visible below
+ * this overlay); below the shell breakpoint the player covers the dock, so
+ * its own transport row + footer render there (CSS in index.css).
  */
 export function PlayerPage() {
   const {
@@ -17,10 +21,13 @@ export function PlayerPage() {
     openTrackOptions,
     isPlaying, togglePlay,
     lyrics, plainLyrics, lyricsLoading, uiState,
+    playPrev, playNext, shuffleOn, toggleShuffle, repeatMode, cycleRepeat,
   } = useApp();
   const scrubRef = useRef<HTMLDivElement | null>(null);
   const [mediaMode, setMediaMode] = useState<"song" | "video" | "lyrics">("song");
   const [ctxTab, setCtxTab] = useState<"queue" | "lyrics">("queue");
+  /** Mobile footer's queue icon swaps the artwork body for the queue list. */
+  const [queueOpen, setQueueOpen] = useState(false);
   const hasLyricsOption = uiState.hasLyrics || lyricsLoading;
 
   useEffect(() => {
@@ -47,7 +54,7 @@ export function PlayerPage() {
   };
 
   return (
-    <div className="player-page" style={{
+    <div className={`player-page${queueOpen ? " show-queue" : ""}`} style={{
       position: "fixed", left: 12, right: 12, top: 12, bottom: 112,
       zIndex: 40, borderRadius: 18, border: `1px solid ${C.border}`,
       background: `linear-gradient(180deg, ${C.pane} 0%, ${C.bg} 130%)`,
@@ -55,6 +62,8 @@ export function PlayerPage() {
       boxShadow: "0 24px 80px rgba(0,0,0,0.55)",
       animation: "fadeIn .18s ease",
     }}>
+      {/* Grabber — the boards' drag handle; on mobile it signals pull-down */}
+      <div aria-hidden style={{ width: 46, height: 5, borderRadius: 3, background: C.border, margin: "9px auto 0", flexShrink: 0 }} />
       {/* Header */}
       <div className="player-page-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", flexShrink: 0 }}>
         <button onClick={() => setPlayerPageOpen(false)} aria-label="Close full-screen player"
@@ -151,6 +160,31 @@ export function PlayerPage() {
           </div>
         </div>
 
+        {/* Transport — rendered for the mobile overlay (the dock underneath is
+            covered); index.css hides it where the bottom bar owns transport. */}
+        <div className="player-page-transport">
+          <button onClick={toggleShuffle} aria-label="Shuffle" aria-pressed={shuffleOn}
+            style={{ width: 44, height: 44, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: shuffleOn ? C.accent : C.muted, padding: 0 }}>
+            <Shuffle size={22} />
+          </button>
+          <button onClick={playPrev} aria-label="Previous track"
+            style={{ width: 48, height: 48, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.text, padding: 0 }}>
+            <SkipBack size={30} fill="currentColor" />
+          </button>
+          <button onClick={togglePlay} aria-label={isPlaying ? "Pause" : "Play"}
+            style={{ width: 72, height: 72, borderRadius: "50%", background: C.text, border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.pane, padding: 0, boxShadow: "0 12px 34px rgba(0,0,0,0.45)" }}>
+            {isPlaying ? <Pause size={30} fill="currentColor" /> : <Play size={30} fill="currentColor" />}
+          </button>
+          <button onClick={playNext} aria-label="Next track"
+            style={{ width: 48, height: 48, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.text, padding: 0 }}>
+            <SkipForward size={30} fill="currentColor" />
+          </button>
+          <button onClick={cycleRepeat} aria-label={`Repeat: ${repeatMode}`}
+            style={{ width: 44, height: 44, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: repeatMode !== "off" ? C.accent : C.muted, padding: 0 }}>
+            {repeatMode === "one" ? <Repeat1 size={22} /> : <Repeat size={22} />}
+          </button>
+        </div>
+
         {/* Right: context tabs */}
         <div className="player-page-context" style={{ display: "flex", flexDirection: "column", minHeight: 0, background: C.pane, border: `1px solid ${C.border}`, borderRadius: 16, overflow: "hidden" }}>
           <div style={{ display: "flex", gap: 4, padding: "12px 12px 0", flexShrink: 0 }}>
@@ -163,7 +197,7 @@ export function PlayerPage() {
               <ListMusic size={14} /> Queue
             </button>
             {hasLyricsOption && (
-              <button onClick={() => setCtxTab("lyrics")} style={{
+              <button onClick={() => setCtxTab("lyrics")} className="player-page-ctx-lyrics" style={{
                 flex: 1, height: 34, borderRadius: 9, border: "none", cursor: "pointer",
                 background: ctxTab === "lyrics" ? C.text : C.surf,
                 color: ctxTab === "lyrics" ? C.pane : C.text, fontSize: 12.5, fontWeight: 700,
@@ -205,6 +239,19 @@ export function PlayerPage() {
               )}
           </div>
         </div>
+      </div>
+
+      {/* Footer — queue toggle + close; mobile only (hidden by index.css
+          above the shell breakpoint), per the boards' bottom row. */}
+      <div className="player-page-foot">
+        <button onClick={() => setQueueOpen(v => !v)} aria-label="Queue" aria-pressed={queueOpen}
+          style={{ width: 44, height: 44, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: queueOpen ? C.accent : C.muted, padding: 0 }}>
+          <ListMusic size={21} />
+        </button>
+        <button onClick={() => setPlayerPageOpen(false)} aria-label="Close full-screen player"
+          style={{ width: 44, height: 44, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.muted, padding: 0 }}>
+          <ChevronDown size={22} />
+        </button>
       </div>
     </div>
   );
