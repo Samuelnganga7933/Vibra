@@ -35,6 +35,7 @@ _ENGINE = (os.environ.get("CATALOGUE_BASE") or "https://music.vybra.streamvy.me"
 
 _TTL = 15 * 60.0          # googlevideo URLs live ~6h; 15 min is plenty
 _CACHE: dict[str, tuple[float, str, str]] = {}   # video_id -> (ts, url, mime)
+LAST_DIAG: dict[str, str] = {}                   # video_id -> why it failed
 
 
 def _resolve_innertube(video_id: str) -> tuple[str | None, str]:
@@ -66,12 +67,16 @@ def _resolve_innertube(video_id: str) -> tuple[str | None, str]:
             _INNERTUBE_URL, json=payload, headers=headers, timeout=12.0
         )
         if response.status_code != 200:
+            LAST_DIAG[video_id] = f"post_{response.status_code}:{response.text[:160]}"
             return None, ""
         data = response.json()
-    except Exception:
+    except Exception as exc:
+        LAST_DIAG[video_id] = f"post_error:{type(exc).__name__}:{exc}"
         return None, ""
 
-    if (data.get("playabilityStatus") or {}).get("status") != "OK":
+    status = (data.get("playabilityStatus") or {})
+    if status.get("status") != "OK":
+        LAST_DIAG[video_id] = f"playability:{status.get('status')}:{status.get('reason', '')[:160]}"
         return None, ""
     streaming = data.get("streamingData") or {}
     formats = [
@@ -80,6 +85,7 @@ def _resolve_innertube(video_id: str) -> tuple[str | None, str]:
         if str(f.get("mimeType", "")).startswith("audio/")
     ]
     if not formats:
+        LAST_DIAG[video_id] = "no_audio_formats"
         return None, ""
     # m4a first — WebView decodes mp4a everywhere; opus-in-webm is shakier
     # on older Android builds.
@@ -87,7 +93,9 @@ def _resolve_innertube(video_id: str) -> tuple[str | None, str]:
     best = max(mp4 or formats, key=lambda f: int(f.get("bitrate") or 0))
     url = best.get("url")
     if not url:
+        LAST_DIAG[video_id] = "ciphered_no_url"
         return None, ""
+    LAST_DIAG.pop(video_id, None)
     mime = str(best.get("mimeType", "")).split(";")[0].strip() or "audio/mp4"
     return str(url), mime
 

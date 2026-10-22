@@ -26,11 +26,11 @@ import httpx
 import jwt
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from sqlalchemy import distinct, func, select, text
 from sqlalchemy.orm import Session
 
-from audio_source import engine_stream_url, resolve_audio_url
+from audio_source import LAST_DIAG, engine_stream_url, resolve_audio_url
 from catalogue import search_catalogue
 from database import Base, SessionLocal, engine, get_db
 from market import market_label, market_queries, merged_catalogue, region_query, scene_queries
@@ -1577,7 +1577,7 @@ def set_history_pause(payload: HistoryPauseIn, user: User = Depends(get_token_us
 
 
 @app.get("/api/audio/{video_id}")
-def stream_audio(video_id: str, request: Request, proxy: int = 0):
+def stream_audio(video_id: str, request: Request, proxy: int = 0, debug: int = 0):
     """Direct audio for one track.
 
     Playback (default): 302 to a real audio URL — `<audio>` follows redirects
@@ -1590,6 +1590,12 @@ def stream_audio(video_id: str, request: Request, proxy: int = 0):
     """
     resolved = resolve_audio_url(video_id)
     if resolved is None:
+        if debug:
+            return JSONResponse({
+                "resolved": False,
+                "diag": LAST_DIAG.get(video_id, "no_diag"),
+                "engine": engine_stream_url(video_id),
+            })
         if proxy:
             # Only verified audio may be saved — never store an error body.
             raise HTTPException(status_code=502, detail="No playable audio source for this track")
