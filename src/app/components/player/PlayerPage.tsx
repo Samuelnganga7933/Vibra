@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown, Heart, ListMusic, Mic2, MoreHorizontal,
   Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward,
@@ -30,6 +30,31 @@ export function PlayerPage() {
   const [queueOpen, setQueueOpen] = useState(false);
   const hasLyricsOption = uiState.hasLyrics || lyricsLoading;
 
+  /** Pull-down to close — tracks the finger from the grabber/header zone. */
+  const [drag, setDrag] = useState({ active: false, y: 0 });
+  const dragStartY = useRef<number | null>(null);
+  /** Compact layout: waveform seek + full-bleed (the boards' mobile player). */
+  const [isCompact, setIsCompact] = useState(
+    () => typeof window !== "undefined" && window.matchMedia("(max-width: 1199.98px)").matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 1199.98px)");
+    const on = () => setIsCompact(mq.matches);
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+
+  /** Deterministic bar heights per track — the waveform look of the boards. */
+  const waveBars = useMemo(() => {
+    const id = String(currentTrack?.id ?? "");
+    const seed = id.split("").reduce((a, c) => (a + c.charCodeAt(0)) % 9973, 17);
+    return Array.from({ length: 56 }, (_, i) => {
+      const x = Math.sin((seed + 1) * (i + 1) * 12.9898) * 43758.5453;
+      const frac = x - Math.floor(x);
+      return 6 + Math.round(frac * 22);
+    });
+  }, [currentTrack?.id]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setPlayerPageOpen(false); };
     window.addEventListener("keydown", onKey);
@@ -53,19 +78,51 @@ export function PlayerPage() {
     handleSeek((clientX - r.left) / r.width);
   };
 
+  /** Drag starts only in the grabber/header band and never off a control. */
+  const startDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.target instanceof Element && e.target.closest("button, a, [role='button'], iframe, input")) return;
+    if (e.clientY - e.currentTarget.getBoundingClientRect().top > 110) return;
+    dragStartY.current = e.clientY;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setDrag({ active: true, y: 0 });
+  };
+  const moveDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (dragStartY.current == null) return;
+    setDrag({ active: true, y: Math.max(0, e.clientY - dragStartY.current) });
+  };
+  const endDrag = () => {
+    if (dragStartY.current == null) return;
+    const past = drag.y > 120;
+    dragStartY.current = null;
+    setDrag({ active: false, y: 0 });
+    if (past) setPlayerPageOpen(false);
+  };
+  const cancelDrag = () => {
+    dragStartY.current = null;
+    setDrag({ active: false, y: 0 });
+  };
+
   return (
-    <div className={`player-page${queueOpen ? " show-queue" : ""}`} style={{
+    <div className={`player-page${queueOpen ? " show-queue" : ""}`}
+      onPointerDown={startDrag}
+      onPointerMove={moveDrag}
+      onPointerUp={endDrag}
+      onPointerCancel={cancelDrag}
+      style={{
       position: "fixed", left: 12, right: 12, top: 12, bottom: 112,
       zIndex: 40, borderRadius: 18, border: `1px solid ${C.border}`,
       background: `linear-gradient(180deg, ${C.pane} 0%, ${C.bg} 130%)`,
       display: "flex", flexDirection: "column", overflow: "hidden",
       boxShadow: "0 24px 80px rgba(0,0,0,0.55)",
       animation: "fadeIn .18s ease",
+      transform: drag.y ? `translateY(${drag.y}px)` : undefined,
+      opacity: drag.y ? Math.max(0.6, 1 - drag.y / 520) : 1,
+      transition: drag.active ? "none" : "transform .26s cubic-bezier(.2,.8,.24,1), opacity .26s ease",
     }}>
-      {/* Grabber — the boards' drag handle; on mobile it signals pull-down */}
-      <div aria-hidden style={{ width: 46, height: 5, borderRadius: 3, background: C.border, margin: "9px auto 0", flexShrink: 0 }} />
+      {/* Grabber — the boards' drag handle; pulling it (or the header) down closes */}
+      <div aria-hidden style={{ width: 46, height: 5, borderRadius: 3, background: C.border, margin: "9px auto 0", flexShrink: 0, touchAction: "none" }} />
       {/* Header */}
-      <div className="player-page-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", flexShrink: 0 }}>
+      <div className="player-page-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", flexShrink: 0, touchAction: "none" }}>
         <button onClick={() => setPlayerPageOpen(false)} aria-label="Close full-screen player"
           style={{ width: 36, height: 36, borderRadius: "50%", background: C.surf, border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.text }}>
           <ChevronDown size={18} />
@@ -148,14 +205,32 @@ export function PlayerPage() {
             </button>
           </div>
 
-          {/* Seek — display + scrub only; no transport controls here */}
+          {/* Seek — waveform bars on compact, a clean progress line on desktop */}
           <div style={{ width: "100%", maxWidth: 560, display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ fontSize: 11.5, color: C.muted, width: 38, textAlign: "right", flexShrink: 0 }}>{fmtSec(elapsed)}</span>
-            <div ref={scrubRef}
-              onClick={e => seekFromEvent(e.clientX)}
-              style={{ flex: 1, height: 5, borderRadius: 3, background: C.border, cursor: "pointer", position: "relative" }}>
-              <div style={{ width: `${Math.min(progress, 1) * 100}%`, height: "100%", borderRadius: 3, background: C.accent, transition: "width .4s linear" }} />
-            </div>
+            {isCompact ? (
+              <div ref={scrubRef} onClick={e => seekFromEvent(e.clientX)}
+                role="slider" aria-label="Seek"
+                aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.min(progress, 1) * 100)}
+                style={{ flex: 1, minWidth: 0, height: 30, display: "flex", alignItems: "center", gap: 2, cursor: "pointer" }}>
+                {waveBars.map((h, i) => (
+                  <div key={i}
+                    style={{
+                      flex: 1, minWidth: 0, height: h, borderRadius: 2,
+                      background: (i + 1) / waveBars.length <= Math.min(progress, 1) ? C.accent : C.border,
+                      transition: "background .2s linear",
+                    }} />
+                ))}
+              </div>
+            ) : (
+              <div ref={scrubRef}
+                onClick={e => seekFromEvent(e.clientX)}
+                role="slider" aria-label="Seek"
+                aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.min(progress, 1) * 100)}
+                style={{ flex: 1, height: 5, borderRadius: 3, background: C.border, cursor: "pointer", position: "relative" }}>
+                <div style={{ width: `${Math.min(progress, 1) * 100}%`, height: "100%", borderRadius: 3, background: C.accent, transition: "width .4s linear" }} />
+              </div>
+            )}
             <span style={{ fontSize: 11.5, color: C.muted, width: 38, flexShrink: 0 }}>{total > 0 ? fmtSec(total) : "--:--"}</span>
           </div>
         </div>
