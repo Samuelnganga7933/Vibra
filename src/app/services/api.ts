@@ -9,7 +9,7 @@ import { safeJson } from "./safeFetch";
 
 const RAW_BASE: string =
   ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "").trim() ||
-  "https://lenium-music-api.onrender.com";
+  "https://music.vybra.streamvy.me";
 
 export const API_BASE = RAW_BASE.replace(/\/+$/, "");
 

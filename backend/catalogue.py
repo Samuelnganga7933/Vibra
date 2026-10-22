@@ -22,7 +22,7 @@ from typing import Any
 import httpx
 
 CATALOGUE_BASE = os.environ.get(
-    "CATALOGUE_BASE", "https://lenium-music-api.onrender.com"
+    "CATALOGUE_BASE", "https://music.vybra.streamvy.me"
 ).rstrip("/")
 
 # Raw search results are reused for a few minutes: the external engine answers
