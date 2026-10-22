@@ -11,7 +11,7 @@ import {
   AlertCircle, Copy, ListPlus, MinusCircle, PauseCircle, RotateCcw,
   HelpCircle, ChevronUp, Maximize2, CalendarDays, Mic, ListStart,
   Moon, Sun, Contrast, WifiOff, Lock,
-  Share2, Link2, MessageCircle, Send, Mail,
+  Share2, Link2, MessageCircle, Send, Mail, Trash2,
 } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import { ErrorBoundary, installRuntimeGuards } from "./components/ErrorBoundary";
@@ -62,7 +62,7 @@ import {
 import { loginUser, registerUser, logoutUser, passwordStrengthError } from "./services/auth";
 import { exchangeNeonSession, signOutNeon, clearOAuthQueryParams, hasOAuthVerifier } from "./services/neonAuth";
 import { resolveOnDevice } from "./services/deviceAudio";
-import { getLocalAudioUrl } from "./services/localAudio";
+import { getLocalAudioUrl, hasDownload, removeDownload, saveDownload } from "./services/localAudio";
 import { markBundleReady, checkForOtaUpdates, reloadIntoLatestBundle, isNativeApp } from "./services/ota";
 import {
   mediaInit, mediaSetNowPlaying, mediaSetState, mediaRelease,
@@ -1745,8 +1745,18 @@ function TrackOptionsSheet({ track, onClose }: { track: Track; onClose: () => vo
     openCreatePlaylist, uiState,
   } = useApp();
   const [view, setView] = useState<"root" | "playlists" | "share">("root");
+  const [downloaded, setDownloaded] = useState(false);
+  const [dlBusy, setDlBusy] = useState(false);
   const isLiked = likedTrackIds.has(track.id);
   const signedIn = uiState.signedIn;
+
+  // Real presence check — a legacy metadata-only "save" must not show as
+  // downloaded, and a file deleted in the Files app must not offer Remove.
+  useEffect(() => {
+    let cancelled = false;
+    void hasDownload(String(track.id)).then(v => { if (!cancelled) setDownloaded(v); });
+    return () => { cancelled = true; };
+  }, [track.id]);
 
   const shareLink = track.videoId ? `https://www.youtube.com/watch?v=${track.videoId}` : window.location.href;
   const shareText = `${track.title} — ${track.artist}`;
@@ -1788,7 +1798,40 @@ function TrackOptionsSheet({ track, onClose }: { track: Track; onClose: () => vo
     option(<ListPlus size={18} />, "Add to queue", () => { addToQueue(track); onClose(); }),
     option(<ListMusic size={18} />, "Add to playlist", () => setView("playlists")),
     option(<Heart size={18} fill={isLiked ? C.accent : "none"} />, isLiked ? "Remove from liked" : "Add to liked", () => { toggleLike(track.id); onClose(); }),
-    option(<Download size={18} />, "Download", () => { addOfflineTrack(toOfflineTrack(track)); onClose(); toast("Saved for offline playback"); }),
+    downloaded
+      ? option(<Trash2 size={18} />, "Remove download", () => {
+          const id = String(track.id);
+          onClose();
+          void removeDownload(id).then(() => {
+            setDownloaded(false);
+            toast("Download removed");
+          });
+        }, true)
+      : option(<Download size={18} />, dlBusy ? "Downloading…" : "Download", () => {
+          if (dlBusy) return;
+          setDlBusy(true);
+          const toastId = toast.loading(`Downloading “${track.title}”…`);
+          let lastShown = -1;
+          void saveDownload(toOfflineTrack(track), fraction => {
+            if (fraction == null) return;
+            const pct = Math.round(fraction * 100);
+            if (pct >= 100 || pct - lastShown >= 4) {
+              lastShown = pct;
+              toast.loading(`${pct}% — “${track.title}”`, { id: toastId });
+            }
+          }).then(outcome => {
+            setDlBusy(false);
+            if (outcome === "saved") {
+              setDownloaded(true);
+              toast.success("Saved to Documents/Vybra", { id: toastId });
+            } else if (outcome === "already") {
+              setDownloaded(true);
+              toast("Already downloaded", { id: toastId });
+            } else {
+              toast.error("Couldn't download — check your connection", { id: toastId });
+            }
+          });
+        }),
     option(<Compass size={18} />, `More from ${track.artist}`, () => { onClose(); navigate({ id: "search", q: track.artist }); }),
     option(<Share2 size={18} />, "Share track", () => {
       // Prefer the OS share sheet when the browser offers one.

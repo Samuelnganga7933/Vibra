@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { CloudOff, HardDrive, Play, RefreshCw, Trash2, X } from "lucide-react";
+import { CloudOff, Download, HardDrive, Play, RefreshCw, Trash2, X } from "lucide-react";
+import { toast } from "sonner";
 import { ImageWithFallback } from "../ui/ImageWithFallback";
 import { EmptyStateCard } from "../ui/EmptyStateCard";
 import { UiThemeContext, type UiColors } from "../ui/ui-theme";
 import {
-  clearOfflineTracks,
   mergeOfflineTracks,
   readOfflineTracks,
   unmarkOfflineCleared,
@@ -12,6 +12,7 @@ import {
   writeOfflineTracks,
   type OfflineTrack,
 } from "../../services/offlineStorage";
+import { hasDownload, removeAllDownloads, removeDownload, saveDownload } from "../../services/localAudio";
 
 export type { OfflineTrack };
 
@@ -59,6 +60,69 @@ export function DownloadsView({ tracks = [], onPlay, onSync, colors }: Downloads
 
   const items = useMemo(() => (cleared ? [] : mergeOfflineTracks(cached, tracks)), [cleared, cached, tracks]);
 
+  // ── Reality check ──────────────────────────────────────────────────────────
+  // Only files that actually exist count as downloads: legacy metadata-only
+  // rows get a real Download button instead of a pill that lies, and rows for
+  // genuine files get the green Offline marker plus a remove control.
+  const [offlineIds, setOfflineIds] = useState<ReadonlySet<string>>(new Set());
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const verified = new Set<string>();
+      for (const t of items) {
+        const id = String(t.id);
+        if (await hasDownload(id)) verified.add(id);
+        if (cancelled) return;
+      }
+      if (!cancelled) setOfflineIds(verified);
+    })();
+    return () => { cancelled = true; };
+  }, [items]);
+
+  const downloadOne = useCallback(async (t: OfflineTrack) => {
+    const id = String(t.id);
+    if (busyId) return;
+    setBusyId(id);
+    let lastShown = -1;
+    const toastId = toast.loading(`Downloading “${t.title}”…`);
+    try {
+      const outcome = await saveDownload(
+        { id: t.id, title: t.title, artist: t.artist, duration: t.duration, bg: t.bg, imageUrl: t.imageUrl },
+        fraction => {
+          if (fraction == null) return;
+          const pct = Math.round(fraction * 100);
+          if (pct >= 100 || pct - lastShown >= 4) {
+            lastShown = pct;
+            toast.loading(`${pct}% — “${t.title}”`, { id: toastId });
+          }
+        },
+      );
+      if (outcome === "saved") {
+        setOfflineIds(prev => new Set(prev).add(id));
+        setCached(readOfflineTracks());
+        toast.success("Saved to Documents/Vybra", { id: toastId });
+      } else if (outcome === "already") {
+        setOfflineIds(prev => new Set(prev).add(id));
+        setCached(readOfflineTracks());
+        toast("Already downloaded", { id: toastId });
+      } else {
+        toast.error("Couldn't download this track", { id: toastId });
+      }
+    } finally {
+      setBusyId(null);
+    }
+  }, [busyId]);
+
+  const removeOne = useCallback(async (t: OfflineTrack) => {
+    const id = String(t.id);
+    await removeDownload(id);
+    setOfflineIds(prev => { const next = new Set(prev); next.delete(id); return next; });
+    setCached(readOfflineTracks());
+    toast("Download removed");
+  }, []);
+
   const handleSync = useCallback(() => {
     const merged = mergeOfflineTracks(cached, tracks);
     setCached(merged);
@@ -69,8 +133,9 @@ export function DownloadsView({ tracks = [], onPlay, onSync, colors }: Downloads
   }, [cached, tracks, onSync]);
 
   const handleClear = useCallback(() => {
-    clearOfflineTracks();
+    void removeAllDownloads();
     setCached([]);
+    setOfflineIds(new Set());
     setCleared(true);
     setConfirming(false);
   }, []);
@@ -220,20 +285,68 @@ export function DownloadsView({ tracks = [], onPlay, onSync, colors }: Downloads
                 </div>
               </div>
               <span style={{ fontSize: 12, color: C.muted, flexShrink: 0 }}>{t.duration}</span>
-              <span
-                title="Available offline"
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 5,
-                  fontSize: 11,
-                  fontWeight: 700,
-                  color: "#34C759",
-                  flexShrink: 0,
-                }}
-              >
-                <CloudOff size={12} aria-hidden /> Offline
-              </span>
+              {offlineIds.has(String(t.id)) ? (
+                <span
+                  title="Available offline"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 5,
+                    fontSize: 11,
+                    fontWeight: 700,
+                    color: "#34C759",
+                    flexShrink: 0,
+                  }}
+                >
+                  <CloudOff size={12} aria-hidden /> Offline
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  aria-label={`Download ${t.title}`}
+                  disabled={busyId === String(t.id)}
+                  onClick={() => void downloadOne(t)}
+                  style={{
+                    width: 30,
+                    height: 30,
+                    borderRadius: 8,
+                    border: `1px solid ${C.border}`,
+                    background: busyId === String(t.id) ? C.surf : "transparent",
+                    color: busyId === String(t.id) ? C.accent : C.muted,
+                    display: "grid",
+                    placeItems: "center",
+                    cursor: busyId ? "default" : "pointer",
+                    flexShrink: 0,
+                  }}
+                >
+                  <Download
+                    size={14}
+                    aria-hidden
+                    className={busyId === String(t.id) ? "animate-spin" : undefined}
+                  />
+                </button>
+              )}
+              {offlineIds.has(String(t.id)) && (
+                <button
+                  type="button"
+                  aria-label={`Remove download of ${t.title}`}
+                  onClick={() => void removeOne(t)}
+                  style={{
+                    width: 28,
+                    height: 28,
+                    borderRadius: 8,
+                    border: "none",
+                    background: "transparent",
+                    color: C.muted,
+                    display: "grid",
+                    placeItems: "center",
+                    cursor: "pointer",
+                    flexShrink: 0,
+                  }}
+                >
+                  <Trash2 size={13} aria-hidden />
+                </button>
+              )}
               <span
                 aria-hidden
                 style={{ fontSize: 12, color: C.muted, width: 18, textAlign: "right" }}
