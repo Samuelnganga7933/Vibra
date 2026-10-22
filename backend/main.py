@@ -26,9 +26,11 @@ import httpx
 import jwt
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse, StreamingResponse
 from sqlalchemy import distinct, func, select, text
 from sqlalchemy.orm import Session
 
+from audio_source import engine_stream_url, resolve_audio_url
 from catalogue import search_catalogue
 from database import Base, SessionLocal, engine, get_db
 from market import market_label, market_queries, merged_catalogue, region_query, scene_queries
@@ -1569,3 +1571,70 @@ def set_history_pause(payload: HistoryPauseIn, user: User = Depends(get_token_us
     db.add(user)
     db.commit()
     return Response(status_code=204)
+
+
+# ── Audio ──────────────────────────────────────────────────────────────────────
+
+
+@app.get("/api/audio/{video_id}")
+def stream_audio(video_id: str, request: Request, proxy: int = 0):
+    """Direct audio for one track.
+
+    Playback (default): 302 to a real audio URL — `<audio>` follows redirects
+    cross-origin for free, so no CORS and no bandwidth through this function.
+
+    Downloads (`?proxy=1`): stream the bytes back ourselves, because
+    googlevideo only sends `Access-Control-Allow-Origin` to youtube.com and a
+    browser fetch would otherwise be blocked. Range requests pass through so
+    resume/partial fetches keep working.
+    """
+    resolved = resolve_audio_url(video_id)
+    if resolved is None:
+        if proxy:
+            # Only verified audio may be saved — never store an error body.
+            raise HTTPException(status_code=502, detail="No playable audio source for this track")
+        # Playback: let <audio> follow Lenium; if it errors the player falls
+        # back to the IFrame engine exactly as before.
+        return RedirectResponse(engine_stream_url(video_id), status_code=302)
+    url, mime = resolved
+    if not proxy:
+        return RedirectResponse(url, status_code=302)
+
+    upstream_headers = {}
+    range_header = request.headers.get("range")
+    if range_header:
+        upstream_headers["Range"] = range_header
+
+    context = httpx.stream(
+        "GET",
+        url,
+        headers=upstream_headers,
+        timeout=httpx.Timeout(30.0, connect=10.0),
+        follow_redirects=True,
+    )
+    upstream = context.__enter__()
+
+    def body():
+        try:
+            for chunk in upstream.iter_bytes(chunk_size=65536):
+                if chunk:
+                    yield chunk
+        finally:
+            context.__exit__(None, None, None)
+
+    out_headers = {}
+    content_type = upstream.headers.get("content-type", "")
+    if not content_type.startswith("audio/"):
+        context.__exit__(None, None, None)
+        raise HTTPException(status_code=502, detail="Upstream did not return audio")
+    out_headers["Accept-Ranges"] = "bytes"
+    for name in ("content-length", "content-range", "etag", "last-modified"):
+        value = upstream.headers.get(name)
+        if value:
+            out_headers[name] = value
+    return StreamingResponse(
+        body(),
+        status_code=upstream.status_code if upstream.status_code in (200, 206) else 200,
+        media_type=content_type,
+        headers=out_headers,
+    )

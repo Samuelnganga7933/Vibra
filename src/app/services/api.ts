@@ -6,6 +6,7 @@
  */
 
 import { safeJson } from "./safeFetch";
+import { BFF_BASE } from "./bff";
 
 const RAW_BASE: string =
   ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "").trim() ||
@@ -196,14 +197,25 @@ export async function fetchRadioQueue(opts: { seed?: string; artist?: string; li
   return out;
 }
 
-/** Direct HTML5 audio stream URL for a track's video id. */
+/**
+ * Stream URL for `<audio>`. Resolved by the BFF (YouTube innertube ANDROID
+ * client — real bytes, no bot wall, survives screen lock). Playback follows
+ * the BFF's 302 to googlevideo, which media elements handle without CORS.
+ * Falls back to the Lenium engine only when the BFF is unconfigured.
+ */
 export function getStreamUrl(videoId: string): string {
-  return `${API_BASE}/api/v1/tracks/stream/${encodeURIComponent(String(videoId))}`;
+  const id = encodeURIComponent(String(videoId));
+  return BFF_BASE ? `${BFF_BASE}/api/audio/${id}` : `${API_BASE}/api/v1/tracks/stream/${id}`;
 }
 
-/** Direct download URL for a track's video id. */
+/**
+ * Download URL: same resolution, `proxy=1` streams bytes back through the BFF
+ * (googlevideo sends no CORS header to our origin, so a plain fetch would be
+ * blocked).
+ */
 export function getDownloadUrl(videoId: string): string {
-  return `${API_BASE}/api/v1/tracks/download/${encodeURIComponent(String(videoId))}`;
+  const id = encodeURIComponent(String(videoId));
+  return BFF_BASE ? `${BFF_BASE}/api/audio/${id}?proxy=1` : `${API_BASE}/api/v1/tracks/download/${id}`;
 }
 
 // ─── LRC parsing ──────────────────────────────────────────────────────────────
