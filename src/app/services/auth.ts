@@ -94,7 +94,12 @@ export async function loginUser(input: {
 }
 
 export async function logoutUser(): Promise<void> {
-  await bffSend("/auth/logout", { method: "POST" });
+  // Tell the server first (bffSend attaches the token), but never let a
+  // failed request skip the local clear — an offline logout used to leave the
+  // session alive, so the next launch bounced straight back in.
+  try {
+    await bffSend("/auth/logout", { method: "POST" });
+  } catch { /* offline — the server-side session dies on its own expiry */ }
   setSessionToken(null);
   // Explicit sign-out: the cached profile must not resurrect as a
   // "Local profile" half-state on the next load (the gate owns that state).

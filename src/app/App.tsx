@@ -48,7 +48,7 @@ import {
   fetchRadioQueue,
   fetchLyrics as fetchLyricsFromApi,
 } from "./services/api";
-import { bffJson, BFF_BASE, isSignedIn, onSessionExpired } from "./services/bff";
+import { bffJson, BFF_BASE, isSignedIn, onSessionExpired, markSignedOut, hasSignedOutMarker } from "./services/bff";
 import { sendEvent, isHistoryPaused, setHistoryPaused as persistHistoryPaused } from "./services/events";
 import { sanitizeMusicItems } from "./services/smartQueue";
 import { fetchHome, readCachedShelves, writeCachedShelves, shelfRank, type HomeShelf, type HomeItem } from "./services/home";
@@ -2914,7 +2914,12 @@ export default function App() {
       // in (that shadowing is what used to destroy the verifier and bounce
       // sign-ins back to the gate). The exchange reads the verifier from the
       // URL, so only strip it after.
-      if (hasOAuthVerifier() || !isSignedIn()) {
+      //
+      // Without a verifier, the silent exchange is skipped right after an
+      // explicit sign-out: the WebView's Neon Auth cookie survives logout and
+      // would re-mint a Vibra token — the "signed out, but it stays forever"
+      // bug on the APK. Any real sign-in clears that marker.
+      if (hasOAuthVerifier() || (!isSignedIn() && !hasSignedOutMarker())) {
         await exchangeNeonSession();
       }
       clearOAuthQueryParams();
@@ -3743,9 +3748,13 @@ export default function App() {
   }, [applySessionUser]);
 
   const logout = useCallback(async (reason?: "idle") => {
+    // Intent first: even if the network clear below never completes, the
+    // bootstrap must not resurrect the session from the auth cookie.
+    markSignedOut();
     await logoutUser();
     await signOutNeon();
     setUser(null);
+    clearUserProfile();
     setAuthVersion(v => v + 1);
     toast(reason === "idle"
       ? "Signed out — you were inactive for 30 minutes"

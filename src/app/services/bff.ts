@@ -21,6 +21,13 @@ export const BFF_BASE = RAW_BFF.replace(/\/+$/, "");
 
 // ─── Session ──────────────────────────────────────────────────────────────────
 const TOKEN_KEY = "vibra_session_token";
+/**
+ * Set on explicit sign-out, cleared by the next successful sign-in. The
+ * WebView's Neon Auth cookie outlives the app's token, so without this marker
+ * the bootstrap's silent cookie exchange re-minted a session and signing out
+ * never stuck on the APK.
+ */
+const SIGNED_OUT_KEY = "vibra_signed_out";
 
 export function getSessionToken(): string | null {
   try {
@@ -32,10 +39,32 @@ export function getSessionToken(): string | null {
 
 export function setSessionToken(token: string | null): void {
   try {
-    if (token) window.localStorage.setItem(TOKEN_KEY, token);
-    else window.localStorage.removeItem(TOKEN_KEY);
+    if (token) {
+      window.localStorage.setItem(TOKEN_KEY, token);
+      // Any live token means a real sign-in happened — lift the sign-out
+      // marker (login, register and the OAuth exchange all land here).
+      window.localStorage.removeItem(SIGNED_OUT_KEY);
+    } else {
+      window.localStorage.removeItem(TOKEN_KEY);
+    }
   } catch {
     /* storage blocked — in-memory session only */
+  }
+}
+
+/** Records the user's intent to sign out before any network call can fail. */
+export function markSignedOut(): void {
+  try {
+    window.localStorage.setItem(SIGNED_OUT_KEY, "1");
+  } catch { /* storage blocked — nothing to resurrect anyway */ }
+}
+
+/** True until the next successful sign-in — bootstrap skips the cookie exchange. */
+export function hasSignedOutMarker(): boolean {
+  try {
+    return window.localStorage.getItem(SIGNED_OUT_KEY) === "1";
+  } catch {
+    return false;
   }
 }
 
