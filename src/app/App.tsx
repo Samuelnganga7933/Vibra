@@ -3753,7 +3753,7 @@ export default function App() {
     return null;
   }, [applySessionUser]);
 
-  const logout = useCallback(async (reason?: "idle") => {
+  const logout = useCallback(async () => {
     // Intent first: even if the network clear below never completes, the
     // bootstrap must not resurrect the session from the auth cookie.
     markSignedOut();
@@ -3762,9 +3762,7 @@ export default function App() {
     setUser(null);
     clearUserProfile();
     setAuthVersion(v => v + 1);
-    toast(reason === "idle"
-      ? "Signed out — you were inactive for 30 minutes"
-      : "Signed out");
+    toast("Signed out");
   }, []);
 
   // ── Home feedback & privacy ───────────────────────────────────────────────────
@@ -3797,14 +3795,43 @@ export default function App() {
   // failures or an active request timeout (see services/safeFetch.ts).
   useEffect(() => startConnectionMonitor(BFF_BASE), []);
 
-  // Dead session (rotated/expired token) — drop to signed-out with a clear message.
+  // Dead session (rotated/expired token) — silently mint a fresh one from the
+  // Neon cookie first; signing out is the last resort, never the reflex. The
+  // BFF rotates session_token on every login, so a second sign-in elsewhere
+  // used to 401 this device even though its own auth session was fine.
+  const recoveringSessionRef = useRef(false);
   useEffect(() => onSessionExpired(() => {
-    // The server said this token is dead: drop the cached profile too, so the
-    // bootstrap fallback can't mask the gate with a stale "Local profile".
-    clearUserProfile();
-    setUser(null);
-    setAuthVersion(v => v + 1);
-    toast("Your session expired — sign in again");
+    const endSignedOut = () => {
+      // The server said this token is dead: drop the cached profile too, so the
+      // bootstrap fallback can't mask the gate with a stale "Local profile".
+      clearUserProfile();
+      setUser(null);
+      setAuthVersion(v => v + 1);
+      toast("Your session expired — sign in again");
+    };
+    // Explicit sign-out stays signed out; a recovery that itself gets a 401
+    // must not re-enter (that would loop).
+    if (hasSignedOutMarker() || recoveringSessionRef.current) {
+      endSignedOut();
+      return;
+    }
+    recoveringSessionRef.current = true;
+    void (async () => {
+      try {
+        const minted = await exchangeNeonSession();
+        const fresh = minted ? await api<User>("/auth/me") : null;
+        if (fresh) {
+          applySessionUser(fresh);
+          setAuthVersion(v => v + 1);
+          return;
+        }
+        endSignedOut();
+      } catch {
+        endSignedOut();
+      } finally {
+        recoveringSessionRef.current = false;
+      }
+    })();
   }), []);
 
   // ── uiState — the single derivation every conditional render reads ────────────
@@ -3821,26 +3848,11 @@ export default function App() {
        recentTracks.length, history.length, isPlaying, devices.length,
        lyrics.length, plainLyrics]);
 
-  // ── Inactivity logout ────────────────────────────────────────────────────────
-  // 30 minutes with no pointer/keyboard/touch input signs the user out.
-  // Playback counts as presence — nobody gets signed out mid-song.
-  const lastActivityRef = useRef(Date.now());
-  useEffect(() => {
-    if (!uiState.signedIn) return;
-    lastActivityRef.current = Date.now();
-    const markActive = () => { lastActivityRef.current = Date.now(); };
-    const events: (keyof WindowEventMap)[] = ["pointerdown", "keydown", "wheel", "touchstart"];
-    events.forEach(ev => window.addEventListener(ev, markActive, { passive: true }));
-    const timer = window.setInterval(() => {
-      if (Date.now() - lastActivityRef.current >= 30 * 60 * 1000 && !isPlaying) {
-        void logout("idle");
-      }
-    }, 60 * 1000);
-    return () => {
-      events.forEach(ev => window.removeEventListener(ev, markActive));
-      window.clearInterval(timer);
-    };
-  }, [uiState.signedIn, isPlaying, logout]);
+  // ── Inactivity ───────────────────────────────────────────────────────────────
+  // Sessions used to auto-logout after 30 idle minutes — on the APK that fired
+  // while the phone was locked or the app was closed, and people came back to
+  // a sign-in gate. A music app never signs you out on its own now: only the
+  // explicit Sign out button does (and it still sticks).
 
   // ── Leaving the app stops the sound — nothing plays over the gate ────────────
   useEffect(() => {
