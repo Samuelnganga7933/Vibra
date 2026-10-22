@@ -15,7 +15,7 @@ const RAW_BFF: string =
   ((import.meta.env.VITE_BFF_BASE_URL as string | undefined) ?? "").trim() ||
   (import.meta.env.DEV
     ? "http://localhost:8000"
-    : "https://backend-des-vybra.onrender.com");
+    : "https://bff.vybra.streamvy.me");
 
 export const BFF_BASE = RAW_BFF.replace(/\/+$/, "");
 
