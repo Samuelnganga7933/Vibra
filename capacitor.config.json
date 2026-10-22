@@ -8,6 +8,7 @@
     "hostname": "vybra.streamvy.me",
     "allowNavigation": [
       "vybra.streamvy.me",
+      "bff.vybra.streamvy.me",
       "*.google.com",
       "*.googleapis.com",
       "music.vybra.streamvy.me",

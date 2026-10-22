@@ -16,6 +16,7 @@ import secrets
 import re
 import threading
 import time
+import urllib.parse
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
@@ -26,7 +27,7 @@ import httpx
 import jwt
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from sqlalchemy import distinct, func, select, text
 from sqlalchemy.orm import Session
 
@@ -489,6 +490,41 @@ def logout(response: Response, user: User = Depends(get_token_user), db: Session
     return response
 
 
+def _identity_user(
+    db: Session,
+    email: str,
+    name: str,
+    avatar_url: Optional[str] = None,
+) -> User:
+    """Find-or-create an identity-provider user and mint a fresh Vibra session.
+
+    Shared by the Neon and Google exchanges: same email always lands on the
+    same Vibra account (a password account keeps its password).
+    """
+    user = db.scalar(select(User).where(User.email == email))
+    if user is None:
+        username_base = email.split("@")[0].replace(".", "")[:40] or "listener"
+        username = username_base
+        if db.scalar(select(User).where(User.username == username)) is not None:
+            username = f"{username_base}{secrets.token_hex(2)}"
+        user = User(
+            name=name,
+            email=email,
+            username=username,
+            initials=_initials(name),
+        )
+    else:
+        # Keep the profile fresh from the identity provider on every sign-in.
+        user.name = name
+    if avatar_url:
+        user.avatar_url = avatar_url[:512]
+    user.session_token = secrets.token_hex(24)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
 @app.post("/auth/neon", response_model=AuthOut)
 def auth_neon(
     payload: NeonSessionIn,
@@ -543,31 +579,171 @@ def auth_neon(
         raise HTTPException(status_code=401, detail="Neon Auth session is invalid or expired")
 
     name = str(claims.get("name") or "").strip() or email.split("@")[0][:60]
-    user = db.scalar(select(User).where(User.email == email))
-    if user is None:
-        username_base = email.split("@")[0].replace(".", "")[:40] or "listener"
-        username = username_base
-        if db.scalar(select(User).where(User.username == username)) is not None:
-            username = f"{username_base}{secrets.token_hex(2)}"
-        user = User(
-            name=name,
-            email=email,
-            username=username,
-            initials=_initials(name),
-        )
-    else:
-        # Keep the profile fresh from the identity provider on every sign-in.
-        user.name = name
-    user.session_token = secrets.token_hex(24)
-    db.add(user)
-    db.commit()
-    db.refresh(user)
+    picture = str(claims.get("picture") or "").strip() or None
+    user = _identity_user(db, email, name, picture)
     _set_session_cookie(response, user.session_token or "")
     return AuthOut(token=user.session_token or "", user=UserOut(
         id=user.id, name=user.name, email=user.email, username=user.username,
         initials=user.initials, avatar_url=user.avatar_url,
         subscription=user.subscription,  # type: ignore[arg-type]
     ))
+
+
+# ── Google sign-in (our own OAuth client — Vybra owns the consent screen) ──────
+# The Neon proxy made the whole dance live on neon.tech: the address bar and
+# Google's consent screen both said "neon.tech". With GOOGLE_CLIENT_ID /
+# GOOGLE_CLIENT_SECRET registered under *our* Google Cloud project, the flow
+# runs app → accounts.google.com → bff.vybra.streamvy.me → app, and the
+# consent screen says Vibra. Without credentials the client falls back to Neon.
+
+_GOOGLE_AUTHORIZE = "https://accounts.google.com/o/oauth2/v2/auth"
+_GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
+_DEFAULT_RETURN = "https://vybra.streamvy.me"
+
+
+def _google_credentials() -> tuple[str, str]:
+    return (
+        (os.getenv("GOOGLE_CLIENT_ID") or "").strip(),
+        (os.getenv("GOOGLE_CLIENT_SECRET") or "").strip(),
+    )
+
+
+def _allowed_return_origins() -> set[str]:
+    raw = os.getenv(
+        "AUTH_RETURN_ALLOW",
+        "https://vybra.streamvy.me,http://localhost:5173,http://localhost,https://localhost",
+    )
+    out: set[str] = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            p = urllib.parse.urlsplit(part)
+            if p.scheme and p.netloc:
+                out.add(f"{p.scheme}://{p.netloc}")
+        except ValueError:
+            continue
+    return out or {_DEFAULT_RETURN}
+
+
+def _safe_return(raw: Optional[str]) -> str:
+    """Allowlisted app URL to bounce back to — never an open redirect."""
+    if raw:
+        try:
+            p = urllib.parse.urlsplit(raw)
+            if f"{p.scheme}://{p.netloc}" in _allowed_return_origins():
+                return urllib.parse.urlunsplit((p.scheme, p.netloc, p.path or "/", "", ""))
+        except ValueError:
+            pass
+    return _DEFAULT_RETURN
+
+
+@app.get("/auth/capabilities")
+def auth_capabilities():
+    """What the client should offer on the sign-in screen."""
+    cid, secret = _google_credentials()
+    return {"google": bool(cid and secret)}
+
+
+@app.get("/auth/google/start")
+def google_start(
+    request: Request,
+    app: Optional[str] = None,
+    _limit: None = Depends(_auth_rate_limit("google-start", 30, 5 * 60)),
+):
+    cid, secret = _google_credentials()
+    if not cid or not secret:
+        raise HTTPException(status_code=503, detail="Google sign-in is not configured")
+    return_to = _safe_return(app)
+    state = secrets.token_urlsafe(24)
+    redirect_uri = (os.getenv("GOOGLE_REDIRECT_URI") or "").strip() or str(
+        request.url_for("google_callback")
+    )
+    params = urllib.parse.urlencode({
+        "client_id": cid,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        # Always let people pick the account — switching Google accounts
+        # mid-session is the common case on a shared phone.
+        "prompt": "select_account",
+    })
+    response = RedirectResponse(f"{_GOOGLE_AUTHORIZE}?{params}", status_code=302)
+    response.set_cookie(
+        "vibra_gstate",
+        f"{state}|{urllib.parse.quote(return_to, safe='')}",
+        max_age=600,
+        httponly=True,
+        samesite="lax",
+        secure=request.url.scheme == "https",
+        path="/",
+    )
+    return response
+
+
+@app.get("/auth/google/callback")
+def google_callback(
+    request: Request,
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    error: Optional[str] = None,
+    db: Session = Depends(get_db),
+    _limit: None = Depends(_auth_rate_limit("google-callback", 30, 5 * 60)),
+):
+    gstate = request.cookies.get("vibra_gstate") or ""
+    stored_state, _, stored_return = gstate.partition("|")
+    return_to = _safe_return(urllib.parse.unquote(stored_return) if stored_return else None)
+    if error or not code:
+        return PlainTextResponse(
+            "Google sign-in was cancelled or failed. Go back and try again.",
+            status_code=200,
+        )
+    if not stored_state or not state or not secrets.compare_digest(stored_state, state):
+        return PlainTextResponse("Sign-in state mismatch. Go back and try again.", status_code=403)
+
+    cid, secret = _google_credentials()
+    redirect_uri = (os.getenv("GOOGLE_REDIRECT_URI") or "").strip() or str(
+        request.url_for("google_callback")
+    )
+    try:
+        token_response = httpx.post(
+            _GOOGLE_TOKEN,
+            data={
+                "code": code,
+                "client_id": cid,
+                "client_secret": secret,
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
+            },
+            timeout=15.0,
+        )
+        token_response.raise_for_status()
+        id_token = (token_response.json() or {}).get("id_token")
+        if not id_token:
+            raise ValueError("Google returned no id_token")
+        # Received directly from Google's token endpoint over TLS — decode the
+        # claims without a second JWKS round-trip.
+        claims = jwt.decode(id_token, options={"verify_signature": False})
+    except Exception:
+        return PlainTextResponse(
+            "Google sign-in could not be verified. Go back and try again.",
+            status_code=502,
+        )
+
+    email = str(claims.get("email") or "").strip().lower()
+    verified = claims.get("email_verified")
+    if not email or verified not in (True, "true", "1", 1):
+        return PlainTextResponse("That Google account's email is not verified.", status_code=403)
+    name = str(claims.get("name") or "").strip() or email.split("@")[0][:60]
+    picture = str(claims.get("picture") or "").strip() or None
+    user = _identity_user(db, email, name, picture)
+    # One hop back into the app with the bearer in the fragment (fragments
+    # never reach a server log); the SPA consumes it before React boots.
+    response = RedirectResponse(f"{return_to}#vibra_token={user.session_token}", status_code=302)
+    response.delete_cookie("vibra_gstate", path="/")
+    return response
 
 
 def _playlist_track_out(row: PlaylistTrack) -> PlaylistTrackOut:

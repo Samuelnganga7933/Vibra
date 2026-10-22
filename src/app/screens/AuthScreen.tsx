@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { AlertCircle, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { useApp } from "../context";
-import { signInWithGoogle } from "../services/neonAuth";
+import { signInWithGoogle, googleAuthConfigured, startGoogleAuth } from "../services/neonAuth";
 import { BFF_BASE } from "../services/bff";
 import { safeFetch } from "../services/safeFetch";
 
@@ -23,6 +23,8 @@ export function AuthScreen({ mode: initialMode }: { mode: "login" | "signup" }) 
   const [reveal, setReveal] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Own Google client at the BFF (Vybra-branded) vs. the Neon proxy fallback.
+  const [ownGoogle, setOwnGoogle] = useState(false);
 
   const isSignup = mode === "signup";
   const canSubmit =
@@ -35,6 +37,7 @@ export function AuthScreen({ mode: initialMode }: { mode: "login" | "signup" }) 
   // instead of burning the submit's timeout on it. Quiet — no status flips.
   useEffect(() => {
     if (BFF_BASE) void safeFetch(`${BFF_BASE}/health`, { quiet: true, timeoutMs: 30_000 });
+    void googleAuthConfigured().then(setOwnGoogle).catch(() => {});
   }, []);
 
   const switchMode = () => {
@@ -79,7 +82,18 @@ export function AuthScreen({ mode: initialMode }: { mode: "login" | "signup" }) 
     if (busy) return;
     setBusy(true);
     setError(null);
-    // Redirects the browser to Google → Neon Auth → back to the app; the
+    if (ownGoogle) {
+      // Our client, our domain: BFF → Google → back with #vibra_token.
+      // The bootstrap consumes the handoff; no neon.tech anywhere.
+      try {
+        startGoogleAuth();
+      } catch {
+        setBusy(false);
+        setError("Couldn't start Google sign-in. Try again.");
+      }
+      return;
+    }
+    // Legacy path: Neon Auth proxy handles Google → back to the app, then the
     // App bootstrap exchanges the Better Auth session for a Vibra session.
     const failure = await signInWithGoogle();
     if (failure) {

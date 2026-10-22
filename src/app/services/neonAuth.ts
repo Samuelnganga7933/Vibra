@@ -13,7 +13,7 @@
  * then is it safe to strip from the address bar.
  */
 
-import { bffJson, setSessionToken } from "./bff";
+import { bffJson, setSessionToken, BFF_BASE } from "./bff";
 import type { SessionUser } from "./auth";
 
 const NEON_AUTH_URL: string =
@@ -99,8 +99,31 @@ interface AuthResponse {
   user?: SessionUser;
 }
 
-/** Kick off Google OAuth. Redirects the browser away on success. */
-export async function signInWithGoogle(): Promise<string | null> {
+/**
+ * True when the BFF serves our own Google OAuth client — the flow then runs
+ * app → accounts.google.com → bff.vybra.streamvy.me → app, and Google's
+ * consent screen says Vibra instead of neon.tech. Falls back to the Neon
+ * proxy when the backend has no credentials configured.
+ */
+export async function googleAuthConfigured(): Promise<boolean> {
+  if (!BFF_BASE) return false;
+  try {
+    const caps = await bffJson<{ google?: boolean }>("/auth/capabilities");
+    return !!caps?.google;
+  } catch {
+    return false;
+  }
+}
+
+/** Full-page hop into the BFF's own Google flow; return leg = #vibra_token. */
+export function startGoogleAuth(): void {
+  const app = window.location.origin;
+  window.location.assign(
+    `${BFF_BASE}/auth/google/start?app=${encodeURIComponent(app)}`,
+  );
+}
+
+/** Kick off Google OAuth. Redirects the browser away on success. */export async function signInWithGoogle(): Promise<string | null> {
   const auth = await getClient();
   if (!auth) return "Google sign-in isn't configured on this branch.";
   try {

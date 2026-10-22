@@ -59,6 +59,41 @@ export function markSignedOut(): void {
   } catch { /* storage blocked — nothing to resurrect anyway */ }
 }
 
+/**
+ * One-time Google OAuth handoff (`#vibra_token=…`, `?vibra_token=…`).
+ * The BFF bounces straight back here after Google confirms; the bearer is
+ * moved into storage and scrubbed from the URL *before React boots* — the
+ * hash belongs to the router, so a stray `vibra_token` must never survive
+ * into routing.
+ */
+function consumeAuthHandoff(): void {
+  try {
+    const url = new URL(window.location.href);
+    let token: string | null = null;
+    if (url.hash.includes("vibra_token=")) {
+      const params = new URLSearchParams(url.hash.replace(/^#\/?/, ""));
+      token = params.get("vibra_token");
+      params.delete("vibra_token");
+      const rest = params.toString();
+      url.hash = rest ? `#${rest}` : "";
+    }
+    if (!token) {
+      token = url.searchParams.get("vibra_token");
+      url.searchParams.delete("vibra_token");
+    }
+    if (!token) return;
+    setSessionToken(token);
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+  } catch {
+    /* never block boot on a cosmetic URL cleanup */
+  }
+}
+consumeAuthHandoff();
+
 /** True until the next successful sign-in — bootstrap skips the cookie exchange. */
 export function hasSignedOutMarker(): boolean {
   try {
