@@ -16,6 +16,10 @@ export interface OfflineTrack {
   imageUrl?: string;
   previewUrl?: string;
   streamUrl?: string;
+  /** Relative path of the real file on the phone (native downloads only). */
+  filePath?: string;
+  /** Filesystem directory value the file lives in ("music", "data", …). */
+  fileDir?: string;
 }
 
 function isTrack(value: unknown): value is OfflineTrack {

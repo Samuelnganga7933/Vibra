@@ -61,6 +61,8 @@ import {
 } from "./services/devices";
 import { loginUser, registerUser, logoutUser, passwordStrengthError } from "./services/auth";
 import { exchangeNeonSession, signOutNeon, clearOAuthQueryParams, hasOAuthVerifier } from "./services/neonAuth";
+import { resolveOnDevice } from "./services/deviceAudio";
+import { getLocalAudioUrl } from "./services/localAudio";
 import { markBundleReady, checkForOtaUpdates, reloadIntoLatestBundle, isNativeApp } from "./services/ota";
 import {
   mediaInit, mediaSetNowPlaying, mediaSetState, mediaRelease,
@@ -3177,44 +3179,57 @@ export default function App() {
 
     audioRef.current?.pause();
 
-    const url = audioUrlFor(t);
-    if (!url) { void startYouTube(); return; }
+    // Best source wins: a saved copy (offline-proof, wall-proof), then the
+    // phone's own IP via innertube (the BFF's serverless IP is bot-walled),
+    // then the BFF chain, and only then the IFrame fallback.
+    void (async () => {
+      const local = await getLocalAudioUrl(String(t.id));
+      if (playSessionRef.current !== session) return;
+      let url = local ?? undefined;
+      if (!url) {
+        const videoId = t.videoId ?? (typeof t.id === "string" && t.id ? t.id : undefined);
+        if (videoId) url = (await resolveOnDevice(videoId))?.url;
+      }
+      if (playSessionRef.current !== session) return;
+      url = url ?? audioUrlFor(t);
+      if (!url) { void startYouTube(); return; }
 
-    const a = new Audio(url);
-    a.volume = volume;
-    let streamFailed = false;
-    let everPlayed = false;
-    const fallBackToYouTube = () => {
-      if (streamFailed) return;
-      streamFailed = true;
-      clearTimeout(watchdog);
-      a.pause();
-      if (playSessionRef.current === session) void startYouTube();
-    };
-    a.addEventListener("error", fallBackToYouTube);
-    a.addEventListener("playing", () => {
-      everPlayed = true;
-      clearTimeout(watchdog);
-      if (streamFailed || playSessionRef.current !== session) return;
-      setIsPlaying(true);
-      // First audible frame: labels are now requestable, report real output.
-      void refreshOutput();
-    });
-    a.addEventListener("ended", () => {
-      if (playSessionRef.current === session) handleTrackEndRef.current();
-    });
-    audioRef.current = a;
-    registerSinkElement(a);
-    // Watchdog: if the stream neither errors nor actually plays within 5s
-    // (the backend sometimes answers 200 with an empty body), switch engines.
-    const watchdog = window.setTimeout(() => {
-      if (!streamFailed && !everPlayed) fallBackToYouTube();
-    }, 5000);
-    a.play().catch((err: unknown) => {
-      const failure = failureFromError(err);
-      if (failure.kind === "blocked") { fail(failure); return; }
-      fallBackToYouTube();
-    });
+      const a = new Audio(url);
+      a.volume = volume;
+      let streamFailed = false;
+      let everPlayed = false;
+      const fallBackToYouTube = () => {
+        if (streamFailed) return;
+        streamFailed = true;
+        clearTimeout(watchdog);
+        a.pause();
+        if (playSessionRef.current === session) void startYouTube();
+      };
+      a.addEventListener("error", fallBackToYouTube);
+      a.addEventListener("playing", () => {
+        everPlayed = true;
+        clearTimeout(watchdog);
+        if (streamFailed || playSessionRef.current !== session) return;
+        setIsPlaying(true);
+        // First audible frame: labels are now requestable, report real output.
+        void refreshOutput();
+      });
+      a.addEventListener("ended", () => {
+        if (playSessionRef.current === session) handleTrackEndRef.current();
+      });
+      audioRef.current = a;
+      registerSinkElement(a);
+      // Watchdog: if the stream neither errors nor actually plays within 5s
+      // (the backend sometimes answers 200 with an empty body), switch engines.
+      const watchdog = window.setTimeout(() => {
+        if (!streamFailed && !everPlayed) fallBackToYouTube();
+      }, 5000);
+      a.play().catch((err: unknown) => {
+        const failure = failureFromError(err);
+        if (failure.kind === "blocked") { fail(failure); return; }
+        fallBackToYouTube();
+      });
+    })();
   }, [volume, handleEngineFailure]);
 
   /**
@@ -3853,6 +3868,25 @@ export default function App() {
   // while the phone was locked or the app was closed, and people came back to
   // a sign-in gate. A music app never signs you out on its own now: only the
   // explicit Sign out button does (and it still sticks).
+
+  // ── Foreground nudge ─────────────────────────────────────────────────────────
+  // Chromium freezes media while the screen is off; on the way back the engine
+  // can be paused even though the app still believes it's playing (this is the
+  // "pause, leave, come back, tap play a few times" complaint). Reconcile once
+  // on return: sessions the user actually paused never run this — isPlaying is
+  // false there.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== "visible" || !isPlayingRef.current) return;
+      const engine = audioRef.current;
+      if (!engine) return;
+      const element = engine as HTMLAudioElement;
+      if (typeof element.paused === "boolean" && !element.paused) return;
+      void engine.play().catch(() => { /* blocked until the next tap */ });
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
 
   // ── Leaving the app stops the sound — nothing plays over the gate ────────────
   useEffect(() => {
