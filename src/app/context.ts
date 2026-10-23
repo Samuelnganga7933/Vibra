@@ -200,7 +200,8 @@ export interface AppCtxType {
   userLoading: boolean;
   login: (email: string, password: string) => Promise<string | null>;
   register: (name: string, email: string, password: string) => Promise<string | null>;
-  logout: (reason?: "idle") => Promise<void>;
+  /** Never takes a reason — a music app never signs you out on its own. */
+  logout: () => Promise<void>;
   playlists: PlaylistItem[];
   playlistsLoading: boolean;
   likedTrackIds: Set<string | number>;
