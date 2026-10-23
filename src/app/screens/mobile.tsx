@@ -352,7 +352,7 @@ function EmptyDiscover({ onSearch }: { onSearch: () => void }) {
 /* ─── Search ───────────────────────────────────────────────────────────────── */
 
 function MobileSearch({ seed }: { seed?: string }) {
-  const { C, playTrack, discoveryTracks, navigate } = useApp();
+  const { C, playTrack, discoveryTracks, navigate, user } = useApp();
   const [query, setQuery] = useState(seed ?? "");
   const [results, setResults] = useState<Track[]>([]);
   const [searching, setSearching] = useState(false);
@@ -410,14 +410,25 @@ function MobileSearch({ seed }: { seed?: string }) {
 
   return (
     <MPage>
-      <div style={{ padding: "20px 24px 0" }}>
+      <div style={{ padding: "16px 24px 0" }}>
+        {/* Board header: avatar chip + page title */}
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18 }}>
+          <button onClick={() => navigate({ id: "profile" })} aria-label="Your profile"
+            style={{ width: 40, height: 40, borderRadius: "50%", border: "none", cursor: "pointer", padding: 0, overflow: "hidden", flexShrink: 0, background: C.accent, display: "grid", placeItems: "center" }}>
+            {user?.avatarUrl
+              ? <img src={user.avatarUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              : <span style={{ color: "#fff", fontWeight: 800, fontSize: 15 }}>{user?.initials ?? "?"}</span>}
+          </button>
+          <h1 style={{ fontSize: 24, fontWeight: 800, color: C.text, margin: 0, letterSpacing: -0.4 }}>Search</h1>
+        </div>
+
         <div style={{ position: "relative", marginBottom: 22 }}>
           <div style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)", color: C.muted, pointerEvents: "none", display: "grid", placeItems: "center" }}>
             <SearchIcon size={20} />
           </div>
           <input ref={inputRef} value={query} onChange={e => setQuery(e.target.value)}
             placeholder="Songs, artists, albums…"
-            style={{ width: "100%", height: 54, borderRadius: 16, border: "none", background: C.surf, color: C.text, fontSize: 15, padding: "0 48px 0 50px", outline: "none", boxSizing: "border-box", fontFamily: "inherit" }} />
+            style={{ width: "100%", height: 50, borderRadius: 10, border: "none", background: C.surf, color: C.text, fontSize: 15, padding: "0 48px 0 50px", outline: "none", boxSizing: "border-box", fontFamily: "inherit" }} />
           {query && (
             <button onClick={() => setQuery("")} aria-label="Clear search"
               style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: C.muted, display: "grid", placeItems: "center", padding: 4 }}>
@@ -444,10 +455,11 @@ function MobileSearch({ seed }: { seed?: string }) {
             {recentSeeds.length > 0 && (
               <section style={{ marginBottom: 26 }}>
                 <MSectionTitle>Recent searches</MSectionTitle>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {/* Horizontal scroll row — one line, edge-to-edge bleed */}
+                <div style={{ display: "flex", flexWrap: "nowrap", gap: 8, overflowX: "auto", scrollbarWidth: "none", margin: "0 -24px", padding: "2px 24px" }}>
                   {recentSeeds.map(q => (
                     <button key={q} onClick={() => setQuery(q)}
-                      style={{ display: "inline-flex", alignItems: "center", gap: 8, height: 38, padding: "0 15px", borderRadius: 19, border: `1px solid ${C.border}`, background: C.surf, color: C.text, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                      style={{ display: "inline-flex", alignItems: "center", gap: 8, height: 38, padding: "0 15px", borderRadius: 19, border: `1px solid ${C.border}`, background: C.surf, color: C.text, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", flexShrink: 0 }}>
                       <Clock size={13} color={C.muted} /> {q}
                     </button>
                   ))}
@@ -455,14 +467,14 @@ function MobileSearch({ seed }: { seed?: string }) {
               </section>
             )}
 
-            <MSectionTitle>Browse</MSectionTitle>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <MSectionTitle>Browse all</MSectionTitle>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               {browseTiles.map(tile => (
                 <button key={tile.id} onClick={() => setQuery("query" in tile ? (tile as { query: string }).query : tile.label)}
-                  style={{ position: "relative", height: 92, borderRadius: 14, border: "none", cursor: "pointer", overflow: "hidden", background: tile.bg, padding: "0 14px", display: "flex", alignItems: "flex-end", textAlign: "left", transition: "transform .15s", fontFamily: "inherit" }}
+                  style={{ position: "relative", height: 88, borderRadius: 10, border: "none", cursor: "pointer", overflow: "hidden", background: `linear-gradient(135deg, ${tile.bg}, color-mix(in srgb, ${tile.bg} 55%, #000))`, padding: "12px 14px", display: "flex", alignItems: "flex-start", textAlign: "left", transition: "transform .15s", fontFamily: "inherit" }}
                   onMouseEnter={e => (e.currentTarget.style.transform = "scale(1.02)")}
                   onMouseLeave={e => (e.currentTarget.style.transform = "scale(1)")}>
-                  <span style={{ fontWeight: 800, fontSize: 14, color: "#fff", textShadow: "0 1px 8px rgba(0,0,0,0.45)", paddingBottom: 2, lineHeight: 1.2 }}>{tile.label}</span>
+                  <span style={{ fontWeight: 800, fontSize: 15, color: "#fff", lineHeight: 1.2 }}>{tile.label}</span>
                 </button>
               ))}
             </div>
