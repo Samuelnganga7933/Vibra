@@ -608,6 +608,32 @@ def _google_credentials() -> tuple[str, str]:
     )
 
 
+def _google_redirect_uri() -> str:
+    """One fixed redirect URI for every request, web or in-app WebView.
+
+    Deriving it from the incoming request (`url_for`) can produce a
+    different scheme/host per client (Android WebView requests behind the
+    Vercel proxy) and Google rejects the mismatch. Build it from
+    PUBLIC_BFF_URL instead; GOOGLE_REDIRECT_URI is only honoured when it
+    already points at our callback path, so an old /auth/callback guess
+    can never poison the flow.
+    """
+    cand = (os.getenv("GOOGLE_REDIRECT_URI") or "").strip()
+    if cand:
+        try:
+            p = urllib.parse.urlsplit(cand)
+            if (
+                p.scheme == "https"
+                and p.netloc
+                and p.path.rstrip("/").endswith("/auth/google/callback")
+            ):
+                return cand.rstrip("/")
+        except ValueError:
+            pass
+    base = (os.getenv("PUBLIC_BFF_URL") or "https://bff.vybra.streamvy.me").rstrip("/")
+    return f"{base}/auth/google/callback"
+
+
 def _allowed_return_origins() -> set[str]:
     raw = os.getenv(
         "AUTH_RETURN_ALLOW",
@@ -657,9 +683,7 @@ def google_start(
         raise HTTPException(status_code=503, detail="Google sign-in is not configured")
     return_to = _safe_return(app)
     state = secrets.token_urlsafe(24)
-    redirect_uri = (os.getenv("GOOGLE_REDIRECT_URI") or "").strip() or str(
-        request.url_for("google_callback")
-    )
+    redirect_uri = _google_redirect_uri()
     params = urllib.parse.urlencode({
         "client_id": cid,
         "redirect_uri": redirect_uri,
@@ -704,9 +728,7 @@ def google_callback(
         return PlainTextResponse("Sign-in state mismatch. Go back and try again.", status_code=403)
 
     cid, secret = _google_credentials()
-    redirect_uri = (os.getenv("GOOGLE_REDIRECT_URI") or "").strip() or str(
-        request.url_for("google_callback")
-    )
+    redirect_uri = _google_redirect_uri()
     try:
         token_response = httpx.post(
             _GOOGLE_TOKEN,
