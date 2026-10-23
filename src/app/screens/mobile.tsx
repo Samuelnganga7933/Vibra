@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Search as SearchIcon, Heart, Play, Pause, Plus, Settings,
   ChevronLeft, ChevronRight, Clock, Download, Music2, X,
-  Check, MoreVertical, Trash2,
+  Check, MoreVertical, Trash2, LogOut,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -579,7 +579,7 @@ function MArtistRow({ artist, following, onToggle }: { artist: ArtistItem; follo
 /* ─── Profile ──────────────────────────────────────────────────────────────── */
 
 function MobileProfile() {
-  const { C, navigate, canGoBack, goBack, user, userLoading, recentTracks, playlists, likedTrackIds } = useApp();
+  const { C, navigate, canGoBack, goBack, user, userLoading, recentTracks, playlists, likedTrackIds, logout, uiState } = useApp();
   const uniqueArtists = new Set(recentTracks.map(t => t.artist).filter(Boolean)).size;
   const playlistCount = playlists.filter(p => p.id !== "liked").length;
 
@@ -711,6 +711,16 @@ function MobileProfile() {
               {recentTracks.slice(0, 8).map((t, i) => (
                 <MRow key={t.id} track={t} queue={recentTracks.slice(i + 1)} />
               ))}
+            </div>
+          )}
+
+          {uiState.signedIn && (
+            <div style={{ padding: "28px 24px 0" }}>
+              <button
+                onClick={() => { void logout(); }}
+                style={{ width: "100%", height: 48, borderRadius: 12, background: "#E5484D1A", border: "1px solid #E5484D44", color: "#E5484D", fontWeight: 700, fontSize: 15, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontFamily: "inherit" }}>
+                <LogOut size={18} /> Sign out
+              </button>
             </div>
           )}
         </>

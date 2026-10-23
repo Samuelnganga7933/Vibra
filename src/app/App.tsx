@@ -1237,7 +1237,7 @@ function PlaylistScreen({ item }: { item: PlaylistItem }) {
 // ─── SettingsScreen ────────────────────────────────────────────────────────────
 function SettingsScreen() {
   const {
-    C, canGoBack, goBack, navigate, user, refreshDownloads, updateProfile, uiState, logout,
+    C, canGoBack, goBack, navigate, user, refreshDownloads, updateProfile, uiState,
     theme, setTheme, accent, setAccent,
     audioQuality, setAudioQuality,
     normalizeVolume, setNormalizeVolume,
@@ -1552,13 +1552,7 @@ function SettingsScreen() {
           <Row label="Privacy policy" onClick={() => toast("Opening privacy policy…")} last right={<ChevronRight size={16} color={C.muted} />} />
         </Section>
 
-        {uiState.signedIn && (
-          <button
-            onClick={() => { void logout(); }}
-            style={{ width: "100%", height: 48, borderRadius: 12, background: "#E5484D1A", border: "1px solid #E5484D44", color: "#E5484D", fontWeight: 700, fontSize: 15, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 10 }}>
-            <LogOut size={18} /> Sign out
-          </button>
-        )}
+        {/* Sign out lives under Profile (mobile + desktop boards), not here. */}
         {!uiState.signedIn && (
           <button
             onClick={() => navigate({ id: "auth", mode: "login" })}
@@ -1573,7 +1567,7 @@ function SettingsScreen() {
 
 // ─── ProfileScreen ─────────────────────────────────────────────────────────────
 function ProfileScreen() {
-  const { C, navigate, canGoBack, goBack, user, userLoading, recentTracks, playlists, likedTrackIds } = useApp();
+  const { C, navigate, canGoBack, goBack, user, userLoading, recentTracks, playlists, likedTrackIds, logout, uiState } = useApp();
   const uniqueArtists = new Set(recentTracks.map(t => t.artist).filter(Boolean)).size;
   const playlistCount = playlists.filter(p => p.id !== "liked").length;
 
@@ -1717,6 +1711,16 @@ function ProfileScreen() {
         <div style={{ padding: "24px 28px 0" }}>
           <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: "0 0 12px" }}>Recently played</h2>
             {(recentTracks || []).slice(0, 5).map((t, i) => <TrackRow key={t.id} track={t} index={i} queue={queueRest(recentTracks, t)} />)}
+        </div>
+      )}
+
+      {uiState.signedIn && (
+        <div style={{ padding: "28px 28px 0" }}>
+          <button
+            onClick={() => { void logout(); }}
+            style={{ width: "100%", height: 48, borderRadius: 12, background: "#E5484D1A", border: "1px solid #E5484D44", color: "#E5484D", fontWeight: 700, fontSize: 15, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            <LogOut size={18} /> Sign out
+          </button>
         </div>
       )}
     </div>
