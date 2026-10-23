@@ -368,7 +368,8 @@ function MobileSearch({ seed }: { seed?: string }) {
     [market, C.accent],
   );
 
-  useEffect(() => { inputRef.current?.focus(); }, []);
+  /** No autofocus on mount — tapping the Search tab must not pop the
+      keyboard; it opens only when the field itself is tapped. */
   useEffect(() => {
     const focus = () => inputRef.current?.focus();
     window.addEventListener("vibra:focus-search", focus);
