@@ -1501,9 +1501,33 @@ def _guest_shelves_from(
         ))
     if trending:
         shelves.append(HomeShelfOut(id="trending-now", type="shelf", title="Trending now", items=trending))
+    # Mood mixes are query seeds — the client resolves them on open, so a
+    # cold-start feed carries real depth without extra engine round-trips.
+    shelves.append(HomeShelfOut(
+        id="moment-mixes", type="mix_row", title="Mixes for the moment",
+        items=_moment_mixes(),
+    ))
     if fresh:
         shelves.append(HomeShelfOut(id="new-releases", type="shelf", title="New releases", items=fresh))
     return shelves
+
+
+def _moment_mixes() -> list[HomeItemOut]:
+    """Mood/time-of-day mixes — pure query seeds, no engine cost until opened."""
+    return [
+        HomeItemOut(id="mix-morning", title="Morning Mix", subtitle="Ease into the day",
+                    query="feel good songs upbeat morning"),
+        HomeItemOut(id="mix-focus", title="Focus Mix", subtitle="Deep work, no skips",
+                    query="lofi hip hop radio beats to study"),
+        HomeItemOut(id="mix-workout", title="Workout Mix", subtitle="Keep the pace up",
+                    query="workout motivation hype songs"),
+        HomeItemOut(id="mix-chill", title="Chill Mix", subtitle="Slow it all down",
+                    query="chill r&b slow jams relaxed songs"),
+        HomeItemOut(id="mix-throwback", title="Throwback Mix", subtitle="The ones you forgot you loved",
+                    query="greatest hits throwback songs"),
+        HomeItemOut(id="mix-late-night-card", title="Late Night Mix", subtitle="After-hours energy",
+                    query="late night vibes r&b"),
+    ]
 
 
 def _guest_shelves(locale: Optional[str] = None) -> list[HomeShelfOut]:
@@ -1644,9 +1668,9 @@ def _home_for_user(db: Session, user: User, locale: Optional[str] = None) -> lis
     top_artists = [s.artist for s in scores if s.score > 0][:6]
     focus = top_artists[:3]
 
-    # One pool, six workers: the "Because you played" search plus the guest
-    # shelves we keep alongside personalization — the shared pool caps how
-    # many catalogue requests we burst at the external engine.
+    # One pool: the "Because you played" search plus the guest/scene shelves
+    # we keep alongside personalization — the shared pool caps how many
+    # catalogue requests we burst at the external engine.
     with ThreadPoolExecutor(max_workers=6) as pool:
         because_future = (
             pool.submit(_because_rows, focus[0], recent, blocked_artists, focus[1:3])
@@ -1657,6 +1681,57 @@ def _home_for_user(db: Session, user: User, locale: Optional[str] = None) -> lis
             lambda: merged_catalogue(scene_queries(locale) + ["trending music"], 10)
         )
         fresh_future = pool.submit(search_catalogue, "new music releases", 10)
+        scenes = scene_queries(locale)
+        scene_future = pool.submit(search_catalogue, scenes[0], 10) if scenes else None
+
+        # ── History-derived shelves (DB only, no engine) ────────────────────
+        # Play counts across the 300-event window.
+        play_counts: dict[str, int] = {}
+        newest_play: dict[str, PlayEventRow] = {}
+        for event in played:
+            tid = event.track_id or ""
+            play_counts[tid] = play_counts.get(tid, 0) + 1
+            newest_play.setdefault(tid, event)
+        top_events = sorted(
+            (newest_play[tid] for tid in play_counts if tid in newest_play),
+            key=lambda e: play_counts.get(e.track_id or "", 0),
+            reverse=True,
+        )
+
+        week_ago = datetime.now(timezone.utc) - timedelta(days=7)
+        month_ago = datetime.now(timezone.utc) - timedelta(days=30)
+        heavy = [e for e in recent if (e.created_at or week_ago) >= week_ago][:10]
+        # Rediscover: played a while ago, not among the newest listens.
+        rediscover = [
+            e for e in played
+            if (e.created_at or month_ago) <= month_ago
+            and e.track_id not in {r.track_id for r in recent[:10]}
+        ]
+        seen_redis: set[str] = set()
+        rediscover_uniq: list[PlayEventRow] = []
+        for event in rediscover:
+            tid = event.track_id or ""
+            if tid in seen_redis:
+                continue
+            seen_redis.add(tid)
+            rediscover_uniq.append(event)
+
+        # Liked-snapshot shelves — "Because you liked" + forgotten favorites.
+        liked_rows = db.scalars(
+            select(LikedTrack)
+            .where(LikedTrack.user_id == user.id, LikedTrack.track_id.notin_(blocked_tracks))
+            .order_by(LikedTrack.liked_at.desc())
+            .limit(60)
+        ).all()
+        liked_artist_counts: dict[str, int] = {}
+        for row in liked_rows:
+            if row.artist and row.artist not in blocked_artists:
+                liked_artist_counts[row.artist] = liked_artist_counts.get(row.artist, 0) + 1
+        liked_focus = max(liked_artist_counts, key=liked_artist_counts.get) if liked_artist_counts else None
+        forgotten = [
+            row for row in liked_rows
+            if row.track_id not in {e.track_id for e in recent[:10]}
+        ][:10]
 
         shelves: list[HomeShelfOut] = [
             HomeShelfOut(
@@ -1667,6 +1742,15 @@ def _home_for_user(db: Session, user: User, locale: Optional[str] = None) -> lis
             )
         ]
         taken = {item.id for item in shelves[0].items}
+
+        def add_track_shelf(shelf_id: str, title: str, items: list[HomeItemOut], shelf_type: str = "shelf") -> None:
+            fresh_items = [item for item in items if item.id not in taken][:10]
+            if not fresh_items:
+                return
+            taken.update(item.id for item in fresh_items)
+            shelves.append(HomeShelfOut(
+                id=shelf_id, type=shelf_type, title=title, items=fresh_items,
+            ))
 
         # "Made for you" mixes — seed queries the client resolves on open.
         # Radio/greatest-hits seeds pull the artist plus similar artists.
@@ -1695,24 +1779,58 @@ def _home_for_user(db: Session, user: User, locale: Optional[str] = None) -> lis
         # One "Because you played" shelf for the strongest affinity — a row
         # per artist would repeat the same songs under three headings.
         if because_future is not None and focus:
-            rows = [
-                t for t in because_future.result()
-                if str(t.get("id")) and str(t.get("id")) not in taken
-            ][:10]
-            if rows:
-                taken.update(str(t.get("id")) for t in rows)
-                artist = focus[0]
-                shelves.append(HomeShelfOut(
-                    id=f"because-{artist.lower().replace(' ', '-')[:40]}",
-                    type="shelf",
-                    title=f"Because you played {artist}",
-                    items=_items_from_tracks(rows),
-                ))
+            rows = [t for t in because_future.result() if str(t.get("id"))][:10]
+            add_track_shelf(
+                f"because-{focus[0].lower().replace(' ', '-')[:40]}",
+                f"Because you played {focus[0]}",
+                _items_from_tracks(rows),
+            )
 
+        # Top songs / heavy rotation / rediscover — all from the event window.
+        add_track_shelf("your-top-songs", "Your top songs", _items_from_events(top_events[:10]))
+        if heavy:
+            add_track_shelf("heavy-rotation", "Heavy rotation", _items_from_events(heavy), "recent")
         shelves.append(HomeShelfOut(
             id="recently-played", type="recent", title="Recently played",
             items=_items_from_events(recent[:10]),
         ))
+        taken.update(item.id for item in shelves[-1].items)
+        if rediscover_uniq:
+            add_track_shelf("rediscover", "Rediscover", _items_from_events(rediscover_uniq[:10]))
+
+        # Mood mixes sit between history and the wider world.
+        shelves.append(HomeShelfOut(
+            id="moment-mixes", type="mix_row", title="Mixes for the moment",
+            items=_moment_mixes(),
+        ))
+
+        # "Because you liked" — strongest like-affinity, engine-backed.
+        if liked_focus and liked_focus not in focus:
+            liked_mix = HomeItemOut(
+                id="mix-liked-artist",
+                title=f"{liked_focus} Mix",
+                artist=liked_focus,
+                subtitle=liked_focus,
+                imageUrl=next((r.image_url for r in liked_rows if r.artist == liked_focus and r.image_url), None),
+                query=f"{liked_focus} radio",
+            )
+            shelves.append(HomeShelfOut(
+                id="made-from-likes", type="mix_row", title="Made from your likes",
+                items=[liked_mix, *_moment_mixes()[:2]],
+            ))
+
+        # Forgotten favorites — liked songs that missed the recent window.
+        if forgotten:
+            add_track_shelf(
+                "forgotten-favorites", "Forgotten favorites",
+                [HomeItemOut(
+                    id=row.track_id,
+                    title=row.title or "Unknown track",
+                    artist=row.artist,
+                    imageUrl=row.image_url,
+                    videoId=row.video_id or row.track_id,
+                ) for row in forgotten if row.title],
+            )
 
         # Keep Trending (and the region/new shelves) next to personalization;
         # drop only the items an earlier shelf already shows.
@@ -1720,6 +1838,9 @@ def _home_for_user(db: Session, user: User, locale: Optional[str] = None) -> lis
             locale, region_future.result(), trending_future.result(), fresh_future.result(),
         )
         for shelf in guest:
+            if shelf.type == "mix_row":
+                # Mood mixes already added above for signed-in listeners.
+                continue
             items = [item for item in shelf.items if item.id not in taken]
             if not items:
                 continue
@@ -1728,6 +1849,13 @@ def _home_for_user(db: Session, user: User, locale: Optional[str] = None) -> lis
                 id=shelf.id, type=shelf.type, title=shelf.title,
                 subtitle=shelf.subtitle, items=items,
             ))
+
+        # Scene spotlight (ko → K-pop, etc.) — the locale's own sound.
+        if scene_future is not None and scenes:
+            scene_rows = [t for t in scene_future.result() if str(t.get("id"))][:10]
+            label = scenes[0].split(" music")[0].split(" hits")[0].strip().title()
+            add_track_shelf("scene-spotlight", f"{label} spotlight", _items_from_tracks(scene_rows))
+
         return shelves
 
 
