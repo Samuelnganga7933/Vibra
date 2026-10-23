@@ -2,11 +2,12 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Search as SearchIcon, Heart, Play, Pause, Plus, Settings,
   ChevronLeft, ChevronRight, Clock, Download, Music2, X,
+  Check, MoreVertical, Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
   useApp, toTrackItem, fromApiTrack, BROWSE_CATEGORIES,
-  type Screen, type Track, type LibTab, type ArtistItem,
+  type Screen, type Track, type LibTab, type ArtistItem, type ActiveDownload,
 } from "../context";
 import type { HomeShelf, HomeItem } from "../services/home";
 import { TrackCard } from "../components/ui/cards";
@@ -16,7 +17,7 @@ import { sanitizeMusicItems } from "../services/smartQueue";
 import { getRecentSearches, pushRecentSearch } from "../services/store";
 import { sendEvent } from "../services/events";
 import { marketLabel, marketChartQuery } from "../services/locale";
-import { clearOfflineTracks } from "../services/offlineStorage";
+import { clearOfflineTracks, readOfflineTracks, type OfflineTrack } from "../services/offlineStorage";
 import { bffJson } from "../services/bff";
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -92,11 +93,13 @@ function MSectionTitle({ children, right }: { children: React.ReactNode; right?:
 }
 
 /** The list row from the boards: 52px cover, title/artist, duration trailing. */
-function MRow({ track, queue, trailing, onClick }: {
+function MRow({ track, queue, trailing, onClick, sub }: {
   track: Track;
   queue?: Track[];
   trailing?: React.ReactNode;
   onClick?: () => void;
+  /** Overrides the artist line (e.g. "artist · 4.8 MB" on Downloads). */
+  sub?: React.ReactNode;
 }) {
   const { C, playTrack, currentTrack, isPlaying } = useApp();
   const active = currentTrack?.id === track.id;
@@ -108,7 +111,7 @@ function MRow({ track, queue, trailing, onClick }: {
       <CoverArt bg={track.bg} imageUrl={track.imageUrl} size={52} radius={12} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontWeight: 700, fontSize: 14, color: active ? C.accent : C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{track.title}</div>
-        <div style={{ fontSize: 12, color: C.muted, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{track.artist}</div>
+        <div style={{ fontSize: 12, color: C.muted, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sub ?? track.artist}</div>
       </div>
       {trailing ?? (
         <span style={{ fontSize: 12, color: C.muted, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
@@ -733,46 +736,57 @@ function fmtBytes(n: number): string {
   return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
-function MSwitch({ on, onChange, label }: { on: boolean; onChange: (v: boolean) => void; label: string }) {
+/** One in-flight save — cover, artist · percent, progress bar, ring. */
+function MActiveDownloadRow({ d }: { d: ActiveDownload }) {
   const { C } = useApp();
+  const pct = Math.round(Math.min(1, Math.max(0, d.progress)) * 100);
+  const R = 15.5, CIRC = 2 * Math.PI * R;
   return (
-    <button role="switch" aria-checked={on} aria-label={label} onClick={() => onChange(!on)}
-      style={{ width: 46, height: 28, borderRadius: 999, border: "none", cursor: "pointer", background: on ? C.accent : C.border, position: "relative", flexShrink: 0, padding: 0, transition: "background .15s" }}>
-      <span style={{ position: "absolute", top: 3, left: on ? 21 : 3, width: 22, height: 22, borderRadius: "50%", background: on ? "#fff" : C.muted, transition: "left .15s" }} />
-    </button>
+    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 0", minWidth: 0 }}>
+      <CoverArt bg={d.bg} imageUrl={d.imageUrl} size={52} radius={12} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 700, fontSize: 14, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.title}</div>
+        <div style={{ fontSize: 12, color: C.muted, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.artist} · {pct}%</div>
+        <div style={{ height: 3, borderRadius: 2, background: C.border, marginTop: 7, overflow: "hidden" }}>
+          <div style={{ width: `${pct}%`, height: "100%", borderRadius: 2, background: C.accent, transition: "width .3s linear" }} />
+        </div>
+      </div>
+      <div style={{ position: "relative", width: 36, height: 36, flexShrink: 0 }}>
+        <svg viewBox="0 0 36 36" width={36} height={36} style={{ transform: "rotate(-90deg)" }} aria-hidden>
+          <circle cx="18" cy="18" r={R} fill="none" stroke={C.border} strokeWidth="3" />
+          <circle cx="18" cy="18" r={R} fill="none" stroke={C.accent} strokeWidth="3" strokeLinecap="round"
+            strokeDasharray={CIRC} strokeDashoffset={CIRC * (1 - d.progress)}
+            style={{ transition: "stroke-dashoffset .3s linear" }} />
+        </svg>
+      </div>
+    </div>
   );
 }
 
 function MobileDownloads() {
-  const { C, navigate, canGoBack, goBack, playTrack, downloadedTracks, refreshDownloads, audioQuality } = useApp();
-  const [wifiOnly, setWifiOnly] = useState(() => {
-    try { return localStorage.getItem("vibra_wifi_only") !== "0"; } catch { return true; }
-  });
-  const [usage, setUsage] = useState<string | null>(null);
-  const count = downloadedTracks.length;
+  const { C, navigate, canGoBack, goBack, downloadedTracks, refreshDownloads, activeDownloads } = useApp();
+  const [menuOpen, setMenuOpen] = useState(false);
+  // Local metadata carries exact byte sizes beside the server list.
+  const [localMeta, setLocalMeta] = useState<OfflineTrack[]>([]);
+  const total = downloadedTracks.length + activeDownloads.length;
 
-  useEffect(() => {
-    let cancelled = false;
-    navigator.storage?.estimate?.()
-      .then(e => { if (!cancelled && e.usage) setUsage(fmtBytes(e.usage)); })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [count]);
+  useEffect(() => { setLocalMeta(readOfflineTracks()); }, [downloadedTracks.length, activeDownloads.length]);
 
-  const setWifi = (v: boolean) => {
-    setWifiOnly(v);
-    try { localStorage.setItem("vibra_wifi_only", v ? "1" : "0"); } catch { /* private mode */ }
+  const sizeOf = (id: string | number): string | null => {
+    const bytes = localMeta.find(t => String(t.id) === String(id))?.sizeBytes;
+    return bytes ? fmtBytes(bytes) : null;
   };
 
   const clearAll = () => {
     clearOfflineTracks();
     void refreshDownloads();
+    setMenuOpen(false);
     toast.success("Downloads cleared");
   };
 
   return (
     <MPage>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "16px 24px 0" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "16px 24px 0", position: "relative" }}>
         {canGoBack && (
           <button onClick={goBack} aria-label="Back"
             style={{ width: 40, height: 40, borderRadius: "50%", background: C.surf, border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.text, padding: 0, marginLeft: -6 }}>
@@ -780,63 +794,54 @@ function MobileDownloads() {
           </button>
         )}
         <h1 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0, flex: 1, letterSpacing: -0.3 }}>Downloads</h1>
-        {count > 0 && (
-          <button onClick={clearAll} style={{ background: "none", border: "none", color: C.muted, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", padding: "8px 0" }}>Clear</button>
+        {total > 0 && (
+          <button onClick={() => setMenuOpen(v => !v)} aria-label="Downloads options" aria-expanded={menuOpen}
+            style={{ width: 40, height: 40, borderRadius: "50%", background: C.surf, border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.muted, padding: 0 }}>
+            <MoreVertical size={18} />
+          </button>
+        )}
+        {menuOpen && (
+          <>
+            <div onClick={() => setMenuOpen(false)} aria-hidden style={{ position: "fixed", inset: 0, zIndex: 5 }} />
+            <div role="menu" style={{ position: "absolute", right: 24, top: 60, zIndex: 6, minWidth: 210, background: C.pane, border: `1px solid ${C.border}`, borderRadius: 12, boxShadow: "0 14px 40px rgba(0,0,0,0.5)", overflow: "hidden" }}>
+              <button role="menuitem" onClick={clearAll}
+                style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "13px 16px", background: "none", border: "none", color: "#E5484D", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+                <Trash2 size={16} /> Clear all downloads
+              </button>
+            </div>
+          </>
         )}
       </div>
 
-      <div style={{ padding: "18px 24px 0" }}>
-        <div style={{ background: C.pane, border: `1px solid ${C.border}`, borderRadius: 20, padding: 18 }}>
-          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-            <div>
-              <div style={{ fontSize: 28, fontWeight: 800, color: C.text, letterSpacing: -0.5, lineHeight: 1.1 }}>
-                {usage ?? "—"}
-              </div>
-              <div style={{ fontSize: 12.5, color: C.muted, marginTop: 5 }}>
-                {count} {count === 1 ? "song" : "songs"} on this device
-              </div>
-            </div>
-            {count > 0 && (
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 26, padding: "0 10px", borderRadius: 999, background: `${OFFLINE_GREEN}1f`, color: OFFLINE_GREEN, fontSize: 11.5, fontWeight: 800, flexShrink: 0 }}>
-                <span style={{ width: 6, height: 6, borderRadius: "50%", background: OFFLINE_GREEN }} /> Ready offline
-              </span>
-            )}
-          </div>
-          <div style={{ height: 1, background: C.border, margin: "16px 0" }} />
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>Download over Wi-Fi only</div>
-              <div style={{ fontSize: 11.5, color: C.muted, marginTop: 1 }}>Saves mobile data</div>
-            </div>
-            <MSwitch on={wifiOnly} onChange={setWifi} label="Download over Wi-Fi only" />
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 14 }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>Audio quality</div>
-              <div style={{ fontSize: 11.5, color: C.muted, marginTop: 1, textTransform: "capitalize" }}>{audioQuality}</div>
-            </div>
-            <button onClick={() => navigate({ id: "settings" })} aria-label="Audio quality settings"
-              style={{ width: 28, height: 28, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.muted, padding: 0 }}>
-              <ChevronRight size={18} />
-            </button>
-          </div>
+      {activeDownloads.length > 0 && (
+        <div style={{ padding: "22px 24px 0" }}>
+          <MSectionTitle right={<span style={{ fontSize: 13, color: C.muted, fontWeight: 600 }}>{activeDownloads.length} {activeDownloads.length === 1 ? "song" : "songs"}</span>}>
+            Downloading
+          </MSectionTitle>
+          {activeDownloads.map(d => <MActiveDownloadRow key={d.id} d={d} />)}
         </div>
-      </div>
+      )}
 
-      {count > 0 ? (
-        <div style={{ padding: "26px 24px 0" }}>
-          <MSectionTitle>Downloaded</MSectionTitle>
-          {downloadedTracks.map((t, i) => (
-            <MRow key={t.id} track={t} queue={downloadedTracks.slice(i + 1)}
-              trailing={
-                <span title="Available offline" aria-label="Available offline"
-                  style={{ width: 30, height: 30, borderRadius: "50%", background: `${OFFLINE_GREEN}1f`, display: "grid", placeItems: "center", flexShrink: 0 }}>
-                  <Download size={14} color={OFFLINE_GREEN} />
-                </span>
-              } />
-          ))}
+      {downloadedTracks.length > 0 ? (
+        <div style={{ padding: `${activeDownloads.length > 0 ? 26 : 22}px 24px 0` }}>
+          <MSectionTitle right={<span style={{ fontSize: 13, color: C.muted, fontWeight: 600 }}>{downloadedTracks.length} {downloadedTracks.length === 1 ? "song" : "songs"}</span>}>
+            Downloaded
+          </MSectionTitle>
+          {downloadedTracks.map((t, i) => {
+            const size = sizeOf(t.id);
+            return (
+              <MRow key={t.id} track={t} queue={downloadedTracks.slice(i + 1)}
+                sub={`${t.artist}${size ? ` · ${size}` : ""}`}
+                trailing={
+                  <span title="Available offline" aria-label="Available offline"
+                    style={{ width: 30, height: 30, borderRadius: "50%", background: `${OFFLINE_GREEN}1f`, display: "grid", placeItems: "center", flexShrink: 0 }}>
+                    <Check size={15} color={OFFLINE_GREEN} />
+                  </span>
+                } />
+            );
+          })}
         </div>
-      ) : (
+      ) : activeDownloads.length === 0 ? (
         <MEmpty icon={Download} title="No downloads yet" sub="Save songs from any track's menu to listen offline."
           action={
             <button onClick={() => navigate({ id: "search" })}
@@ -844,7 +849,7 @@ function MobileDownloads() {
               <SearchIcon size={15} /> Find music
             </button>
           } />
-      )}
+      ) : null}
     </MPage>
   );
 }
