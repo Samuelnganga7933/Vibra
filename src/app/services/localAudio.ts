@@ -127,11 +127,10 @@ export async function saveDownload(
   const id = String(track.id);
   if (!id) return "failed";
   if (await hasDownload(id)) return "already";
-  const outcome = isNativePlatform()
+  // Each path writes its own metadata (native: filePath + size; web: size).
+  return isNativePlatform()
     ? await saveNative(track, id, onProgress)
     : await saveWeb(track, id, onProgress);
-  if (outcome === "saved") putMeta(toMeta(track));
-  return outcome;
 }
 
 async function saveNative(
@@ -145,9 +144,11 @@ async function saveNative(
 
   const fileName = `${sanitizeFileName(`${track.artist} - ${track.title}`)}.m4a`;
   const relativePath = `Vybra/${fileName}`;
+  let totalBytes = 0;
   const listener = onProgress
     ? await Filesystem.addListener("progress", progress => {
         if (progress.contentLength > 0) {
+          totalBytes = progress.contentLength;
           onProgress(Math.min(1, progress.bytes / progress.contentLength));
         }
       })
@@ -185,6 +186,11 @@ async function saveNative(
     const meta = toMeta(track);
     meta.filePath = relativePath;
     meta.fileDir = directory;
+    let size = totalBytes;
+    if (!size) {
+      try { size = (await Filesystem.stat({ path: relativePath, directory })).size ?? 0; } catch { size = 0; }
+    }
+    if (size > 0) meta.sizeBytes = size;
     putMeta(meta);
     onProgress?.(1);
     return "saved";
@@ -196,7 +202,7 @@ async function saveNative(
 }
 
 async function saveWeb(
-  _track: DownloadableTrack,
+  track: DownloadableTrack,
   id: string,
   onProgress?: (fraction: number | null) => void,
 ): Promise<SaveOutcome> {
@@ -210,6 +216,12 @@ async function saveWeb(
     if (blob.size < 20_000) return "failed";
     const stored = await idbRun<IDBValidKey>("readwrite", store => store.put({ id, blob }));
     if (stored === null) return "failed";
+    // The web path owns its own metadata write — a shared putMeta in
+    // saveDownload used to run after saveNative too, wiping the filePath
+    // that native local playback depends on.
+    const meta = toMeta(track);
+    meta.sizeBytes = blob.size;
+    putMeta(meta);
     onProgress?.(1);
     return "saved";
   } catch {

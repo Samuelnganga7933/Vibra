@@ -101,6 +101,17 @@ export type PanelTab = "nowplaying" | "queue" | "lyrics";
 
 export interface LyricLine { time: number; text: string; }
 
+/** A download currently in flight — the Downloads board's progress rows. */
+export interface ActiveDownload {
+  id: string;
+  title: string;
+  artist: string;
+  bg?: string;
+  imageUrl?: string;
+  /** 0..1; updates as chunks land. */
+  progress: number;
+}
+
 /** Failure surfaced in the main area (shell, sidebar and bar stay intact). */
 export interface AppError {
   variant: "error" | "offline" | "notfound";
@@ -202,6 +213,10 @@ export interface AppCtxType {
   likedTracks: Track[];
   downloadedTracks: Track[];
   refreshDownloads: () => Promise<void>;
+  /** In-flight downloads — live progress rows on the Downloads board. */
+  activeDownloads: ActiveDownload[];
+  /** Full save flow: progress, toasts, then a Downloads refresh. */
+  downloadTrack: (track: Track) => Promise<"saved" | "already" | "failed">;
   discoveryLoading: boolean;
 
   // Server-driven home feed + feedback

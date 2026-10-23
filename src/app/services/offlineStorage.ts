@@ -20,6 +20,8 @@ export interface OfflineTrack {
   filePath?: string;
   /** Filesystem directory value the file lives in ("music", "data", …). */
   fileDir?: string;
+  /** Exact file size in bytes when known — the Downloads board shows it. */
+  sizeBytes?: number;
 }
 
 function isTrack(value: unknown): value is OfflineTrack {

@@ -75,6 +75,7 @@ import {
   type Screen, type Track, type PlaylistItem, type AlbumItem, type ArtistItem,
   type LibTab, type Colors, type User, type RepeatMode,
   type PanelTab, type AppError, type AppCtxType, type UiState, type LyricLine,
+  type ActiveDownload,
 } from "./context";
 import { ImageWithFallback } from "./components/ui/ImageWithFallback";
 import { UiThemeContext } from "./components/ui/ui-theme";
@@ -1742,11 +1743,11 @@ function TrackOptionsSheet({ track, onClose }: { track: Track; onClose: () => vo
   const {
     C, toggleLike, likedTrackIds, navigate, playlists, addTrackToPlaylist,
     hideItem, playTrack, addToQueue, playNextInQueue,
-    openCreatePlaylist, uiState,
+    openCreatePlaylist, uiState, activeDownloads, downloadTrack,
   } = useApp();
   const [view, setView] = useState<"root" | "playlists" | "share">("root");
   const [downloaded, setDownloaded] = useState(false);
-  const [dlBusy, setDlBusy] = useState(false);
+  const dlBusy = activeDownloads.some(d => d.id === String(track.id));
   const isLiked = likedTrackIds.has(track.id);
   const signedIn = uiState.signedIn;
 
@@ -1809,27 +1810,8 @@ function TrackOptionsSheet({ track, onClose }: { track: Track; onClose: () => vo
         }, true)
       : option(<Download size={18} />, dlBusy ? "Downloading…" : "Download", () => {
           if (dlBusy) return;
-          setDlBusy(true);
-          const toastId = toast.loading(`Downloading “${track.title}”…`);
-          let lastShown = -1;
-          void saveDownload(toOfflineTrack(track), fraction => {
-            if (fraction == null) return;
-            const pct = Math.round(fraction * 100);
-            if (pct >= 100 || pct - lastShown >= 4) {
-              lastShown = pct;
-              toast.loading(`${pct}% — “${track.title}”`, { id: toastId });
-            }
-          }).then(outcome => {
-            setDlBusy(false);
-            if (outcome === "saved") {
-              setDownloaded(true);
-              toast.success("Saved to Documents/Vybra", { id: toastId });
-            } else if (outcome === "already") {
-              setDownloaded(true);
-              toast("Already downloaded", { id: toastId });
-            } else {
-              toast.error("Couldn't download — check your connection", { id: toastId });
-            }
+          void downloadTrack(track).then(outcome => {
+            if (outcome !== "failed") setDownloaded(true);
           });
         }),
     option(<Compass size={18} />, `More from ${track.artist}`, () => { onClose(); navigate({ id: "search", q: track.artist }); }),
@@ -2790,6 +2772,8 @@ export default function App() {
   /** Metadata snapshots from GET /library/liked — render without local cache. */
   const [serverLiked, setServerLiked]               = useState<Track[]>([]);
   const [downloadedTracks, setDownloadedTracks]     = useState<Track[]>([]);
+  /** In-flight saves — the Downloads board's Downloading section reads these. */
+  const [activeDownloads, setActiveDownloads]       = useState<ActiveDownload[]>([]);
   const [artists, setArtists]                       = useState<ArtistItem[]>([]);
 
   // Discovery
@@ -3712,6 +3696,39 @@ export default function App() {
     if (dl) setDownloadedTracks(dl.map(mapAPITrack));
   }, []);
 
+  // ── downloadTrack ────────────────────────────────────────────────────────────
+  /**
+   * One save flow for every entry point (track menu, player): live progress
+   * rows on the Downloads board, a progress toast, then a list refresh.
+   */
+  const downloadTrack = useCallback(async (track: Track): Promise<"saved" | "already" | "failed"> => {
+    const id = String(track.id);
+    setActiveDownloads(list => (list.some(d => d.id === id) ? list : [
+      ...list, { id, title: track.title, artist: track.artist, bg: track.bg, imageUrl: track.imageUrl, progress: 0 },
+    ]));
+    const toastId = toast.loading(`Downloading “${track.title}”…`);
+    let lastShown = -1;
+    const outcome = await saveDownload(toOfflineTrack(track), fraction => {
+      if (fraction == null) return;
+      setActiveDownloads(list => list.map(d => (d.id === id ? { ...d, progress: fraction } : d)));
+      const pct = Math.round(fraction * 100);
+      if (pct >= 100 || pct - lastShown >= 4) {
+        lastShown = pct;
+        toast.loading(`${pct}% — “${track.title}”`, { id: toastId });
+      }
+    });
+    setActiveDownloads(list => list.filter(d => d.id !== id));
+    if (outcome === "saved") {
+      toast.success(isNativeApp() ? "Saved to Documents/Vybra" : "Saved for offline", { id: toastId });
+      void refreshDownloads();
+    } else if (outcome === "already") {
+      toast("Already downloaded", { id: toastId });
+    } else {
+      toast.error("Couldn't download — check your connection", { id: toastId });
+    }
+    return outcome;
+  }, [refreshDownloads]);
+
   // ── Persistent store actions (services/store.ts) ─────────────────────────────
   /** Appends a playlist to the sidebar immediately (local or backend-made). */
   const addPlaylist = useCallback((p: PlaylistItem) => {
@@ -3953,6 +3970,7 @@ export default function App() {
     likedTrackIds, toggleLike,
     discoveryTracks, recentTracks, trendingTracks, newReleases,
     artists, likedTracks, downloadedTracks, refreshDownloads,
+    activeDownloads, downloadTrack,
     discoveryLoading,
     shelves, homeLoading, refreshHome, hiddenIds, hideItem, vibePool,
     outputDevice, devices, refreshDevices, selectOutput,
