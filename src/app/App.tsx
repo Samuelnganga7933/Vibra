@@ -2598,10 +2598,11 @@ function MobileLayout() {
       {/* Quiet fade so content dissolves behind the dock instead of clipping. */}
       <div aria-hidden style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 230, background: `linear-gradient(to bottom, ${C.bg}00, ${C.bg} 72%)`, pointerEvents: "none", zIndex: 2 }} />
 
-      {/* Floating dock — mini player over nav, the boards' single cluster. */}
-      <div ref={dockRef} style={{ position: "absolute", left: 12, right: 12, bottom: "calc(24px + env(safe-area-inset-bottom, 0px))", zIndex: 3, borderRadius: 30, background: `color-mix(in srgb, ${C.pane} 74%, transparent)`, backdropFilter: "blur(26px) saturate(1.4)", WebkitBackdropFilter: "blur(26px) saturate(1.4)", border: `1px solid color-mix(in srgb, ${C.text} 9%, transparent)`, boxShadow: "0 18px 44px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.06)", overflow: "hidden" }}>
+      {/* Dock per the boards: a separate mini-player card floating above a
+          full-width labeled bottom nav (not one merged pill). */}
+      <div ref={dockRef} style={{ position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 3 }}>
         {currentTrack && (
-          <>
+          <div style={{ position: "relative", margin: "0 12px 8px", borderRadius: 12, background: `color-mix(in srgb, ${C.pane} 82%, transparent)`, backdropFilter: "blur(26px) saturate(1.4)", WebkitBackdropFilter: "blur(26px) saturate(1.4)", border: `1px solid color-mix(in srgb, ${C.text} 9%, transparent)`, boxShadow: "0 12px 34px rgba(0,0,0,0.6)", overflow: "hidden" }}>
             <div role="button" tabIndex={0} aria-label="Seek"
               onClick={seek}
               onKeyDown={e => {
@@ -2611,12 +2612,11 @@ function MobileLayout() {
               style={{ position: "absolute", left: 0, right: 0, top: 0, height: 2, zIndex: 1, cursor: "pointer" }}>
               <div style={{ width: `${Math.min(progress, 1) * 100}%`, height: "100%", background: C.accent, transition: "width .5s linear" }} />
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "12px 14px" }}>
-              {/* Details → the full-screen player (the sheet's Now playing tab
-                  was the old half-screen path; the boards show the player) */}
+            <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "10px 12px" }}>
+              {/* Details → the full-screen player */}
               <button onClick={() => setPlayerPageOpen(true)} aria-label="Now playing details"
                 style={{ display: "flex", alignItems: "center", gap: 11, flex: 1, minWidth: 0, background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
-                <CoverArt bg={currentTrack.bg} imageUrl={currentTrack.imageUrl} size={44} radius={12} />
+                <CoverArt bg={currentTrack.bg} imageUrl={currentTrack.imageUrl} size={40} radius={8} />
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <span style={{ display: "block", fontWeight: 700, fontSize: 12.5, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentTrack.title}</span>
                   <span style={{ display: "block", fontSize: 11, color: C.muted, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentTrack.artist}</span>
@@ -2624,24 +2624,23 @@ function MobileLayout() {
               </button>
               <button onClick={playNext} aria-label="Next track"
                 style={{ width: 34, height: 34, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.muted, flexShrink: 0, padding: 0 }}>
-                <SkipForward size={20} />
+                <SkipForward size={19} />
               </button>
               <button onClick={togglePlay} aria-label={isPlaying ? "Pause" : "Play"}
-                style={{ width: 42, height: 42, borderRadius: "50%", background: C.text, border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.pane, flexShrink: 0, padding: 0 }}>
-                {isPlaying ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" />}
+                style={{ width: 40, height: 40, borderRadius: "50%", background: C.accent, border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: "#fff", flexShrink: 0, padding: 0 }}>
+                {isPlaying ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}
               </button>
             </div>
-            <div style={{ height: 1, background: `color-mix(in srgb, ${C.text} 10%, transparent)`, margin: "0 14px" }} />
-          </>
+          </div>
         )}
-        <nav style={{ display: "flex", alignItems: "center", justifyContent: "space-around", padding: "10px 10px 12px" }}>
+        <nav style={{ display: "flex", alignItems: "stretch", justifyContent: "space-around", padding: "8px 6px calc(8px + env(safe-area-inset-bottom, 0px))", background: `color-mix(in srgb, ${C.bg} 86%, transparent)`, backdropFilter: "blur(20px) saturate(1.4)", WebkitBackdropFilter: "blur(20px) saturate(1.4)", borderTop: `1px solid color-mix(in srgb, ${C.text} 7%, transparent)` }}>
           {TABS.map(({ id, label, Icon }) => {
             const active = activeTab === id;
             return (
-              <button key={id} onClick={() => navigate({ id } as Screen)} aria-label={label}
-                style={{ display: "inline-flex", alignItems: "center", gap: 7, border: "none", cursor: "pointer", fontFamily: "inherit", transition: "all .15s", background: active ? `color-mix(in srgb, ${C.accent} 17%, transparent)` : "none", color: active ? `color-mix(in srgb, ${C.accent} 72%, #ffffff)` : C.dim, borderRadius: 999, padding: active ? "11px 18px" : "11px 14px", fontWeight: active ? 800 : 500, fontSize: 13, flexShrink: 0 }}>
-                <Icon size={active ? 18 : 22} />
-                {active && <span>{label}</span>}
+              <button key={id} onClick={() => navigate({ id } as Screen)} aria-label={label} aria-current={active ? "page" : undefined}
+                style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3, border: "none", cursor: "pointer", fontFamily: "inherit", background: "none", color: active ? C.text : C.dim, padding: "6px 0", transition: "color .15s" }}>
+                <Icon size={23} strokeWidth={active ? 2.4 : 2} />
+                <span style={{ fontSize: 10.5, fontWeight: active ? 800 : 600, letterSpacing: 0.1 }}>{label}</span>
               </button>
             );
           })}
