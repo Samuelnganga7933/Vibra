@@ -191,6 +191,9 @@ export interface AppCtxType {
   togglePanel: (tab: PanelTab) => void;
   playerPageOpen: boolean;
   setPlayerPageOpen: (open: boolean) => void;
+  /** Mode of the full-screen player — the lock-screen Lyrics action drives it. */
+  playerPageMode: "song" | "lyrics" | "video";
+  setPlayerPageMode: (mode: "song" | "lyrics" | "video") => void;
   errorState: AppError | null;
   showError: (error: AppError) => void;
   clearError: () => void;

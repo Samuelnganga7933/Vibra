@@ -2520,7 +2520,7 @@ function PlayerBar() {
  */
 function MobileLayout() {
   const { C, screen, navigate, currentTrack, isPlaying, togglePlay, playNext,
-    progress, handleSeek, errorState, panelTab, togglePanel, setPlayerPageOpen } = useApp();
+    progress, elapsed, audioDuration, handleSeek, errorState, panelTab, togglePanel, setPlayerPageOpen } = useApp();
 
   const rootRef = useRef<HTMLDivElement>(null);
   const dockRef = useRef<HTMLDivElement>(null);
@@ -2558,6 +2558,10 @@ function MobileLayout() {
   const activeTab = (["home", "search", "discover", "library"] as const).find(id => id === screen.id) ?? null;
   /** Screens the mobile boards define; everything else falls back to desktop. */
   const MOBILE_SCREENS = new Set(["home", "search", "discover", "library", "profile", "downloads"]);
+
+  /** Dock playhead — derived from the clock so it can never drift from the
+      elapsed time (buffering used to leave a phantom halfway bar at 0:02). */
+  const dockPct = audioDuration > 0 ? Math.max(0, Math.min(elapsed / audioDuration, 1)) : Math.min(progress, 1);
 
   const seek = (e: React.MouseEvent<HTMLDivElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
@@ -2600,11 +2604,11 @@ function MobileLayout() {
             <div role="button" tabIndex={0} aria-label="Seek"
               onClick={seek}
               onKeyDown={e => {
-                if (e.key === "ArrowRight") { e.preventDefault(); handleSeek(Math.min(1, progress + 0.02)); }
-                if (e.key === "ArrowLeft")  { e.preventDefault(); handleSeek(Math.max(0, progress - 0.02)); }
+                if (e.key === "ArrowRight") { e.preventDefault(); handleSeek(Math.min(1, dockPct + 0.02)); }
+                if (e.key === "ArrowLeft")  { e.preventDefault(); handleSeek(Math.max(0, dockPct - 0.02)); }
               }}
               style={{ position: "absolute", left: 0, right: 0, top: 0, height: 2, zIndex: 1, cursor: "pointer" }}>
-              <div style={{ width: `${Math.min(progress, 1) * 100}%`, height: "100%", background: C.accent, transition: "width .5s linear" }} />
+              <div style={{ width: `${dockPct * 100}%`, height: "100%", background: C.accent, transition: "width .5s linear" }} />
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "12px 14px" }}>
               {/* Details → the full-screen player (the sheet's Now playing tab
@@ -2871,6 +2875,9 @@ export default function App() {
   /** Right panel — closed by default; the bar opens it per tab. */
   const [panelTab, setPanelTab] = useState<PanelTab | null>(null);
   const [playerPageOpen, setPlayerPageOpen] = useState(false);
+  /** Full-screen player mode — the lock-screen Lyrics action lands on "lyrics"
+      instead of opening the sheet's duplicate lyrics panel. */
+  const [playerPageMode, setPlayerPageMode] = useState<"song" | "lyrics" | "video">("song");
   const [lyrics, setLyrics]                 = useState<LyricLine[]>([]);
   const [plainLyrics, setPlainLyrics]       = useState("");
   const [lyricsLoading, setLyricsLoading]   = useState(false);
@@ -3214,8 +3221,10 @@ export default function App() {
           setProgress(a.currentTime / a.duration);
           setAudioDuration(a.duration);
         } else {
+          // Duration not known yet — tick the clock but NEVER advance the
+          // progress bar on guesswork (a phantom "halfway" bar at 0:02 was
+          // exactly that guesswork drifting away from the real playhead).
           setElapsed(e => e + 0.5);
-          setProgress(p => Math.min(p + 0.002, 1));
         }
       }, 500);
     } else {
@@ -3674,7 +3683,16 @@ export default function App() {
   const mediaControlsRef = useRef({ togglePlay, playNext, playPrev, handleSeek, openLyrics: () => openPanel("lyrics"), likeCurrent: () => {} });
   mediaControlsRef.current = {
     togglePlay, playNext, playPrev, handleSeek,
-    openLyrics: () => openPanel("lyrics"),
+    // Compact: lyrics live in the full-screen player only — the sheet would
+    // be a second lyrics panel stacked under it (the duplicate-lyrics bug).
+    openLyrics: () => {
+      if (window.matchMedia("(max-width: 1199.98px)").matches) {
+        setPlayerPageMode("lyrics");
+        openPlayerPage(true);
+      } else {
+        openPanel("lyrics");
+      }
+    },
     likeCurrent: () => { if (currentTrack) toggleLike(currentTrack.id); },
   };
 
@@ -3826,7 +3844,7 @@ export default function App() {
     });
     setActiveDownloads(list => list.filter(d => d.id !== id));
     if (outcome === "saved") {
-      toast.success(isNativeApp() ? "Saved to Documents/Vybra" : "Saved for offline", { id: toastId });
+      toast.success(isNativeApp() ? "Saved to Download/Vybra" : "Saved for offline", { id: toastId });
       void refreshDownloads();
     } else if (outcome === "already") {
       toast("Already downloaded", { id: toastId });
@@ -4071,6 +4089,7 @@ export default function App() {
     lyrics, plainLyrics, lyricsLoading,
     uiState, panelTab, openPanel, togglePanel,
     playerPageOpen, setPlayerPageOpen: openPlayerPage,
+    playerPageMode, setPlayerPageMode,
     errorState, showError, clearError,
     user, userLoading, login, register, logout,
     playlists, playlistsLoading,
