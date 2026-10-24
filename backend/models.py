@@ -178,3 +178,20 @@ class FollowedArtist(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     artist: Mapped[str] = mapped_column(String(200))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class Feedback(Base):
+    """Ratings and free-form feedback from the app (Settings → Send feedback)."""
+
+    __tablename__ = "feedback"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    rating: Mapped[int] = mapped_column(Integer)  # 1–5 stars
+    message: Mapped[Optional[str]] = mapped_column(String(4000), nullable=True)
+    platform: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    app_version: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)

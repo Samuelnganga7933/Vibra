@@ -11,7 +11,7 @@ import {
   AlertCircle, Copy, ListPlus, MinusCircle, PauseCircle, RotateCcw,
   HelpCircle, ChevronUp, Maximize2, CalendarDays, Mic, ListStart,
   Moon, Sun, Contrast, WifiOff, Lock,
-  Share2, Link2, MessageCircle, Send, Mail, Trash2,
+  Share2, Link2, MessageCircle, Send, Mail, Trash2, Star,
 } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import { ErrorBoundary, installRuntimeGuards } from "./components/ErrorBoundary";
@@ -53,7 +53,7 @@ import {
   fetchRadioQueue,
   fetchLyrics as fetchLyricsFromApi,
 } from "./services/api";
-import { bffJson, bffVerified, BFF_BASE, isSignedIn, onSessionExpired, clearDeadSession, markSignedOut, hasSignedOutMarker } from "./services/bff";
+import { bffJson, bffSend, bffVerified, BFF_BASE, isSignedIn, onSessionExpired, clearDeadSession, markSignedOut, hasSignedOutMarker } from "./services/bff";
 import { sendEvent, isHistoryPaused, setHistoryPaused as persistHistoryPaused } from "./services/events";
 import { sanitizeMusicItems } from "./services/smartQueue";
 import { fetchHome, readCachedShelves, writeCachedShelves, shelfRank, type HomeShelf, type HomeItem } from "./services/home";
@@ -71,7 +71,7 @@ import { getLocalAudioUrl, hasDownload, removeDownload, saveDownload } from "./s
 import { markBundleReady, checkForOtaUpdates, reloadIntoLatestBundle, isNativeApp } from "./services/ota";
 import {
   mediaInit, mediaSetNowPlaying, mediaSetState, mediaRelease,
-  mediaRequestNotificationPermission,
+  mediaRequestNotificationPermission, mediaNotificationPermission,
 } from "./services/mediaSession";
 import {
   useApp, AppCtx, makeColors, fmtSec, fmtDur, cleanTitle, toTrackItem,
@@ -1264,6 +1264,37 @@ function SettingsScreen() {
   // Device labels need a user gesture — ask once when Settings opens.
   useEffect(() => { refreshDevices(true); }, [refreshDevices]);
 
+  // Notification permission status — Settings is the ONLY place that ever
+  // asks (no system prompt interrupts playback).
+  const [notifPerm, setNotifPerm] = useState<"granted" | "denied" | "prompt" | "unknown">("unknown");
+  useEffect(() => { void mediaNotificationPermission().then(setNotifPerm); }, []);
+
+  // Send feedback: star rating + a note, stored in the BFF's feedback table.
+  const [fbOpen, setFbOpen] = useState(false);
+  const [fbRating, setFbRating] = useState(0);
+  const [fbText, setFbText] = useState("");
+  const [fbBusy, setFbBusy] = useState(false);
+  const sendFeedback = async () => {
+    if (fbBusy || fbRating === 0) return;
+    setFbBusy(true);
+    const ok = await bffSend("/api/feedback", {
+      method: "POST",
+      body: JSON.stringify({
+        rating: fbRating,
+        message: fbText.trim() || null,
+        platform: isNativeApp() ? "android" : "web",
+        appVersion: "2.1.0",
+      }),
+    });
+    setFbBusy(false);
+    if (ok) {
+      setFbOpen(false); setFbRating(0); setFbText("");
+      toast.success("Thanks for the feedback!");
+    } else {
+      toast.error("Couldn't send your feedback — try again.");
+    }
+  };
+
   // Persistent engines: profile name editing.
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
@@ -1443,6 +1474,21 @@ function SettingsScreen() {
         </Section>
 
         <Section title="Notifications">
+          {notifPerm !== "unknown" && (
+            <Row
+              label="Playback controls"
+              sub={notifPerm === "granted" ? "Lock screen & notification controls are on" : "Show controls on the lock screen"}
+              onClick={() => {
+                if (notifPerm === "granted") return;
+                mediaRequestNotificationPermission();
+                // The system dialog answers asynchronously; re-read after it.
+                window.setTimeout(() => { void mediaNotificationPermission().then(setNotifPerm); }, 600);
+              }}
+              right={notifPerm === "granted"
+                ? <Check size={16} color="#4ac2a0" />
+                : <ChevronRight size={16} color={C.muted} />}
+            />
+          )}
           <Row label="New releases" sub="From artists you follow" right={<Toggle value={notifNewReleases} onChange={v => { setNotifNewReleases(v); saveSettings({ notifNewReleases: v }); }} />} />
           <Row label="Recommendations" sub="Personalised suggestions" right={<Toggle value={notifRecommendations} onChange={v => { setNotifRecommendations(v); saveSettings({ notifRecommendations: v }); }} />} />
           <Row label="New followers" last right={<Toggle value={notifFollowers} onChange={v => { setNotifFollowers(v); saveSettings({ notifFollowers: v }); }} />} />
@@ -1552,6 +1598,9 @@ function SettingsScreen() {
               onClick={() => navigate({ id: "download" })}
               right={<ChevronRight size={16} color={C.muted} />} />
           )}
+          <Row label="Send feedback" sub="Rate Vibra or tell us what's missing"
+            onClick={() => setFbOpen(true)}
+            right={<Star size={16} color={C.accent} />} />
           <Row label="Version" sub="Vybra 2.1.0" right={<span style={{ fontSize: 13, color: C.accent, fontWeight: 600 }}>Latest</span>} />
           <Row label="Terms of service" onClick={() => toast("Opening terms…")} right={<ChevronRight size={16} color={C.muted} />} />
           <Row label="Privacy policy" onClick={() => toast("Opening privacy policy…")} last right={<ChevronRight size={16} color={C.muted} />} />
@@ -1566,6 +1615,55 @@ function SettingsScreen() {
           </button>
         )}
       </div>
+
+      {/* Send feedback — stars + note, POSTed to the BFF's feedback table. */}
+      {fbOpen && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 90 }}>
+          <div onClick={() => { if (!fbBusy) setFbOpen(false); }} aria-hidden
+            style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.55)" }} />
+          <div role="dialog" aria-label="Send feedback"
+            style={{
+              position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)",
+              width: "min(420px, calc(100vw - 32px))", background: C.pane, borderRadius: 18,
+              border: `1px solid ${C.border}`, padding: 22, display: "flex", flexDirection: "column", gap: 14,
+              boxShadow: "0 24px 70px rgba(0,0,0,0.55)",
+            }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ fontSize: 17, fontWeight: 800, color: C.text }}>How's Vibra?</div>
+              <button onClick={() => { if (!fbBusy) setFbOpen(false); }} aria-label="Close"
+                style={{ width: 32, height: 32, borderRadius: 10, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.muted }}>
+                <X size={17} />
+              </button>
+            </div>
+
+            <div style={{ display: "flex", gap: 6, justifyContent: "center" }}>
+              {[1, 2, 3, 4, 5].map(n => (
+                <button key={n} onClick={() => setFbRating(n)} aria-label={`${n} star${n > 1 ? "s" : ""}`}
+                  style={{ background: "none", border: "none", cursor: "pointer", padding: 4, color: n <= fbRating ? C.accent : C.dim }}>
+                  <Star size={30} fill={n <= fbRating ? C.accent : "none"} />
+                </button>
+              ))}
+            </div>
+
+            <textarea value={fbText} onChange={e => setFbText(e.target.value)} maxLength={4000}
+              placeholder="What should we fix or build next? (optional)" rows={4}
+              style={{
+                width: "100%", boxSizing: "border-box", resize: "none", borderRadius: 12,
+                background: C.surf, border: `1px solid ${C.border}`, color: C.text,
+                padding: "12px 14px", fontSize: 14, fontFamily: "inherit", outline: "none",
+              }} />
+
+            <button onClick={() => void sendFeedback()} disabled={fbBusy || fbRating === 0}
+              style={{
+                height: 46, borderRadius: 999, border: "none", background: C.accent, color: "#fff",
+                fontWeight: 800, fontSize: 15, fontFamily: "inherit", cursor: fbBusy || fbRating === 0 ? "default" : "pointer",
+                opacity: fbBusy || fbRating === 0 ? 0.55 : 1,
+              }}>
+              {fbBusy ? "Sending…" : "Send feedback"}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -3775,14 +3873,8 @@ export default function App() {
     };
   }, [isPlaying, currentTrack, audioDuration]);
 
-  // Android 13+: ask for the notification permission once, before first play.
-  const mediaPermAsked = useRef(false);
-  useEffect(() => {
-    if (isPlaying && !mediaPermAsked.current) {
-      mediaPermAsked.current = true;
-      mediaRequestNotificationPermission();
-    }
-  }, [isPlaying]);
+  // Android 13+ notification permission is REQUESTED FROM SETTINGS ONLY (the
+  // Notifications row below): no system prompt ever interrupts first play.
 
   // ── toggleLike ────────────────────────────────────────────────────────────────
   const toggleLike = useCallback((id: string | number) => {

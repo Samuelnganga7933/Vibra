@@ -280,3 +280,13 @@ class HomeShelfOut(BaseModel):
 
 class HomeOut(BaseModel):
     shelves: list[HomeShelfOut] = []
+
+
+class FeedbackIn(BaseModel):
+    """A rating + optional note from the app's Send feedback button."""
+
+    rating: int = Field(ge=1, le=5)
+    message: Optional[str] = Field(default=None, max_length=4000)
+    email: Optional[str] = Field(default=None, max_length=255)
+    platform: Optional[str] = Field(default=None, max_length=40)
+    appVersion: Optional[str] = Field(default=None, max_length=40)

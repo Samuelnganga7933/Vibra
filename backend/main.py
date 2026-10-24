@@ -38,6 +38,7 @@ from market import market_label, market_queries, merged_catalogue, region_query,
 from models import (
     ArtistScore,
     BlockedItem,
+    Feedback,
     FollowedArtist,
     LikedTrack,
     PlayEvent as PlayEventRow,
@@ -54,6 +55,7 @@ from schemas import (
     AuthOut,
     DiscoveredArtistsOut,
     DiscoverTrackOut,
+    FeedbackIn,
     FollowIn,
     HistoryPauseIn,
     HomeItemOut,
@@ -1897,6 +1899,29 @@ def reset_recommendations(user: User = Depends(get_token_user), db: Session = De
     db.commit()
     _invalidate_home(user.id)
     return Response(status_code=204)
+
+
+@app.post("/api/feedback", status_code=201)
+def submit_feedback(
+    payload: FeedbackIn,
+    request: Request,
+    user: Optional[User] = Depends(get_optional_user),
+    db: Session = Depends(get_db),
+):
+    """Settings → Send feedback: a star rating plus an optional note.
+    Signed-in rows keep the user id; guests can still send with an email."""
+    _rate_limit(f"feedback:{_client_ip(request)}", 5, 10 * 60)
+    row = Feedback(
+        user_id=user.id if user is not None else None,
+        email=payload.email or (user.email if user is not None else None),
+        rating=payload.rating,
+        message=(payload.message or "").strip()[:4000] or None,
+        platform=payload.platform,
+        app_version=payload.appVersion,
+    )
+    db.add(row)
+    db.commit()
+    return Response(status_code=201)
 
 
 @app.put("/api/settings/history", status_code=204)

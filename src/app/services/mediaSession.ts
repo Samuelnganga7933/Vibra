@@ -52,6 +52,8 @@ interface VybraMediaPluginType {
   setPlaybackState(opts: MediaState & { durationSec: number }): Promise<void>;
   release(): Promise<void>;
   requestNotificationPermission(): Promise<void>;
+  /** Capacitor's built-in runtime-permission check for the "notifications" alias. */
+  checkPermissions(): Promise<{ notifications: string }>;
   addListener(name: string, fn: (ev?: { positionSec?: number }) => void): Promise<PluginListenerHandle>;
 }
 
@@ -181,6 +183,20 @@ export function mediaSetState(st: MediaState, durationSec: number): void {
 export function mediaRequestNotificationPermission(): void {
   if (!isNativeApp()) return;
   void Native.requestNotificationPermission().catch(swallow);
+}
+
+/** Current notification-permission state for the Settings row.
+ *  Web and old APKs (no permission API) answer "unknown" — the row hides. */
+export async function mediaNotificationPermission(): Promise<"granted" | "denied" | "prompt" | "unknown"> {
+  if (!isNativeApp()) return "unknown";
+  try {
+    const res = await Native.checkPermissions();
+    const s = res?.notifications;
+    if (s === "granted" || s === "denied" || s === "prompt") return s;
+    return "unknown";
+  } catch {
+    return "unknown"; // plugin predates the permissions API
+  }
 }
 
 /** Tear down: drop metadata, deactivate the session, remove listeners. */
