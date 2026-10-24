@@ -2709,7 +2709,14 @@ function MobileLayout() {
               style={{ position: "absolute", left: 0, right: 0, top: 0, height: 2, zIndex: 1, cursor: "pointer" }}>
               <div style={{ width: `${dockPct * 100}%`, height: "100%", background: C.accent, transition: "width .5s linear" }} />
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "12px 14px" }}>
+            {/* Sheet-style grabber: the mini-player reads as a header you can
+                pull up into the full-screen player. */}
+            <div style={{ display: "flex", justifyContent: "center", paddingTop: 7 }}>
+              <button onClick={() => setPlayerPageOpen(true)} aria-label="Open full-screen player"
+                style={{ width: 36, height: 4, borderRadius: 999, border: "none", padding: 0, cursor: "pointer",
+                  background: `color-mix(in srgb, ${C.text} 24%, transparent)` }} />
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "8px 14px 12px" }}>
               {/* Details → the full-screen player (the sheet's Now playing tab
                   was the old half-screen path; the boards show the player) */}
               <button onClick={() => setPlayerPageOpen(true)} aria-label="Now playing details"
@@ -2720,6 +2727,15 @@ function MobileLayout() {
                   <span style={{ display: "block", fontSize: 11, color: C.muted, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentTrack.artist}</span>
                 </span>
               </button>
+              {/* Live equalizer — only while audio is actually moving. */}
+              {isPlaying && (
+                <span aria-hidden style={{ display: "inline-flex", alignItems: "flex-end", gap: 2, height: 15, flexShrink: 0, marginLeft: 1 }}>
+                  {[0, 1, 2, 3].map(i => (
+                    <span key={i} className="vibra-eq-bar"
+                      style={{ height: 15, background: C.accent, animationDelay: `${i * 0.14}s` }} />
+                  ))}
+                </span>
+              )}
               <button onClick={playNext} aria-label="Next track"
                 style={{ width: 34, height: 34, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.muted, flexShrink: 0, padding: 0 }}>
                 <SkipForward size={20} />
@@ -4290,6 +4306,9 @@ export default function App() {
         @keyframes blobB { 0%,100%{transform:translate(-50%,-50%) scale(1)} 40%{transform:translate(-44%,-56%) scale(1.08)} 70%{transform:translate(-56%,-44%) scale(0.94)} }
         @keyframes blobC { 0%,100%{transform:translateY(-50%) scale(1)} 50%{transform:translateY(-44%) scale(1.1)} }
         @keyframes wave  { from{height:6px} to{height:28px} }
+        @keyframes vibraEq { 0%,100%{transform:scaleY(.28)} 50%{transform:scaleY(1)} }
+        .vibra-eq-bar { width:3px; border-radius:2px; transform-origin:bottom; animation:vibraEq .85s ease-in-out infinite; }
+        @media (prefers-reduced-motion: reduce) { .vibra-eq-bar { animation:none; } }
         @keyframes slideUp { from{transform:translateY(100%);opacity:0} to{transform:translateY(0);opacity:1} }
         @keyframes scaleIn { from{transform:scale(.94);opacity:0} to{transform:scale(1);opacity:1} }
         @keyframes fadeIn  { from{opacity:0} to{opacity:1} }
