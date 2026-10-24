@@ -31,6 +31,8 @@ import {
   getHistory,
   addHistoryTrack,
   mergeHistory,
+  getSavedQueue,
+  saveQueueState,
   getPlaylists as getStoredPlaylists,
   savePlaylist,
   createCustomPlaylist,
@@ -2737,27 +2739,77 @@ export default function App() {
     return () => { cancelled = true; };
   }, []);
 
-  // Playback state — the player always opens on the most recently played song.
+  // Playback state — restored paused from the last session (queue + playhead),
+  // falling back to the most recently played song; never autoplays.
+  const [savedSession]                 = useState(() => getSavedQueue());
   const [currentTrack, setCurrentTrack]   = useState<Track | null>(
-    () => (getHistory()[0] as unknown as Track) ?? null,
+    () =>
+      ((savedSession?.queue[savedSession.idx] ?? getHistory()[0] ?? null) as unknown as Track | null),
   );
   const [isPlaying, setIsPlaying]         = useState(false);
   const [progress, setProgress]           = useState(0);
-  const [elapsed, setElapsed]             = useState(0);
+  const [elapsed, setElapsed]             = useState(() => savedSession?.positionSec ?? 0);
   const [audioDuration, setAudioDuration] = useState(0);
   const audioRef = useRef<PlaybackHandle | null>(null);
   const ytEngineRef = useRef<YTAudioEngine | null>(null);
   const playSessionRef = useRef(0);
   const handleTrackEndRef = useRef<() => void>(() => {});
   const timerRef = useRef<number | undefined>(undefined);
+  /** One-shot start offset for the next beginPlayback (session restore). */
+  const resumePosRef = useRef(0);
 
   // Queue & controls
-  const [queue, setQueue]             = useState<Track[]>([]);
-  const [queueIdx, setQueueIdx]       = useState(-1);
+  const [queue, setQueue]             = useState<Track[]>(() => (savedSession?.queue as unknown as Track[]) ?? []);
+  const [queueIdx, setQueueIdx]       = useState(() => savedSession?.idx ?? -1);
   const [history, setHistory]         = useState<Track[]>([]);
   const [shuffleOn, setShuffleOn]     = useState(false);
   const [repeatMode, setRepeatMode]   = useState<RepeatMode>("off");
   const [volume, setVolumeState]      = useState(1);
+
+  // ── Queue session persistence ────────────────────────────────────────────────
+  // The queue, its index and the playhead survive an app kill: relaunch
+  // restores the exact spot, paused (no autoplay — the user taps play).
+  const elapsedRef  = useRef(elapsed);
+  const queueRef    = useRef(queue);
+  const queueIdxRef = useRef(queueIdx);
+  useEffect(() => { elapsedRef.current = elapsed; }, [elapsed]);
+  useEffect(() => { queueRef.current = queue; }, [queue]);
+  useEffect(() => { queueIdxRef.current = queueIdx; }, [queueIdx]);
+
+  /** Write the current session (queue, index, playhead) to storage now. */
+  const persistQueueSession = useCallback(() => {
+    const q = queueRef.current;
+    if (q.length === 0) { saveQueueState([], -1, 0); return; }
+    saveQueueState(q, queueIdxRef.current, elapsedRef.current);
+  }, []);
+
+  // Queue or index changed (play, skip, shuffle, remove): save the shape.
+  useEffect(() => {
+    if (queue.length === 0) { saveQueueState([], -1, 0); return; }
+    saveQueueState(queue, queueIdx, elapsedRef.current);
+  }, [queue, queueIdx]);
+
+  // Playhead: throttled writes every 5s while playing; an immediate write
+  // when playback pauses (the interval's teardown beat does that).
+  useEffect(() => {
+    if (queueRef.current.length === 0) return;
+    if (!isPlaying) { persistQueueSession(); return; }
+    const id = window.setInterval(persistQueueSession, 5000);
+    return () => window.clearInterval(id);
+  }, [isPlaying, persistQueueSession]);
+
+  // Backgrounding / closing the app is exactly when the phone may kill it —
+  // flush the playhead right then.
+  useEffect(() => {
+    const flush = () => { if (queueRef.current.length > 0) persistQueueSession(); };
+    const onVisibility = () => { if (document.visibilityState === "hidden") flush(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", flush);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", flush);
+    };
+  }, [persistQueueSession]);
 
   // User & library
   const [user, setUser]                             = useState<User | null>(null);
@@ -2826,7 +2878,7 @@ export default function App() {
   /** Set on the first play this session — the player bar exists only after it. */
   // A loaded track from a previous session shows the bar immediately: it
   // persists across reloads and re-logins, not only until the first play.
-  const [hasPlayback, setHasPlayback] = useState(() => getHistory().length > 0);
+  const [hasPlayback, setHasPlayback] = useState(() => getHistory().length > 0 || (savedSession?.queue.length ?? 0) > 0);
   /** Bumped on login/logout so auth-derived state recomputes. */
   const [authVersion, setAuthVersion] = useState(0);
 
@@ -3172,6 +3224,10 @@ export default function App() {
    */
   const beginPlayback = useCallback((t: Track) => {
     const session = ++playSessionRef.current;
+    // Session restore: the first beginPlayback after a relaunch resumes at
+    // the saved playhead; every later call starts fresh.
+    const resumeAt = resumePosRef.current;
+    resumePosRef.current = 0;
     setIsPlaying(true);
     setHasPlayback(true);
 
@@ -3201,6 +3257,7 @@ export default function App() {
         audioRef.current = engine;
         await engine.load(videoId, volume);
         if (playSessionRef.current !== session) { engine.pause(); return; }
+        if (resumeAt > 0) { try { engine.currentTime = resumeAt; } catch { /* engine not seekable yet */ } }
         setIsPlaying(true);
       } catch (err) {
         fail(failureFromError(err));
@@ -3249,6 +3306,12 @@ export default function App() {
       });
       audioRef.current = a;
       registerSinkElement(a);
+      // Session restore: seek once the duration is known, before first play.
+      if (resumeAt > 0) {
+        a.addEventListener("loadedmetadata", () => {
+          try { a.currentTime = a.duration > 0 ? Math.min(resumeAt, a.duration - 0.5) : resumeAt; } catch { /* ignore */ }
+        }, { once: true });
+      }
       // Watchdog: if the stream neither errors nor actually plays within 5s
       // (the backend sometimes answers 200 with an empty body), switch engines.
       const watchdog = window.setTimeout(() => {
@@ -3535,7 +3598,12 @@ export default function App() {
   const togglePlay = useCallback(() => {
     const current = audioRef.current;
     if (!current) {
-      if (currentTrack) beginPlayback(currentTrack);
+      if (currentTrack) {
+        // No live engine (restored session): beginPlayback resumes at the
+        // saved playhead instead of starting over.
+        resumePosRef.current = elapsedRef.current;
+        beginPlayback(currentTrack);
+      }
       return;
     }
     if (isPlaying) {

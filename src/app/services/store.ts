@@ -150,6 +150,46 @@ export function clearHistory(): StoredTrack[] {
   return [];
 }
 
+// ─── B2. Queue Session (restore paused on relaunch) ──────────────────────────
+// Key: vibra_queue — the queue, its index and the playhead, so an app kill
+// loses nothing: relaunch restores the exact spot, paused. Never autoplay.
+
+export const QUEUE_KEY = "vibra_queue";
+export const QUEUE_SESSION_LIMIT = 50; // cap entries so storage stays small
+
+export interface SavedQueueState {
+  queue: StoredTrack[];
+  idx: number;
+  positionSec: number;
+}
+
+/** The last persisted queue session, or null when nothing was saved. */
+export function getSavedQueue(): SavedQueueState | null {
+  const raw = readJSON<Partial<SavedQueueState> | null>(QUEUE_KEY, null);
+  if (!raw || typeof raw !== "object" || !Array.isArray(raw.queue)) return null;
+  const queue = raw.queue.filter(isStoredTrack).slice(0, QUEUE_SESSION_LIMIT);
+  if (queue.length === 0) return null;
+  const idx = typeof raw.idx === "number" && raw.idx >= 0 && raw.idx < queue.length ? raw.idx : 0;
+  const positionSec = typeof raw.positionSec === "number" && Number.isFinite(raw.positionSec) && raw.positionSec > 0
+    ? Math.floor(raw.positionSec)
+    : 0;
+  return { queue, idx, positionSec };
+}
+
+/** Persists the queue session; an empty queue clears the saved slot. */
+export function saveQueueState(queue: StoredTrack[], idx: number, positionSec: number): void {
+  if (queue.length === 0) {
+    try { window.localStorage.removeItem(QUEUE_KEY); } catch { /* ignore */ }
+    return;
+  }
+  const capped = queue.slice(0, QUEUE_SESSION_LIMIT);
+  writeJSON(QUEUE_KEY, {
+    queue: capped,
+    idx: Math.max(0, Math.min(idx, capped.length - 1)),
+    positionSec: Math.max(0, Math.floor(positionSec || 0)),
+  } satisfies SavedQueueState);
+}
+
 // ─── Recent search seeds ──────────────────────────────────────────────────────
 // Key: vibra_recent_searches — the Search zero-state's "recent seeds".
 
