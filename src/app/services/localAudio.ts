@@ -11,7 +11,7 @@
  * streaming. Presence in the metadata list alone never counts as downloaded —
  * old metadata-only "saves" correctly read as not-downloaded.
  */
-import { Capacitor } from "@capacitor/core";
+import { Capacitor, registerPlugin } from "@capacitor/core";
 import { Directory, Filesystem } from "@capacitor/filesystem";
 import { getDownloadUrl } from "./api";
 import { isNativePlatform, resolveOnDevice } from "./deviceAudio";
@@ -22,6 +22,16 @@ import {
   writeOfflineTracks,
   type OfflineTrack,
 } from "./offlineStorage";
+
+/** VybraMedia extras that land finished downloads in the phone's Download/Vybra. */
+const Media = registerPlugin<{
+  saveToDownloads(opts: { source: string; fileName: string }): Promise<{ path: string; size: number }>;
+  fileExists(opts: { path: string }): Promise<{ exists: boolean; size: number }>;
+  deleteDownloadFile(opts: { path: string }): Promise<void>;
+}>("VybraMedia");
+
+/** Meta marker: filePath is an absolute Download/Vybra path, not plugin-relative. */
+const DOWNLOADS_DIR = "Downloads";
 
 export type SaveOutcome = "saved" | "already" | "failed";
 
@@ -149,6 +159,9 @@ async function saveNative(
   if (sources.length === 0) return "failed";
 
   const fileName = `${sanitizeFileName(`${track.artist} - ${track.title}`)}.m4a`;
+  // Public Downloads/Vybra — visible straight from the phone's Downloads app
+  // and file managers (scoped-storage Documents hides the folder on modern
+  // Android, which made downloads look like they never happened).
   const relativePath = `Vybra/${fileName}`;
   let totalBytes = 0;
   const listener = onProgress
@@ -161,7 +174,11 @@ async function saveNative(
     : null;
 
   try {
-    let directory = Directory.Documents;
+    // Fast temp write into the app cache, then the native move into the
+    // phone's public Download/Vybra folder (what the user actually sees in
+    // the Downloads app). Cache is always writable, so the move step can
+    // only fail on exotic OEM MediaStore builds — then the cache copy
+    // stays as the offline source.
     let written: { path?: string } | undefined;
     let lastError: unknown = null;
     const attempt = async (url: string): Promise<{ path?: string } | undefined> => {
@@ -169,7 +186,7 @@ async function saveNative(
         return await Filesystem.downloadFile({
           url,
           path: relativePath,
-          directory,
+          directory: Directory.Cache,
           progress: !!onProgress,
           recursive: true,
           connectTimeout: 15_000,
@@ -181,24 +198,26 @@ async function saveNative(
       written = await attempt(url);
       if (written?.path) break;
     }
-    // Android ≤9 without the legacy storage grant can't write the public
-    // folder — app-private storage keeps the download working on-device.
-    if (!written?.path) {
-      directory = Directory.Data;
-      for (const url of sources) {
-        written = await attempt(url);
-        if (written?.path) break;
-      }
-    }
     if (!written?.path) { console.warn("[vibra] download failed", lastError); return "failed"; }
-    const meta = toMeta(track);
-    meta.filePath = relativePath;
-    meta.fileDir = directory;
+
     let size = totalBytes;
     if (!size) {
-      try { size = (await Filesystem.stat({ path: relativePath, directory })).size ?? 0; } catch { size = 0; }
+      try { size = (await Filesystem.stat({ path: relativePath, directory: Directory.Cache })).size ?? 0; } catch { size = 0; }
     }
-    if (size > 0) meta.sizeBytes = size;
+
+    const meta = toMeta(track);
+    try {
+      const moved = await Media.saveToDownloads({ source: written.path, fileName });
+      try { await Filesystem.deleteFile({ path: relativePath, directory: Directory.Cache }); } catch { /* cache copy gone */ }
+      meta.filePath = moved.path;
+      meta.fileDir = DOWNLOADS_DIR;
+      if (moved.size > 0) meta.sizeBytes = moved.size;
+    } catch {
+      // MediaStore move failed — keep the cache-dir copy; still offline-proof.
+      meta.filePath = relativePath;
+      meta.fileDir = Directory.Cache;
+    }
+    if (!meta.sizeBytes && size > 0) meta.sizeBytes = size;
     putMeta(meta);
     onProgress?.(1);
     return "saved";
@@ -243,6 +262,11 @@ export async function hasDownload(id: string): Promise<boolean> {
   const meta = metaFor(id);
   if (meta?.filePath && isNativePlatform()) {
     try {
+      if (meta.fileDir === DOWNLOADS_DIR) {
+        const res = await Media.fileExists({ path: meta.filePath });
+        if (!res.exists) { removeOfflineMeta(id); return false; }
+        return true;
+      }
       await Filesystem.stat({ path: meta.filePath, directory: meta.fileDir as Directory });
       return true;
     } catch {
@@ -262,13 +286,19 @@ const objectUrls = new Map<string, string>();
 export async function getLocalAudioUrl(id: string): Promise<string | null> {
   try {
     const meta = metaFor(id);
-    if (meta?.filePath && meta.fileDir && isNativePlatform()) {
-      const { uri } = await Filesystem.getUri({
-        path: meta.filePath,
-        directory: meta.fileDir as Directory,
-      });
-      const src = Capacitor.convertFileSrc(uri);
-      if (src) return src;
+    if (meta?.filePath && isNativePlatform()) {
+      if (meta.fileDir === DOWNLOADS_DIR) {
+        // Absolute Download/Vybra path — the WebView bridge serves it directly.
+        const src = Capacitor.convertFileSrc(meta.filePath);
+        if (src) return src;
+      } else if (meta.fileDir) {
+        const { uri } = await Filesystem.getUri({
+          path: meta.filePath,
+          directory: meta.fileDir as Directory,
+        });
+        const src = Capacitor.convertFileSrc(uri);
+        if (src) return src;
+      }
     }
     const entry = await idbRun<{ id: string; blob: Blob }>("readonly", store => store.get(id));
     const blob = entry?.blob;
@@ -290,9 +320,10 @@ export async function getLocalAudioUrl(id: string): Promise<string | null> {
 
 export async function removeDownload(id: string): Promise<void> {
   const meta = metaFor(id);
-  if (meta?.filePath && meta.fileDir) {
+  if (meta?.filePath) {
     try {
-      await Filesystem.deleteFile({ path: meta.filePath, directory: meta.fileDir as Directory });
+      if (meta.fileDir === DOWNLOADS_DIR) await Media.deleteDownloadFile({ path: meta.filePath });
+      else if (meta.fileDir) await Filesystem.deleteFile({ path: meta.filePath, directory: meta.fileDir as Directory });
     } catch {
       /* already gone */
     }
@@ -311,9 +342,10 @@ export async function removeAllDownloads(): Promise<void> {
   const all = readOfflineTracks();
   for (const meta of all) {
     const id = String(meta.id);
-    if (meta.filePath && meta.fileDir) {
+    if (meta.filePath) {
       try {
-        await Filesystem.deleteFile({ path: meta.filePath, directory: meta.fileDir as Directory });
+        if (meta.fileDir === DOWNLOADS_DIR) await Media.deleteDownloadFile({ path: meta.filePath });
+        else if (meta.fileDir) await Filesystem.deleteFile({ path: meta.filePath, directory: meta.fileDir as Directory });
       } catch {
         /* already gone */
       }
