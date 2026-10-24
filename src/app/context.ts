@@ -42,6 +42,9 @@ export interface Track {
   streamUrl?: string;
   /** Audio-engine video id used to build stream/download URLs. */
   videoId?: string;
+  /** Absolute path of an audio file ON THIS PHONE (MediaStore). When set,
+      playback skips every network source — the file plays straight from disk. */
+  localPath?: string;
 }
 
 export interface PlaylistItem {

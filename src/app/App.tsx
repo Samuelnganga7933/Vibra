@@ -68,6 +68,7 @@ import { loginUser, registerUser, logoutUser, passwordStrengthError } from "./se
 import { exchangeNeonSession, signOutNeon, clearOAuthQueryParams, hasOAuthVerifier } from "./services/neonAuth";
 import { resolveOnDevice } from "./services/deviceAudio";
 import { getLocalAudioUrl, hasDownload, removeDownload, saveDownload } from "./services/localAudio";
+import { localSongUrl } from "./services/localMusic";
 import { markBundleReady, checkForOtaUpdates, reloadIntoLatestBundle, isNativeApp } from "./services/ota";
 import {
   mediaInit, mediaSetNowPlaying, mediaSetState, mediaRelease,
@@ -3395,28 +3396,36 @@ export default function App() {
     // phone's own IP via innertube (the BFF's serverless IP is bot-walled),
     // then the BFF chain, and only then the IFrame fallback.
     void (async () => {
-      // Resolve a playable source id. The track's own videoId — or its id,
-      // when that IS a video id. Rows that never carried one (old library /
-      // UUID tracks) get one shot of recovery: search the exact title+artist
-      // and use the top hit's id, so they never dead-end on "can't play".
-      const looksPlayable = (v?: string) => !!v && /^[A-Za-z0-9_-]{10,16}$/.test(v);
-      let sourceId = t.videoId ?? (typeof t.id === "string" && t.id ? t.id : undefined);
-      if (!looksPlayable(sourceId) && !playbackRecoveredRef.current.has(String(t.id))) {
-        playbackRecoveredRef.current.add(String(t.id));
-        try {
-          const hits = await searchTracks(`${t.title} ${t.artist}`.trim(), 5);
-          const hit = hits.find(h => looksPlayable(h.videoId ?? h.id));
-          if (playSessionRef.current !== session) return;
-          if (hit) sourceId = hit.videoId ?? hit.id;
-        } catch { /* offline — the failure toast below still fires */ }
-      }
+      // A file ON THIS PHONE (MediaStore) plays straight from disk — no id
+      // recovery, no resolution, no network. That is the whole point.
+      let url: string | undefined;
+      let sourceId: string | undefined; // no IFrame fallback for local files
+      if (t.localPath) {
+        url = localSongUrl(t.localPath);
+      } else {
+        // Resolve a playable source id. The track's own videoId — or its id,
+        // when that IS a video id. Rows that never carried one (old library /
+        // UUID tracks) get one shot of recovery: search the exact title+artist
+        // and use the top hit's id, so they never dead-end on "can't play".
+        const looksPlayable = (v?: string) => !!v && /^[A-Za-z0-9_-]{10,16}$/.test(v);
+        sourceId = t.videoId ?? (typeof t.id === "string" && t.id ? t.id : undefined);
+        if (!looksPlayable(sourceId) && !playbackRecoveredRef.current.has(String(t.id))) {
+          playbackRecoveredRef.current.add(String(t.id));
+          try {
+            const hits = await searchTracks(`${t.title} ${t.artist}`.trim(), 5);
+            const hit = hits.find(h => looksPlayable(h.videoId ?? h.id));
+            if (playSessionRef.current !== session) return;
+            if (hit) sourceId = hit.videoId ?? hit.id;
+          } catch { /* offline — the failure toast below still fires */ }
+        }
 
-      const local = await getLocalAudioUrl(String(t.id));
-      if (playSessionRef.current !== session) return;
-      let url = local ?? undefined;
-      if (!url && sourceId) url = (await resolveOnDevice(sourceId))?.url;
-      if (playSessionRef.current !== session) return;
-      url = url ?? t.previewUrl ?? t.streamUrl ?? (sourceId ? getStreamUrl(sourceId) : undefined);
+        const local = await getLocalAudioUrl(String(t.id));
+        if (playSessionRef.current !== session) return;
+        url = local ?? undefined;
+        if (!url && sourceId) url = (await resolveOnDevice(sourceId))?.url;
+        if (playSessionRef.current !== session) return;
+        url = url ?? t.previewUrl ?? t.streamUrl ?? (sourceId ? getStreamUrl(sourceId) : undefined);
+      }
       if (!url) {
         fail({ kind: "track", message: "This track can't play right now." });
         return;

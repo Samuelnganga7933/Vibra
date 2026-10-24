@@ -10,6 +10,7 @@ import android.os.Build;
 import android.os.Environment;
 import android.content.ContentValues;
 import android.provider.MediaStore;
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
@@ -33,7 +34,14 @@ import java.io.OutputStream;
  */
 @CapacitorPlugin(
     name = "VybraMedia",
-    permissions = { @Permission(strings = Manifest.permission.POST_NOTIFICATIONS, alias = "notifications") }
+    permissions = {
+        @Permission(strings = Manifest.permission.POST_NOTIFICATIONS, alias = "notifications"),
+        // Two aliases because the media-read permission was renamed in
+        // Android 13 and Capacitor 8's @Permission has no per-SDK gating:
+        // we consult exactly one alias per device (see audioAlias()).
+        @Permission(strings = Manifest.permission.READ_MEDIA_AUDIO, alias = "audioFiles"),
+        @Permission(strings = Manifest.permission.READ_EXTERNAL_STORAGE, alias = "audioFilesLegacy")
+    }
 )
 public class VybraMediaPlugin extends Plugin {
 
@@ -132,6 +140,93 @@ public class VybraMediaPlugin extends Plugin {
             return;
         }
         requestPermissionForAlias("notifications", call, "handleNotificationPermissionResult");
+    }
+
+    // ── Local music (the phone's own files, YT-Music style) ────────────────────
+    // MediaStore lists every audio file the user already owns; playback reads
+    // them straight from disk, so "On this phone" works with no network.
+
+    @PluginMethod
+    public void requestAudioPermission(PluginCall call) {
+        if (getPermissionState(audioAlias()) == PermissionState.GRANTED) {
+            call.resolve();
+            return;
+        }
+        requestPermissionForAlias(audioAlias(), call, "handleAudioPermissionResult");
+    }
+
+    /** Android 13+ reads media through READ_MEDIA_AUDIO; older builds use
+     *  READ_EXTERNAL_STORAGE. Only ONE alias is ever consulted per device. */
+    private static String audioAlias() {
+        return Build.VERSION.SDK_INT >= 33 ? "audioFiles" : "audioFilesLegacy";
+    }
+
+    @PluginMethod
+    public void listLocalMusic(PluginCall call) {
+        if (getPermissionState(audioAlias()) != PermissionState.GRANTED) {
+            call.reject("audio-permission", "E_AUDIO_PERMISSION");
+            return;
+        }
+        JSArray songs = new JSArray();
+        try {
+            String[] projection = {
+                MediaStore.Audio.Media._ID,
+                MediaStore.Audio.Media.TITLE,
+                MediaStore.Audio.Media.ARTIST,
+                MediaStore.Audio.Media.ALBUM,
+                MediaStore.Audio.Media.DURATION,
+                MediaStore.Audio.Media.SIZE,
+                MediaStore.Audio.Media.DATE_ADDED,
+                MediaStore.Audio.Media.DATA
+            };
+            // Music files only, title-sorted like a library list.
+            try (Cursor cursor = getContext().getContentResolver().query(
+                    MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                    projection,
+                    MediaStore.Audio.Media.IS_MUSIC + " != 0",
+                    null,
+                    MediaStore.Audio.Media.TITLE + " ASC")) {
+                if (cursor != null) {
+                    int iId = cursor.getColumnIndex(MediaStore.Audio.Media._ID);
+                    int iTitle = cursor.getColumnIndex(MediaStore.Audio.Media.TITLE);
+                    int iArtist = cursor.getColumnIndex(MediaStore.Audio.Media.ARTIST);
+                    int iAlbum = cursor.getColumnIndex(MediaStore.Audio.Media.ALBUM);
+                    int iDuration = cursor.getColumnIndex(MediaStore.Audio.Media.DURATION);
+                    int iSize = cursor.getColumnIndex(MediaStore.Audio.Media.SIZE);
+                    int iAdded = cursor.getColumnIndex(MediaStore.Audio.Media.DATE_ADDED);
+                    int iPath = cursor.getColumnIndex(MediaStore.Audio.Media.DATA);
+                    while (cursor.moveToNext()) {
+                        String path = iPath >= 0 ? cursor.getString(iPath) : null;
+                        if (path == null || path.isEmpty()) continue; // unplayable without a path
+                        JSObject song = new JSObject();
+                        song.put("id", iId >= 0 ? cursor.getString(iId) : null);
+                        song.put("title", iTitle >= 0 ? cursor.getString(iTitle) : null);
+                        song.put("artist", iArtist >= 0 ? safeArtist(cursor.getString(iArtist)) : null);
+                        song.put("album", iAlbum >= 0 ? cursor.getString(iAlbum) : null);
+                        song.put("durationMs", iDuration >= 0 ? cursor.getLong(iDuration) : 0L);
+                        song.put("sizeBytes", iSize >= 0 ? cursor.getLong(iSize) : 0L);
+                        song.put("dateAdded", iAdded >= 0 ? cursor.getLong(iAdded) : 0L);
+                        song.put("path", path);
+                        songs.put(song);
+                    }
+                }
+            }
+            JSObject ret = new JSObject();
+            ret.put("songs", songs);
+            call.resolve(ret);
+        } catch (SecurityException e) {
+            call.reject("audio-permission", "E_AUDIO_PERMISSION");
+        } catch (Exception e) {
+            call.reject("MediaStore query failed: " + e.getMessage());
+        }
+    }
+
+    /** MediaStore's null artist shows up as null or the literal "<unknown>". */
+    private static String safeArtist(String artist) {
+        if (artist == null) return null;
+        String trimmed = artist.trim();
+        if (trimmed.isEmpty() || "<unknown>".equalsIgnoreCase(trimmed)) return null;
+        return trimmed;
     }
 
     // ── Downloads folder (public Download/Vybra) ────────────────────────────────
@@ -234,6 +329,11 @@ public class VybraMediaPlugin extends Plugin {
 
     @PermissionCallback
     private void handleNotificationPermissionResult(PluginCall call) {
+        call.resolve();
+    }
+
+    @PermissionCallback
+    private void handleAudioPermissionResult(PluginCall call) {
         call.resolve();
     }
 

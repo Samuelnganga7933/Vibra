@@ -18,6 +18,10 @@ import { getRecentSearches, pushRecentSearch } from "../services/store";
 import { sendEvent } from "../services/events";
 import { marketLabel, marketChartQuery } from "../services/locale";
 import { clearOfflineTracks, readOfflineTracks, type OfflineTrack } from "../services/offlineStorage";
+import {
+  isNativeMediaAvailable, listLocalMusic, requestLocalMusicPermission, localSongToTrack,
+  type LocalSong,
+} from "../services/localMusic";
 import { bffJson } from "../services/bff";
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -782,6 +786,26 @@ function MobileDownloads() {
   const [localMeta, setLocalMeta] = useState<OfflineTrack[]>([]);
   const total = downloadedTracks.length + activeDownloads.length;
 
+  // "On this phone" — the device's own files (YT Music style).
+  // null = unknown yet (web, native loading, or permission not granted).
+  const [localSongs, setLocalSongs] = useState<LocalSong[] | null>(null);
+  const [localLoading, setLocalLoading] = useState(true);
+  const loadLocal = async (): Promise<LocalSong[] | null> => {
+    if (!isNativeMediaAvailable()) { setLocalSongs(null); setLocalLoading(false); return null; }
+    const songs = await listLocalMusic();
+    setLocalSongs(songs);
+    setLocalLoading(false);
+    return songs;
+  };
+  useEffect(() => { void loadLocal(); }, []);
+  const localTracks = useMemo(() => (localSongs ?? []).map(localSongToTrack), [localSongs]);
+  const grantLocal = async () => {
+    const granted = await requestLocalMusicPermission();
+    const songs = await loadLocal();
+    if (!granted) toast("Permission denied — device music stays hidden");
+    else if (songs === null) toast("Couldn't read music on this device");
+  };
+
   useEffect(() => { setLocalMeta(readOfflineTracks()); }, [downloadedTracks.length, activeDownloads.length]);
 
   const sizeOf = (id: string | number): string | null => {
@@ -862,6 +886,39 @@ function MobileDownloads() {
             </button>
           } />
       ) : null}
+
+      {/* On this phone — the device's own audio files, playable offline. */}
+      {localTracks.length > 0 && (
+        <div style={{ padding: "26px 24px 0" }}>
+          <MSectionTitle right={<span style={{ fontSize: 13, color: C.muted, fontWeight: 600 }}>{localTracks.length} {localTracks.length === 1 ? "song" : "songs"}</span>}>
+            On this phone
+          </MSectionTitle>
+          {localTracks.map((t, i) => (
+            <MRow key={String(t.id)} track={t} queue={localTracks.slice(i + 1)} />
+          ))}
+        </div>
+      )}
+
+      {/* Permission not granted yet — one tap to hand the list over. */}
+      {isNativeMediaAvailable() && !localLoading && localSongs === null && (
+        <div style={{ padding: "26px 24px 0" }}>
+          <MSectionTitle>On this phone</MSectionTitle>
+          <button onClick={() => void grantLocal()}
+            style={{
+              width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "14px 16px",
+              background: C.pane, border: `1px dashed ${C.border}`, borderRadius: 14,
+              cursor: "pointer", fontFamily: "inherit", textAlign: "left",
+            }}>
+            <span style={{ width: 40, height: 40, borderRadius: 12, background: C.surf, display: "grid", placeItems: "center", flexShrink: 0 }}>
+              <Music2 size={18} color={C.accent} />
+            </span>
+            <span style={{ minWidth: 0 }}>
+              <span style={{ display: "block", fontWeight: 700, fontSize: 14, color: C.text }}>Allow access to music on this phone</span>
+              <span style={{ display: "block", fontSize: 12, color: C.muted, marginTop: 2 }}>See and play the songs already stored on this device</span>
+            </span>
+          </button>
+        </div>
+      )}
     </MPage>
   );
 }

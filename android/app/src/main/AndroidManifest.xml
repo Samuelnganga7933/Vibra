@@ -47,6 +47,12 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Reading the phone's own music files ("On this phone"):
+         Android 13+ uses READ_MEDIA_AUDIO, ≤12 uses READ_EXTERNAL_STORAGE. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
     <!-- Keeps the CPU alive while audio plays with the screen off. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Saving downloads to the public Documents folder on Android ≤9;
