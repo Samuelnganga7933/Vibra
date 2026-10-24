@@ -5,7 +5,7 @@ import {
   Home, Search, Compass, Library, Heart,
   Shuffle, SkipBack, SkipForward, Repeat2, Repeat1, Volume2, VolumeX,
   Play, Pause, Settings, ChevronLeft, ChevronRight, ChevronDown,
-  MoreHorizontal, Plus, Download, Check, X, LogOut, Music2,
+  MoreHorizontal, Plus, Download, Check, X, Music2,
   Eye, EyeOff, ArrowRight, Sparkles, HardDrive, RefreshCw,
   ListMusic,
   AlertCircle, Copy, ListPlus, MinusCircle, PauseCircle, RotateCcw,
@@ -33,6 +33,8 @@ import {
   mergeHistory,
   getSavedQueue,
   saveQueueState,
+  getPlaybackPrefs,
+  savePlaybackPrefs,
   getPlaylists as getStoredPlaylists,
   savePlaylist,
   createCustomPlaylist,
@@ -46,6 +48,7 @@ import {
 } from "./services/store";
 import {
   searchTracks,
+  getStreamUrl,
   toApiTracks,
   fetchRadioQueue,
   fetchLyrics as fetchLyricsFromApi,
@@ -71,7 +74,7 @@ import {
   mediaRequestNotificationPermission,
 } from "./services/mediaSession";
 import {
-  useApp, AppCtx, makeColors, fmtSec, fmtDur, cleanTitle, audioUrlFor, toTrackItem,
+  useApp, AppCtx, makeColors, fmtSec, fmtDur, cleanTitle, toTrackItem,
   fromApiTrack, mapAPITrack, mapAPIPlaylist, mapAPIAlbum, mapAPIArtist,
   ACCENT_OPTIONS, BROWSE_CATEGORIES, BG_PALETTE,
   type Screen, type Track, type PlaylistItem, type AlbumItem, type ArtistItem,
@@ -1569,7 +1572,7 @@ function SettingsScreen() {
 
 // ─── ProfileScreen ─────────────────────────────────────────────────────────────
 function ProfileScreen() {
-  const { C, navigate, canGoBack, goBack, user, userLoading, recentTracks, playlists, likedTrackIds, logout, uiState } = useApp();
+  const { C, navigate, canGoBack, goBack, user, userLoading, recentTracks, playlists, likedTrackIds, uiState } = useApp();
   const uniqueArtists = new Set(recentTracks.map(t => t.artist).filter(Boolean)).size;
   const playlistCount = playlists.filter(p => p.id !== "liked").length;
 
@@ -1713,16 +1716,6 @@ function ProfileScreen() {
         <div style={{ padding: "24px 28px 0" }}>
           <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: "0 0 12px" }}>Recently played</h2>
             {(recentTracks || []).slice(0, 5).map((t, i) => <TrackRow key={t.id} track={t} index={i} queue={queueRest(recentTracks, t)} />)}
-        </div>
-      )}
-
-      {uiState.signedIn && (
-        <div style={{ padding: "28px 28px 0" }}>
-          <button
-            onClick={() => { void logout(); }}
-            style={{ width: "100%", height: 48, borderRadius: 12, background: "#E5484D1A", border: "1px solid #E5484D44", color: "#E5484D", fontWeight: 700, fontSize: 15, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-            <LogOut size={18} /> Sign out
-          </button>
         </div>
       )}
     </div>
@@ -2758,14 +2751,16 @@ export default function App() {
   const timerRef = useRef<number | undefined>(undefined);
   /** One-shot start offset for the next beginPlayback (session restore). */
   const resumePosRef = useRef(0);
+  /** Track ids whose missing videoId was already recovered via search. */
+  const playbackRecoveredRef = useRef<Set<string>>(new Set());
 
   // Queue & controls
   const [queue, setQueue]             = useState<Track[]>(() => (savedSession?.queue as unknown as Track[]) ?? []);
   const [queueIdx, setQueueIdx]       = useState(() => savedSession?.idx ?? -1);
   const [history, setHistory]         = useState<Track[]>([]);
-  const [shuffleOn, setShuffleOn]     = useState(false);
-  const [repeatMode, setRepeatMode]   = useState<RepeatMode>("off");
-  const [volume, setVolumeState]      = useState(1);
+  const [shuffleOn, setShuffleOn]     = useState(() => getPlaybackPrefs().shuffle);
+  const [repeatMode, setRepeatMode]   = useState<RepeatMode>(() => getPlaybackPrefs().repeat);
+  const [volume, setVolumeState]      = useState(() => getPlaybackPrefs().volume);
 
   // ── Queue session persistence ────────────────────────────────────────────────
   // The queue, its index and the playhead survive an app kill: relaunch
@@ -2811,6 +2806,11 @@ export default function App() {
       window.removeEventListener("pagehide", flush);
     };
   }, [persistQueueSession]);
+
+  // Transport preferences survive a relaunch alongside the queue.
+  useEffect(() => { savePlaybackPrefs({ shuffle: shuffleOn }); }, [shuffleOn]);
+  useEffect(() => { savePlaybackPrefs({ repeat: repeatMode }); }, [repeatMode]);
+  useEffect(() => { savePlaybackPrefs({ volume }); }, [volume]);
 
   // User & library
   const [user, setUser]                             = useState<User | null>(null);
@@ -3026,10 +3026,26 @@ export default function App() {
           subscription: u.subscription === "premium" ? "premium" : "free",
         });
       } else if (isSignedIn()) {
-        // Token present but the server wouldn't confirm it (expired, revoked,
-        // or offline): the gate owns this screen — there is no local profile.
-        // A still-valid session re-verifies itself on the next launch.
-        clearUserProfile();
+        // Token present but the server wouldn't confirm it — offline, a flaky
+        // network, or the token really died. Never bounce a cached listener
+        // to the login gate over a network blip: hydrate from the persisted
+        // profile and keep the app usable. A genuinely revoked token is still
+        // caught by the session recovery below (401 → silent re-mint from the
+        // Neon cookie → sign out as the last resort) once the app is online.
+        const cached = getUserProfile();
+        if (cached && (cached.email || cached.name)) {
+          setUser({
+            id: "local",
+            name: cached.name,
+            email: cached.email,
+            username: cached.username,
+            initials: cached.initials,
+            avatarUrl: cached.avatarUrl,
+            subscription: cached.subscription,
+          });
+        } else {
+          clearUserProfile();
+        }
       } else {
         // No token at all — signed out. Drop any cached profile so the gate,
         // not a half-state, owns this screen.
@@ -3238,12 +3254,7 @@ export default function App() {
       toast(describePlaybackFailure(failure));
     };
 
-    const startYouTube = async () => {
-      const videoId = t.videoId ?? (typeof t.id === "string" && t.id ? t.id : undefined);
-      if (!videoId) {
-        fail({ kind: "track", message: "This track has no playable audio source." });
-        return;
-      }
+    const startYouTube = async (videoId: string) => {
       try {
         const engine = ytEngineRef.current ?? await YTAudioEngine.create({
           onEnded: () => {
@@ -3271,16 +3282,32 @@ export default function App() {
     // phone's own IP via innertube (the BFF's serverless IP is bot-walled),
     // then the BFF chain, and only then the IFrame fallback.
     void (async () => {
+      // Resolve a playable source id. The track's own videoId — or its id,
+      // when that IS a video id. Rows that never carried one (old library /
+      // UUID tracks) get one shot of recovery: search the exact title+artist
+      // and use the top hit's id, so they never dead-end on "can't play".
+      const looksPlayable = (v?: string) => !!v && /^[A-Za-z0-9_-]{10,16}$/.test(v);
+      let sourceId = t.videoId ?? (typeof t.id === "string" && t.id ? t.id : undefined);
+      if (!looksPlayable(sourceId) && !playbackRecoveredRef.current.has(String(t.id))) {
+        playbackRecoveredRef.current.add(String(t.id));
+        try {
+          const hits = await searchTracks(`${t.title} ${t.artist}`.trim(), 5);
+          const hit = hits.find(h => looksPlayable(h.videoId ?? h.id));
+          if (playSessionRef.current !== session) return;
+          if (hit) sourceId = hit.videoId ?? hit.id;
+        } catch { /* offline — the failure toast below still fires */ }
+      }
+
       const local = await getLocalAudioUrl(String(t.id));
       if (playSessionRef.current !== session) return;
       let url = local ?? undefined;
-      if (!url) {
-        const videoId = t.videoId ?? (typeof t.id === "string" && t.id ? t.id : undefined);
-        if (videoId) url = (await resolveOnDevice(videoId))?.url;
-      }
+      if (!url && sourceId) url = (await resolveOnDevice(sourceId))?.url;
       if (playSessionRef.current !== session) return;
-      url = url ?? audioUrlFor(t);
-      if (!url) { void startYouTube(); return; }
+      url = url ?? t.previewUrl ?? t.streamUrl ?? (sourceId ? getStreamUrl(sourceId) : undefined);
+      if (!url) {
+        fail({ kind: "track", message: "This track can't play right now." });
+        return;
+      }
 
       const a = new Audio(url);
       a.volume = volume;
@@ -3291,7 +3318,9 @@ export default function App() {
         streamFailed = true;
         clearTimeout(watchdog);
         a.pause();
-        if (playSessionRef.current === session) void startYouTube();
+        if (playSessionRef.current !== session) return;
+        if (sourceId) void startYouTube(sourceId);
+        else fail({ kind: "track", message: "This track can't play right now." });
       };
       a.addEventListener("error", fallBackToYouTube);
       a.addEventListener("playing", () => {

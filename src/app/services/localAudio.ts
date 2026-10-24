@@ -139,8 +139,14 @@ async function saveNative(
   onProgress?: (fraction: number | null) => void,
 ): Promise<SaveOutcome> {
   const videoId = (track.videoId ?? id).trim();
+  // Two sources, same as playback: the phone's own innertube resolution
+  // (fastest, unciphhered), then the BFF proxy stream — so a resolution
+  // failure on the phone's network can never make Download dead-end.
+  const sources: string[] = [];
   const resolved = await resolveOnDevice(videoId);
-  if (!resolved?.url) return "failed";
+  if (resolved?.url) sources.push(resolved.url);
+  if (videoId.length > 0 && videoId.length <= 20) sources.push(getDownloadUrl(videoId));
+  if (sources.length === 0) return "failed";
 
   const fileName = `${sanitizeFileName(`${track.artist} - ${track.title}`)}.m4a`;
   const relativePath = `Vybra/${fileName}`;
@@ -157,32 +163,34 @@ async function saveNative(
   try {
     let directory = Directory.Documents;
     let written: { path?: string } | undefined;
-    try {
-      written = await Filesystem.downloadFile({
-        url: resolved.url,
-        path: relativePath,
-        directory,
-        progress: !!onProgress,
-        recursive: true,
-        connectTimeout: 15_000,
-        readTimeout: 180_000,
-      });
-    } catch {
-      // Android ≤9 without the legacy storage grant can't write the
-      // public folder — app-private storage keeps the download working
-      // on-device, just out of the public Files app.
-      directory = Directory.Data;
-      written = await Filesystem.downloadFile({
-        url: resolved.url,
-        path: relativePath,
-        directory,
-        progress: !!onProgress,
-        recursive: true,
-        connectTimeout: 15_000,
-        readTimeout: 180_000,
-      });
+    let lastError: unknown = null;
+    const attempt = async (url: string): Promise<{ path?: string } | undefined> => {
+      try {
+        return await Filesystem.downloadFile({
+          url,
+          path: relativePath,
+          directory,
+          progress: !!onProgress,
+          recursive: true,
+          connectTimeout: 15_000,
+          readTimeout: 180_000,
+        });
+      } catch (err) { lastError = err; return undefined; }
+    };
+    for (const url of sources) {
+      written = await attempt(url);
+      if (written?.path) break;
     }
-    if (!written?.path) return "failed";
+    // Android ≤9 without the legacy storage grant can't write the public
+    // folder — app-private storage keeps the download working on-device.
+    if (!written?.path) {
+      directory = Directory.Data;
+      for (const url of sources) {
+        written = await attempt(url);
+        if (written?.path) break;
+      }
+    }
+    if (!written?.path) { console.warn("[vibra] download failed", lastError); return "failed"; }
     const meta = toMeta(track);
     meta.filePath = relativePath;
     meta.fileDir = directory;

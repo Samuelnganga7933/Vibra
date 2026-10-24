@@ -190,6 +190,36 @@ export function saveQueueState(queue: StoredTrack[], idx: number, positionSec: n
   } satisfies SavedQueueState);
 }
 
+// ─── B3. Playback preferences (shuffle / repeat / volume) ────────────────────
+// Key: vibra_playback_prefs — the transport toggles survive a relaunch the
+// same way the queue does; defaults apply on first run or bad storage.
+
+export const PREFS_KEY = "vibra_playback_prefs";
+
+export interface PlaybackPrefs {
+  shuffle: boolean;
+  repeat: "off" | "all" | "one";
+  volume: number; // 0..1
+}
+
+export const DEFAULT_PREFS: PlaybackPrefs = { shuffle: false, repeat: "off", volume: 1 };
+
+export function getPlaybackPrefs(): PlaybackPrefs {
+  const raw = readJSON<Partial<PlaybackPrefs> | null>(PREFS_KEY, null);
+  if (!raw || typeof raw !== "object") return { ...DEFAULT_PREFS };
+  return {
+    shuffle: raw.shuffle === true,
+    repeat: raw.repeat === "all" || raw.repeat === "one" ? raw.repeat : "off",
+    volume: typeof raw.volume === "number" && Number.isFinite(raw.volume)
+      ? Math.max(0, Math.min(1, raw.volume))
+      : 1,
+  };
+}
+
+export function savePlaybackPrefs(patch: Partial<PlaybackPrefs>): void {
+  writeJSON(PREFS_KEY, { ...getPlaybackPrefs(), ...patch });
+}
+
 // ─── Recent search seeds ──────────────────────────────────────────────────────
 // Key: vibra_recent_searches — the Search zero-state's "recent seeds".
 
