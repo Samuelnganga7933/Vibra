@@ -466,7 +466,16 @@ def login(
     # still can't outpace a single victim's inbox.
     _rate_limit(f"login-email:{email}", 8, 5 * 60)
     user = db.scalar(select(User).where(User.email == email))
-    if user is None or not _verify_password(payload.password, user.password_hash):
+    if user is None:
+        raise HTTPException(status_code=401, detail="Wrong email or password")
+    if not user.password_hash:
+        # Signed up through the Streamvy SSO: there is no password to check,
+        # and a generic "wrong password" reads as a broken login form.
+        raise HTTPException(
+            status_code=403,
+            detail='This account signs in with Streamvy — tap "Continue with Streamvy" instead.',
+        )
+    if not _verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Wrong email or password")
     user.session_token = secrets.token_hex(24)
     db.add(user)
