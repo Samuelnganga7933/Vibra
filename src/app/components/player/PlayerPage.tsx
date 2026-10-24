@@ -1,17 +1,26 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ChevronDown, Heart, ListMusic, Mic2, MoreHorizontal,
-  Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward,
+  ChevronDown, Heart, Headphones, ListMusic, Mic2, MoreHorizontal,
+  Pause, Play, Repeat, Repeat1, Share2, Shuffle, SkipBack, SkipForward,
 } from "lucide-react";
+import { toast } from "sonner";
 import { useApp, fmtSec } from "../../context";
 import { CoverArt } from "../CoverArt";
 import { LyricsPanel } from "./LyricsPanel";
+
+/** Green of the output-device chip — same semantic green as the Offline pills. */
+const DEVICE_GREEN = "#1ED760";
 
 /**
  * Full-screen player — artwork, metadata, seek and queue context.
  * Transport lives in the bottom bar on desktop (which stays visible below
  * this overlay); below the shell breakpoint the player covers the dock, so
  * its own transport row + footer render there (CSS in index.css).
+ *
+ * Compact (<1200px) follows docs/design boards Player + PlayerLyrics:
+ * a Song|Lyrics pill (video stays desktop-only), blurred art backdrop,
+ * red play button, waveform seek with a white current bar, and a
+ * full-bleed lyrics view with a floating transport card.
  */
 export function PlayerPage() {
   const {
@@ -22,6 +31,7 @@ export function PlayerPage() {
     isPlaying, togglePlay,
     lyrics, plainLyrics, lyricsLoading, uiState,
     playPrev, playNext, shuffleOn, toggleShuffle, repeatMode, cycleRepeat,
+    outputDevice,
   } = useApp();
   const scrubRef = useRef<HTMLDivElement | null>(null);
   const [mediaMode, setMediaMode] = useState<"song" | "video" | "lyrics">("song");
@@ -61,11 +71,12 @@ export function PlayerPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [setPlayerPageOpen]);
 
-  // A track without lyrics can't keep a lyrics view open.
+  // A track without lyrics can't keep a lyrics view open; video is desktop-only.
   useEffect(() => {
     if (mediaMode === "lyrics" && !hasLyricsOption) setMediaMode("song");
+    if (mediaMode === "video" && isCompact) setMediaMode("song");
     if (ctxTab === "lyrics" && !hasLyricsOption) setCtxTab("queue");
-  }, [mediaMode, ctxTab, hasLyricsOption]);
+  }, [mediaMode, ctxTab, hasLyricsOption, isCompact]);
 
   if (!currentTrack) return null;
   const isLiked = likedTrackIds.has(currentTrack.id);
@@ -102,6 +113,130 @@ export function PlayerPage() {
     setDrag({ active: false, y: 0 });
   };
 
+  const shareTrack = () => {
+    const url = currentTrack.videoId
+      ? `https://www.youtube.com/watch?v=${currentTrack.videoId}`
+      : window.location.href;
+    const text = `${currentTrack.title} — ${currentTrack.artist}`;
+    if (navigator.share) {
+      void navigator.share({ title: currentTrack.title, text, url }).catch(() => { /* dismissed */ });
+    } else {
+      void navigator.clipboard?.writeText(url)
+        .then(() => toast("Link copied"))
+        .catch(() => toast.error("Couldn't copy the link"));
+    }
+  };
+
+  /** Waveform coloring: played = accent, the bar at the playhead = white, rest dim. */
+  const barColor = (i: number): string => {
+    const p = Math.min(progress, 1);
+    const before = (i + 1) / waveBars.length <= p;
+    const atHead = !before && i / waveBars.length <= p;
+    if (before) return C.accent;
+    if (atHead) return "#ffffff";
+    return `color-mix(in srgb, ${C.text} 22%, transparent)`;
+  };
+
+  /** The mode pill — compact: Song|Lyrics only, active = accent red per the boards. */
+  const modes: ReadonlyArray<"song" | "lyrics" | "video"> = isCompact
+    ? (hasLyricsOption ? (["song", "lyrics"] as const) : (["song"] as const))
+    : (hasLyricsOption ? (["song", "lyrics", "video"] as const) : (["song", "video"] as const));
+
+  const modePill = (
+    <div className="player-page-modes" style={{ display: "flex", background: C.surf, borderRadius: 999, padding: 3, fontWeight: 600, fontSize: 12.5 }}>
+      {modes.map(mode => (
+        <button key={mode} onClick={() => {
+          if (mode === "video" && isPlaying) togglePlay(); // audio hands off to the embed
+          setMediaMode(mode);
+        }}
+          style={{
+            border: "none", borderRadius: 999, padding: "6px 16px", cursor: "pointer", fontFamily: "inherit",
+            background: mediaMode === mode ? (isCompact ? C.accent : C.text) : "transparent",
+            color: mediaMode === mode ? "#fff" : C.muted,
+            fontSize: 12.5, fontWeight: 700, textTransform: "capitalize",
+            display: "inline-flex", alignItems: "center", gap: 6,
+            transition: "background .15s, color .15s",
+          }}>
+          {mode === "lyrics" && <Mic2 size={13} />}
+          {mode}
+        </button>
+      ))}
+    </div>
+  );
+
+  /* ── Compact lyrics: full-bleed scroller + floating transport card ───────── */
+  if (isCompact && mediaMode === "lyrics") {
+    return (
+      <div className="player-page"
+        onPointerDown={startDrag}
+        onPointerMove={moveDrag}
+        onPointerUp={endDrag}
+        onPointerCancel={cancelDrag}
+        style={{
+        position: "fixed", left: 0, right: 0, top: 0, bottom: 0,
+        zIndex: 40, background: C.bg,
+        display: "flex", flexDirection: "column", overflow: "hidden",
+        animation: "fadeIn .18s ease",
+        transform: drag.y ? `translateY(${drag.y}px)` : undefined,
+        opacity: drag.y ? Math.max(0.6, 1 - drag.y / 520) : 1,
+        transition: drag.active ? "none" : "transform .26s cubic-bezier(.2,.8,.24,1), opacity .26s ease",
+        paddingTop: "env(safe-area-inset-top, 0px)",
+        paddingBottom: "env(safe-area-inset-bottom, 0px)",
+      }}>
+        <div aria-hidden style={{ width: 46, height: 5, borderRadius: 3, background: C.border, margin: "9px auto 0", flexShrink: 0, touchAction: "none" }} />
+        <div className="player-page-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", flexShrink: 0, touchAction: "none" }}>
+          <div style={{ width: 36 }} />
+          {modePill}
+          <button onClick={() => openTrackOptions(currentTrack)} aria-label="Track options"
+            style={{ width: 36, height: 36, borderRadius: "50%", background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.muted }}>
+            <MoreHorizontal size={20} />
+          </button>
+        </div>
+
+        {/* Full-bleed lyrics — oversized lines, edge fade (the board). */}
+        <div style={{ flex: 1, minHeight: 0, padding: "0 22px", overflow: "hidden" }}>
+          <LyricsPanel lyrics={lyrics} plain={plainLyrics} loading={lyricsLoading} elapsed={elapsed} full />
+        </div>
+
+        {/* Floating transport card */}
+        <div style={{ margin: "10px 14px 8px", borderRadius: 26, background: `color-mix(in srgb, ${C.pane} 74%, transparent)`, backdropFilter: "blur(26px) saturate(1.4)", WebkitBackdropFilter: "blur(26px) saturate(1.4)", border: `1px solid color-mix(in srgb, ${C.text} 10%, transparent)`, padding: "12px 16px", flexShrink: 0, boxShadow: "0 14px 44px rgba(0,0,0,0.5)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <CoverArt bg={currentTrack.bg} imageUrl={currentTrack.imageUrl} size={44} radius={12} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 700, fontSize: 14, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentTrack.title}</div>
+              <div style={{ fontSize: 12, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentTrack.artist}</div>
+            </div>
+            <button onClick={playPrev} aria-label="Previous track"
+              style={{ width: 40, height: 40, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.text, padding: 0, flexShrink: 0 }}>
+              <SkipBack size={22} fill="currentColor" />
+            </button>
+            <button onClick={togglePlay} aria-label={isPlaying ? "Pause" : "Play"}
+              style={{ width: 46, height: 46, borderRadius: "50%", background: C.accent, border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: "#fff", padding: 0, flexShrink: 0, boxShadow: "0 8px 22px rgba(0,0,0,0.4)" }}>
+              {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
+            </button>
+            <button onClick={playNext} aria-label="Next track"
+              style={{ width: 40, height: 40, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.text, padding: 0, flexShrink: 0 }}>
+              <SkipForward size={22} fill="currentColor" />
+            </button>
+          </div>
+          {/* Mini waveform strip + times */}
+          <div ref={scrubRef} onClick={e => seekFromEvent(e.clientX)}
+            role="slider" aria-label="Seek"
+            aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.min(progress, 1) * 100)}
+            style={{ height: 22, display: "flex", alignItems: "center", gap: 2, cursor: "pointer", marginTop: 10 }}>
+            {waveBars.map((h, i) => (
+              <div key={i} style={{ flex: 1, minWidth: 0, height: Math.max(4, Math.round(h * 0.72)), borderRadius: 2, background: barColor(i), transition: "background .2s linear" }} />
+            ))}
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
+            <span style={{ fontSize: 11, color: C.muted }}>{fmtSec(elapsed)}</span>
+            <span style={{ fontSize: 11, color: C.muted }}>{total > 0 ? fmtSec(total) : "--:--"}</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={`player-page${queueOpen ? " show-queue" : ""}`}
       onPointerDown={startDrag}
@@ -121,78 +256,77 @@ export function PlayerPage() {
     }}>
       {/* Grabber — the boards' drag handle; pulling it (or the header) down closes */}
       <div aria-hidden style={{ width: 46, height: 5, borderRadius: 3, background: C.border, margin: "9px auto 0", flexShrink: 0, touchAction: "none" }} />
-      {/* Header */}
+      {/* Header — compact: pill + more (close lives in the footer chevron) */}
       <div className="player-page-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", flexShrink: 0, touchAction: "none" }}>
-        <button onClick={() => setPlayerPageOpen(false)} aria-label="Close full-screen player"
-          style={{ width: 36, height: 36, borderRadius: "50%", background: C.surf, border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.text }}>
-          <ChevronDown size={18} />
-        </button>
-        <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: 1 }}>
-          {/* Song/Lyrics/Video toggle — video hands the canvas to the YouTube embed */}
-          <div className="player-page-modes" style={{ display: "flex", background: C.surf, borderRadius: 999, padding: 3, fontWeight: 600, fontSize: 12.5, textTransform: "none", letterSpacing: 0 }}>
-            {(hasLyricsOption ? (["song", "lyrics", "video"] as const) : (["song", "video"] as const)).map(mode => (
-              <button key={mode} onClick={() => {
-                if (mode === "video" && isPlaying) togglePlay(); // audio hands off to the embed
-                setMediaMode(mode);
-              }}
-                style={{
-                  border: "none", borderRadius: 999, padding: "6px 18px", cursor: "pointer", fontFamily: "inherit",
-                  background: mediaMode === mode ? C.text : "transparent",
-                  color: mediaMode === mode ? C.pane : C.muted,
-                  fontSize: 12.5, fontWeight: 700, textTransform: "capitalize",
-                  display: "inline-flex", alignItems: "center", gap: 6,
-                }}>
-                {mode === "lyrics" && <Mic2 size={13} />}
-                {mode}
-              </button>
-            ))}
-          </div>
-        </div>
+        {isCompact ? (
+          <div style={{ width: 36 }} />
+        ) : (
+          <button onClick={() => setPlayerPageOpen(false)} aria-label="Close full-screen player"
+            style={{ width: 36, height: 36, borderRadius: "50%", background: C.surf, border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.text }}>
+            <ChevronDown size={18} />
+          </button>
+        )}
+        {modePill}
         <button onClick={() => openTrackOptions(currentTrack)} aria-label="Track options"
-          style={{ width: 36, height: 36, borderRadius: "50%", background: C.surf, border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.muted }}>
+          style={{ width: 36, height: 36, borderRadius: "50%", background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.muted }}>
           <MoreHorizontal size={17} />
         </button>
       </div>
 
-      {/* Body: artwork + meta + context (stacks under 1200px — see index.css) */}
+      {/* Body: artwork, title, seek (stacks under 1200px — see index.css) */}
       <div className="player-page-body" style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "minmax(280px, 1fr) minmax(300px, 420px)", gap: 24, padding: "4px 28px 20px" }}>
         {/* Left: artwork, title, seek */}
         <div className="player-page-main" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 22, minWidth: 0 }}>
-          <div className="player-page-art" style={{
-            width: "min(46vh, 100%)", maxWidth: 440,
-            ...(mediaMode === "lyrics"
-              ? { height: "min(42vh, 440px)" }
-              : { aspectRatio: "1 / 1" }),
-            borderRadius: 16,
-            background: mediaMode === "lyrics" ? `${C.pane}cc` : currentTrack.bg,
-            overflow: "hidden", flexShrink: 0,
-            boxShadow: mediaMode === "lyrics" ? "none" : `0 28px 80px ${currentTrack.bg}66`,
-            border: `1px solid ${C.border}`,
-            padding: mediaMode === "lyrics" ? "18px 22px" : 0,
-            display: mediaMode === "lyrics" ? "block" : undefined,
-          }}>
-            {mediaMode === "lyrics" ? (
-              <LyricsPanel lyrics={lyrics} plain={plainLyrics} loading={lyricsLoading} elapsed={elapsed} full />
-            ) : mediaMode === "video" ? (
-              <iframe
-                src={`https://www.youtube-nocookie.com/embed/${currentTrack.videoId}?autoplay=1&playsinline=1`}
-                title={currentTrack.title}
-                allow="autoplay; encrypted-media; picture-in-picture"
-                allowFullScreen
-                style={{ width: "100%", height: "100%", border: "none", display: "block" }}
-              />
-            ) : (
-              currentTrack.imageUrl && (
-                <img src={currentTrack.imageUrl} alt="" loading="lazy"
-                  style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", aspectRatio: "1 / 1" }}
-                  onError={e => { (e.currentTarget as HTMLImageElement).style.visibility = "hidden"; }} />
-              )
+          {/* Art card — compact wraps it in a blurred backdrop, radius 28 + glass sheen */}
+          <div className="player-page-art-wrap" style={{ position: "relative", width: "min(46vh, 100%)", maxWidth: isCompact ? 340 : 440, display: "flex", justifyContent: "center", flexShrink: 0 }}>
+            {isCompact && currentTrack.imageUrl && mediaMode === "song" && (
+              <img src={currentTrack.imageUrl} alt="" aria-hidden
+                style={{ position: "absolute", inset: -28, width: "calc(100% + 56px)", height: "calc(100% + 56px)", objectFit: "cover", filter: "blur(48px) saturate(1.3)", opacity: 0.55, borderRadius: 40, pointerEvents: "none" }}
+                onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
             )}
+            <div className="player-page-art" style={{
+              position: "relative",
+              width: mediaMode === "lyrics" ? "100%" : undefined,
+              ...(mediaMode === "lyrics"
+                ? { height: "min(42vh, 440px)" }
+                : { aspectRatio: "1 / 1" }),
+              borderRadius: isCompact && mediaMode === "song" ? 28 : 16,
+              background: mediaMode === "lyrics" ? `${C.pane}cc` : currentTrack.bg,
+              overflow: "hidden", flexShrink: 0,
+              boxShadow: mediaMode === "lyrics" ? "none" : `0 28px 80px ${currentTrack.bg}66`,
+              border: mediaMode === "lyrics" ? `1px solid ${C.border}` : "none",
+              padding: mediaMode === "lyrics" ? "18px 22px" : 0,
+              display: mediaMode === "lyrics" ? "block" : undefined,
+            }}>
+              {mediaMode === "lyrics" ? (
+                <LyricsPanel lyrics={lyrics} plain={plainLyrics} loading={lyricsLoading} elapsed={elapsed} full />
+              ) : mediaMode === "video" ? (
+                <iframe
+                  src={`https://www.youtube-nocookie.com/embed/${currentTrack.videoId}?autoplay=1&playsinline=1`}
+                  title={currentTrack.title}
+                  allow="autoplay; encrypted-media; picture-in-picture"
+                  allowFullScreen
+                  style={{ width: "100%", height: "100%", border: "none", display: "block" }}
+                />
+              ) : (
+                <>
+                  {currentTrack.imageUrl && (
+                    <img src={currentTrack.imageUrl} alt="" loading="lazy"
+                      style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", aspectRatio: "1 / 1" }}
+                      onError={e => { (e.currentTarget as HTMLImageElement).style.visibility = "hidden"; }} />
+                  )}
+                  {/* Glass sheen over the art (compact song mode) */}
+                  {isCompact && (
+                    <div aria-hidden style={{ position: "absolute", inset: 0, background: "linear-gradient(135deg, rgba(255,255,255,0.14), transparent 42%)", pointerEvents: "none" }} />
+                  )}
+                </>
+              )}
+            </div>
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 14, width: "100%", maxWidth: 560 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 24, fontWeight: 800, color: C.text, letterSpacing: -0.4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              <div style={{ fontSize: isCompact ? 22 : 24, fontWeight: 800, color: C.text, letterSpacing: -0.4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {currentTrack.title}
               </div>
               <div style={{ fontSize: 15, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -206,37 +340,46 @@ export function PlayerPage() {
           </div>
 
           {/* Seek — waveform bars on compact, a clean progress line on desktop */}
-          <div style={{ width: "100%", maxWidth: 560, display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 11.5, color: C.muted, width: 38, textAlign: "right", flexShrink: 0 }}>{fmtSec(elapsed)}</span>
+          <div style={{ width: "100%", maxWidth: 560, display: "flex", flexDirection: isCompact ? "column" : "row", alignItems: isCompact ? "stretch" : "center", gap: isCompact ? 4 : 10 }}>
             {isCompact ? (
-              <div ref={scrubRef} onClick={e => seekFromEvent(e.clientX)}
-                role="slider" aria-label="Seek"
-                aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.min(progress, 1) * 100)}
-                style={{ flex: 1, minWidth: 0, height: 30, display: "flex", alignItems: "center", gap: 2, cursor: "pointer" }}>
-                {waveBars.map((h, i) => (
-                  <div key={i}
-                    style={{
-                      flex: 1, minWidth: 0, height: h, borderRadius: 2,
-                      background: (i + 1) / waveBars.length <= Math.min(progress, 1) ? C.accent : C.border,
-                      transition: "background .2s linear",
-                    }} />
-                ))}
-              </div>
+              <>
+                <div ref={scrubRef} onClick={e => seekFromEvent(e.clientX)}
+                  role="slider" aria-label="Seek"
+                  aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.min(progress, 1) * 100)}
+                  style={{ width: "100%", height: 34, display: "flex", alignItems: "center", gap: 2, cursor: "pointer" }}>
+                  {waveBars.map((h, i) => (
+                    <div key={i}
+                      style={{
+                        flex: 1, minWidth: 0, height: h, borderRadius: 2,
+                        background: barColor(i),
+                        transition: "background .2s linear",
+                      }} />
+                  ))}
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span style={{ fontSize: 12, color: C.muted }}>{fmtSec(elapsed)}</span>
+                  <span style={{ fontSize: 12, color: C.muted }}>{total > 0 ? fmtSec(total) : "--:--"}</span>
+                </div>
+              </>
             ) : (
-              <div ref={scrubRef}
-                onClick={e => seekFromEvent(e.clientX)}
-                role="slider" aria-label="Seek"
-                aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.min(progress, 1) * 100)}
-                style={{ flex: 1, height: 5, borderRadius: 3, background: C.border, cursor: "pointer", position: "relative" }}>
-                <div style={{ width: `${Math.min(progress, 1) * 100}%`, height: "100%", borderRadius: 3, background: C.accent, transition: "width .4s linear" }} />
-              </div>
+              <>
+                <span style={{ fontSize: 11.5, color: C.muted, width: 38, textAlign: "right", flexShrink: 0 }}>{fmtSec(elapsed)}</span>
+                <div ref={scrubRef}
+                  onClick={e => seekFromEvent(e.clientX)}
+                  role="slider" aria-label="Seek"
+                  aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.min(progress, 1) * 100)}
+                  style={{ flex: 1, height: 5, borderRadius: 3, background: C.border, cursor: "pointer", position: "relative" }}>
+                  <div style={{ width: `${Math.min(progress, 1) * 100}%`, height: "100%", borderRadius: 3, background: C.accent, transition: "width .4s linear" }} />
+                </div>
+                <span style={{ fontSize: 11.5, color: C.muted, width: 38, flexShrink: 0 }}>{total > 0 ? fmtSec(total) : "--:--"}</span>
+              </>
             )}
-            <span style={{ fontSize: 11.5, color: C.muted, width: 38, flexShrink: 0 }}>{total > 0 ? fmtSec(total) : "--:--"}</span>
           </div>
         </div>
 
         {/* Transport — rendered for the mobile overlay (the dock underneath is
-            covered); index.css hides it where the bottom bar owns transport. */}
+            covered); index.css hides it where the bottom bar owns transport.
+            Compact play button is the boards' red. */}
         <div className="player-page-transport">
           <button onClick={toggleShuffle} aria-label="Shuffle" aria-pressed={shuffleOn}
             style={{ width: 44, height: 44, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: shuffleOn ? C.accent : C.muted, padding: 0 }}>
@@ -247,7 +390,7 @@ export function PlayerPage() {
             <SkipBack size={30} fill="currentColor" />
           </button>
           <button onClick={togglePlay} aria-label={isPlaying ? "Pause" : "Play"}
-            style={{ width: 72, height: 72, borderRadius: "50%", background: C.text, border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.pane, padding: 0, boxShadow: "0 12px 34px rgba(0,0,0,0.45)" }}>
+            style={{ width: isCompact ? 70 : 72, height: isCompact ? 70 : 72, borderRadius: "50%", background: isCompact ? C.accent : C.text, border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: isCompact ? "#fff" : C.pane, padding: 0, boxShadow: isCompact ? `0 12px 34px ${C.accent}59` : "0 12px 34px rgba(0,0,0,0.45)" }}>
             {isPlaying ? <Pause size={30} fill="currentColor" /> : <Play size={30} fill="currentColor" />}
           </button>
           <button onClick={playNext} aria-label="Next track"
@@ -316,13 +459,25 @@ export function PlayerPage() {
         </div>
       </div>
 
-      {/* Footer — queue toggle + close; mobile only (hidden by index.css
-          above the shell breakpoint), per the boards' bottom row. */}
+      {/* Footer — mobile only (hidden by index.css above the shell breakpoint),
+          per the boards' bottom row: queue, share, output device, collapse. */}
       <div className="player-page-foot">
         <button onClick={() => setQueueOpen(v => !v)} aria-label="Queue" aria-pressed={queueOpen}
           style={{ width: 44, height: 44, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: queueOpen ? C.accent : C.muted, padding: 0 }}>
           <ListMusic size={21} />
         </button>
+        <button onClick={shareTrack} aria-label="Share track"
+          style={{ width: 44, height: 44, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.muted, padding: 0 }}>
+          <Share2 size={20} />
+        </button>
+        {/* Output device chip — only when a real device name is known */}
+        {outputDevice.label && (
+          <button onClick={() => setPlayerPageOpen(false)} aria-label={`Output: ${outputDevice.name}`}
+            style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 34, padding: "0 14px", borderRadius: 999, background: `color-mix(in srgb, ${DEVICE_GREEN} 14%, transparent)`, border: "none", cursor: "pointer", color: DEVICE_GREEN, fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", flexShrink: 0 }}>
+            <Headphones size={14} />
+            <span style={{ maxWidth: 110, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{outputDevice.name}</span>
+          </button>
+        )}
         <button onClick={() => setPlayerPageOpen(false)} aria-label="Close full-screen player"
           style={{ width: 44, height: 44, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.muted, padding: 0 }}>
           <ChevronDown size={22} />
