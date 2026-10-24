@@ -3856,32 +3856,29 @@ export default function App() {
   // ── downloadTrack ────────────────────────────────────────────────────────────
   /**
    * One save flow for every entry point (track menu, player): live progress
-   * rows on the Downloads board, a progress toast, then a list refresh.
+   * rows on the Downloads board, a plain "Downloading…" toast that vanishes
+   * the instant the file lands, then a list refresh.
    */
   const downloadTrack = useCallback(async (track: Track): Promise<"saved" | "already" | "failed"> => {
     const id = String(track.id);
     setActiveDownloads(list => (list.some(d => d.id === id) ? list : [
       ...list, { id, title: track.title, artist: track.artist, bg: track.bg, imageUrl: track.imageUrl, progress: 0 },
     ]));
-    const toastId = toast.loading(`Downloading “${track.title}”…`);
-    let lastShown = -1;
+    const toastId = toast.loading("Downloading…");
     const outcome = await saveDownload(toOfflineTrack(track), fraction => {
+      // Progress rides the Downloads board's row — the toast stays plain.
       if (fraction == null) return;
       setActiveDownloads(list => list.map(d => (d.id === id ? { ...d, progress: fraction } : d)));
-      const pct = Math.round(fraction * 100);
-      if (pct >= 100 || pct - lastShown >= 4) {
-        lastShown = pct;
-        toast.loading(`${pct}% — “${track.title}”`, { id: toastId });
-      }
     });
     setActiveDownloads(list => list.filter(d => d.id !== id));
-    if (outcome === "saved") {
-      toast.success(isNativeApp() ? "Saved to Download/Vybra" : "Saved for offline", { id: toastId });
-      void refreshDownloads();
-    } else if (outcome === "already") {
-      toast("Already downloaded", { id: toastId });
-    } else {
+    if (outcome === "failed") {
       toast.error("Couldn't download — check your connection", { id: toastId });
+    } else {
+      // Done: drop the toast immediately (success is visible as the row in
+      // Downloads / the filled icon on the track). Failures are the only case
+      // worth interrupting for.
+      toast.dismiss(toastId);
+      if (outcome === "saved") void refreshDownloads();
     }
     return outcome;
   }, [refreshDownloads]);
