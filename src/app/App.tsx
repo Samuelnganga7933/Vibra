@@ -53,7 +53,7 @@ import {
   fetchRadioQueue,
   fetchLyrics as fetchLyricsFromApi,
 } from "./services/api";
-import { bffJson, BFF_BASE, isSignedIn, onSessionExpired, markSignedOut, hasSignedOutMarker } from "./services/bff";
+import { bffJson, bffVerified, BFF_BASE, isSignedIn, onSessionExpired, clearDeadSession, markSignedOut, hasSignedOutMarker } from "./services/bff";
 import { sendEvent, isHistoryPaused, setHistoryPaused as persistHistoryPaused } from "./services/events";
 import { sanitizeMusicItems } from "./services/smartQueue";
 import { fetchHome, readCachedShelves, writeCachedShelves, shelfRank, type HomeShelf, type HomeItem } from "./services/home";
@@ -2755,6 +2755,12 @@ export default function App() {
   const timerRef = useRef<number | undefined>(undefined);
   /** One-shot start offset for the next beginPlayback (session restore). */
   const resumePosRef = useRef(0);
+  /**
+   * The last play-state + position pushed to the system UI. Lets the
+   * background ticker below update the lock screen WITHOUT re-firing on every
+   * state change, and lets it skip writes that would be no-ops.
+   */
+  const lastMediaPushRef = useRef({ playing: false, positionSec: -1 });
   /** Track ids whose missing videoId was already recovered via search. */
   const playbackRecoveredRef = useRef<Set<string>>(new Set());
 
@@ -3725,23 +3731,49 @@ export default function App() {
     });
   }, [currentTrack, audioDuration, likedTrackIds]);
 
-  // Play/pause flips always reach the system UI; position ticks only while the
-  // app is visible (background ticks would just churn the foreground service).
+  // Play/pause flips always reach the system UI immediately.
   useEffect(() => {
     mediaSetState(
       { playing: isPlaying, positionSec: elapsed },
       audioDuration || currentTrack?.durationSec || 0,
     );
+    lastMediaPushRef.current = { playing: isPlaying, positionSec: elapsed };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPlaying, currentTrack?.id]);
+
+  // Position ticks. While the app is visible the tick rides the 500ms playback
+  // timer; while it is hidden the WebView throttles timers to ~1/minute, which
+  // left the lock-screen seek bar frozen. A lightweight ticker keeps the system
+  // UI honest in the background (10s cadence — every position update crosses a
+  // JNI bridge into the foreground service, so this is deliberately sparse).
   useEffect(() => {
-    if (document.hidden) return;
-    mediaSetState(
-      { playing: isPlaying, positionSec: elapsed },
-      audioDuration || currentTrack?.durationSec || 0,
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [elapsed]);
+    if (!isPlaying || !currentTrack) return;
+    const push = (positionSec: number) => {
+      const last = lastMediaPushRef.current;
+      // Skip identical pushes; also require a whole second of movement.
+      if (last.playing === isPlaying && Math.abs(last.positionSec - positionSec) < 1) return;
+      lastMediaPushRef.current = { playing: isPlaying, positionSec };
+      mediaSetState(
+        { playing: isPlaying, positionSec },
+        audioDuration || currentTrack.durationSec || 0,
+      );
+    };
+    // Visible: the playback timer owns the fast tick; this is a cheap backstop.
+    const onVisible = () => { if (!document.hidden) push(elapsedRef.current); };
+    document.addEventListener("visibilitychange", onVisible);
+    // Hidden: a sparse cadence keeps the notification/lock screen moving.
+    const id = window.setInterval(() => {
+      if (!document.hidden) return; // visible → the 500ms timer already pushed
+      push(elapsedRef.current);
+    }, 10_000);
+    // Coming back to the foreground: resync immediately so the lock screen and
+    // the in-app bar agree the instant the app is seen again.
+    push(elapsedRef.current);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.clearInterval(id);
+    };
+  }, [isPlaying, currentTrack, audioDuration]);
 
   // Android 13+: ask for the notification permission once, before first play.
   const mediaPermAsked = useRef(false);
@@ -3995,39 +4027,52 @@ export default function App() {
   // failures or an active request timeout (see services/safeFetch.ts).
   useEffect(() => startConnectionMonitor(BFF_BASE), []);
 
-  // Dead session (rotated/expired token) — silently mint a fresh one from the
-  // Neon cookie first; signing out is the last resort, never the reflex. The
-  // BFF rotates session_token on every login, so a second sign-in elsewhere
-  // used to 401 this device even though its own auth session was fine.
+  // Dead session (rotated/expired token) — silently re-mint one from the Neon
+  // cookie. Signing out is the LAST resort and happens only when the server
+  // explicitly rejects BOTH the stored token and a freshly minted one. An
+  // offline phone, a cold BFF or a timed-out fetch keep the session intact.
   const recoveringSessionRef = useRef(false);
   useEffect(() => onSessionExpired(() => {
-    const endSignedOut = () => {
-      // The server said this token is dead: drop the cached profile too, so the
-      // bootstrap fallback can't mask the gate with a stale "Local profile".
-      clearUserProfile();
-      setUser(null);
-      setAuthVersion(v => v + 1);
-      toast("Your session expired — sign in again");
-    };
-    // Explicit sign-out stays signed out; a recovery that itself gets a 401
-    // must not re-enter (that would loop).
-    if (hasSignedOutMarker() || recoveringSessionRef.current) {
-      endSignedOut();
-      return;
-    }
+    if (hasSignedOutMarker()) return;        // they signed out on purpose — stay out
+    if (recoveringSessionRef.current) return; // one recovery at a time (no loop)
     recoveringSessionRef.current = true;
     void (async () => {
       try {
+        // 1) Try to mint a fresh token from the Neon cookie, then read the user.
         const minted = await exchangeNeonSession();
-        const fresh = minted ? await api<User>("/auth/me") : null;
-        if (fresh) {
-          applySessionUser(fresh);
+        if (minted) {
+          const fresh = await bffVerified<User>("/auth/me");
+          if (fresh.kind === "ok") {
+            applySessionUser(fresh.data);
+            setAuthVersion(v => v + 1);
+            return; // recovered — nobody notices anything happened
+          }
+          // Never answered? Keep the session (the BFF may just be down) and
+          // let the next 401 retry. A rejection falls through to re-check the
+          // stored token below, so a truly dead session still signs out.
+          if (fresh.kind === "unreachable") return;
+        }
+        // 2) No minted session. Re-check the existing one directly: a 200 means
+        //    the token was fine after all (transient 401, e.g. a blip mid-deploy).
+        const recheck = await bffVerified<User>("/auth/me");
+        if (recheck.kind === "ok") {
+          applySessionUser(recheck.data);
           setAuthVersion(v => v + 1);
           return;
         }
-        endSignedOut();
+        // 3) Two rejections WITH a reachable server (and no cookie to re-mint):
+        //    the session is genuinely dead. An `unreachable` result is NOT
+        //    proof of anything — the BFF may simply be down, in which case we
+        //    keep the session and let the next 401 retry.
+        if (recheck.kind === "rejected") {
+          clearDeadSession();
+          clearUserProfile();
+          setUser(null);
+          setAuthVersion(v => v + 1);
+          toast("Your session expired — sign in again");
+        }
       } catch {
-        endSignedOut();
+        // Network flaked mid-recovery — keep everything, retry next time.
       } finally {
         recoveringSessionRef.current = false;
       }

@@ -29,6 +29,14 @@ const TOKEN_KEY = "vibra_session_token";
  */
 const SIGNED_OUT_KEY = "vibra_signed_out";
 
+/**
+ * Tracks which token has already triggered an expiry event, so a burst of
+ * parallel 401s causes exactly ONE recovery attempt rather than N sign-outs.
+ * Cleared by `setSessionToken` whenever the token changes (see below) — a
+ * freshly minted token must be free to fail on its own terms later.
+ */
+let expiryFiredFor: string | null = null;
+
 export function getSessionToken(): string | null {
   try {
     return window.localStorage.getItem(TOKEN_KEY);
@@ -38,6 +46,9 @@ export function getSessionToken(): string | null {
 }
 
 export function setSessionToken(token: string | null): void {
+  // A token change means the expiry bookkeeping (below) is stale — a fresh
+  // token must be allowed to trigger its own recovery if it later dies.
+  expiryFiredFor = null;
   try {
     if (token) {
       window.localStorage.setItem(TOKEN_KEY, token);
@@ -108,10 +119,17 @@ export function isSignedIn(): boolean {
 }
 
 // ─── Session expiry ───────────────────────────────────────────────────────────
-// A 401 means the stored token no longer matches a live server session
-// (rotated elsewhere, or logged out on another device). We drop the dead
-// token and let the app fall back to signed-out.
-type SessionExpiredListener = () => void;
+// A 401 *from a server that actually answered* means the stored token no
+// longer matches a live session (rotated elsewhere, or signed out on another
+// device). We tell the app, which silently re-mints from the Neon cookie.
+//
+// Crucially we do NOT drop the token here and do NOT fire on network failure:
+// an offline phone, a cold BFF or a timed-out fetch must never sign anyone
+// out. The token is only cleared once the app has decided the session is
+// genuinely dead (see the recovery handler in App.tsx), so a failed recovery
+// keeps its credentials and can retry.
+type SessionExpiredReason = "expired" | "offline";
+type SessionExpiredListener = (reason?: SessionExpiredReason) => void;
 const expiredListeners = new Set<SessionExpiredListener>();
 
 export function onSessionExpired(listener: SessionExpiredListener): () => void {
@@ -119,15 +137,31 @@ export function onSessionExpired(listener: SessionExpiredListener): () => void {
   return () => { expiredListeners.delete(listener); };
 }
 
+function fireSessionExpired(reason: SessionExpiredReason): void {
+  expiredListeners.forEach(listener => {
+    try { listener(reason); } catch { /* a broken listener must not break the request */ }
+  });
+}
+
+/**
+ * True when this response means "the token is dead" (as opposed to "the
+ * network is down"). Only a real 401 counts — and only once per token, so a
+ * burst of parallel 401s triggers a single recovery attempt.
+ */
 function dropDeadSession(response: Response): boolean {
   if (response.status !== 401) return false;
-  if (getSessionToken() !== null) {
-    setSessionToken(null);
-    expiredListeners.forEach(listener => {
-      try { listener(); } catch { /* a broken listener must not break the request */ }
-    });
-  }
+  const token = getSessionToken();
+  if (token === null) return true; // nothing to recover
+  if (expiryFiredFor === token) return true; // already recovering this token
+  expiryFiredFor = token;
+  fireSessionExpired("expired");
   return true;
+}
+
+/** Called by the app once it has confirmed a token is truly dead. */
+export function clearDeadSession(): void {
+  expiryFiredFor = null;
+  setSessionToken(null);
 }
 
 function headers(init?: RequestInit): Record<string, string> {
@@ -166,6 +200,36 @@ export async function bffJson<T>(path: string, init?: RequestInit): Promise<T | 
     return (await response.json()) as T;
   } catch {
     return null;
+  }
+}
+
+/**
+ * JSON GET that reports why it failed. The session-recovery path needs to
+ * distinguish "the server answered and rejected our token" (genuinely dead
+ * session, safe to sign out) from "the request never got a reply" (offline,
+ * cold BFF, timeout — the session must be kept and retried later).
+ */
+export type Verified<T> =
+  | { ok: true; kind: "ok"; data: T }
+  | { ok: false; kind: "rejected"; status: number } // server answered, said no
+  | { ok: false; kind: "unreachable" };            // no reply at all
+
+export async function bffVerified<T>(path: string, init?: RequestInit): Promise<Verified<T>> {
+  if (!BFF_BASE) return { ok: false, kind: "unreachable" };
+  const response = await safeFetch(`${BFF_BASE}${path}`, {
+    ...init,
+    quiet: true,
+    credentials: "include",
+    headers: headers(init),
+    accept: r => r.status === 401,
+  });
+  // safeFetch resolves null only when the network/timeout failed us.
+  if (!response) return { ok: false, kind: "unreachable" };
+  if (dropDeadSession(response)) return { ok: false, kind: "rejected", status: response.status };
+  try {
+    return { ok: true, kind: "ok", data: (await response.json()) as T };
+  } catch {
+    return { ok: false, kind: "rejected", status: response.status };
   }
 }
 
