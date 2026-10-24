@@ -15,6 +15,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.support.v4.media.MediaMetadataCompat;
 import android.support.v4.media.session.MediaSessionCompat;
 import android.support.v4.media.session.PlaybackStateCompat;
@@ -49,11 +50,20 @@ public class MediaPlaybackService extends Service {
     public static final String EXTRA_PLAYING     = "me.streamvy.media.PLAYING";
     public static final String EXTRA_POSITION_SEC = "me.streamvy.media.POSITION_SEC";
     public static final String EXTRA_OPEN_LYRICS = "vybra_open_lyrics";
+    public static final String EXTRA_LIKED       = "me.streamvy.media.LIKED";
 
     private static final String CHANNEL_ID  = "vybra_playback";
     private static final int NOTIF_ID       = 0x7AB1;
     private static final String SESSION_TAG = "VybraMedia";
     private static final String LYRICS_ACTION = "me.streamvy.media.LYRICS";
+    private static final String LIKE_ACTION = "me.streamvy.media.LIKE";
+
+    /**
+     * Partial wake lock held while audio plays. Without it the CPU can sleep
+     * the moment the screen turns off and the WebView's audio decoder freezes
+     * mid-track — the classic "music stops when I lock the phone" bug.
+     */
+    private PowerManager.WakeLock wakeLock = null;
 
     /** Lets the plugin pick startForegroundService only when actually needed. */
     private static volatile boolean running = false;
@@ -73,6 +83,7 @@ public class MediaPlaybackService extends Service {
     private double durationSec = 0;
     private double positionSec = 0;
     private boolean playing = false;
+    private boolean liked = false;
     private boolean foreground = false;
 
     @Override
@@ -93,6 +104,7 @@ public class MediaPlaybackService extends Service {
             @Override public void onSeekTo(long posMs) { VybraMediaPlugin.emitSeek(posMs / 1000.0); }
             @Override public void onCustomAction(String action, Bundle extras) {
                 if (LYRICS_ACTION.equals(action)) openLyrics();
+                else if (LIKE_ACTION.equals(action)) VybraMediaPlugin.emitEvent("onLike");
             }
         });
         session.setActive(true);
@@ -114,6 +126,7 @@ public class MediaPlaybackService extends Service {
         if ("me.streamvy.media NEXT".equals(action)) { publish(); session.getController().getTransportControls().skipToNext(); return START_NOT_STICKY; }
         if ("me.streamvy.media PREV".equals(action)) { publish(); session.getController().getTransportControls().skipToPrevious(); return START_NOT_STICKY; }
         if (LYRICS_ACTION.equals(action)) { publish(); openLyrics(); return START_NOT_STICKY; }
+        if (LIKE_ACTION.equals(action)) { publish(); VybraMediaPlugin.emitEvent("onLike"); return START_NOT_STICKY; }
 
         if (intent != null) {
             if (ACTION_UPDATE.equals(action)) {
@@ -125,6 +138,7 @@ public class MediaPlaybackService extends Service {
                 if (ar != null) artist = ar;
                 if (al != null) album = al;
                 if (aw != null) artworkUrl = aw;
+                liked = intent.getBooleanExtra(EXTRA_LIKED, liked);
                 durationSec = intent.getDoubleExtra(EXTRA_DURATION_SEC, durationSec);
                 loadArtwork(artworkUrl);
                 pushMetadata();
@@ -132,6 +146,7 @@ public class MediaPlaybackService extends Service {
                 playing = intent.getBooleanExtra(EXTRA_PLAYING, playing);
                 positionSec = intent.getDoubleExtra(EXTRA_POSITION_SEC, positionSec);
                 durationSec = intent.getDoubleExtra(EXTRA_DURATION_SEC, durationSec);
+                updateWakeLock(playing);
                 pushPlaybackState();
             }
         }
@@ -142,6 +157,23 @@ public class MediaPlaybackService extends Service {
 
     private void dispatchPlay() { session.getController().getTransportControls().play(); }
     private void dispatchPause() { session.getController().getTransportControls().pause(); }
+
+    /** Hold a partial wake lock while playing so screen-off can't freeze audio. */
+    private void updateWakeLock(boolean acquire) {
+        try {
+            if (acquire) {
+                if (wakeLock == null) {
+                    PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                    if (pm == null) return;
+                    wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Vybra:playback");
+                    wakeLock.setReferenceCounted(false);
+                }
+                if (!wakeLock.isHeld()) wakeLock.acquire();
+            } else if (wakeLock != null && wakeLock.isHeld()) {
+                wakeLock.release();
+            }
+        } catch (Exception ignored) { /* wakelock denied — playback still works while the device is awake */ }
+    }
 
     /** Bring the app up on the Now Playing sheet's lyrics tab. */
     private void openLyrics() {
@@ -241,6 +273,9 @@ public class MediaPlaybackService extends Service {
                 R.drawable.ic_media_next, "Next",
                 servicePending("me.streamvy.media NEXT", 2)))
             .addAction(new NotificationCompat.Action(
+                R.drawable.ic_media_like, liked ? "Unlike" : "Like",
+                servicePending(LIKE_ACTION, 5)))
+            .addAction(new NotificationCompat.Action(
                 R.drawable.ic_media_lyrics, "Lyrics",
                 servicePending(LYRICS_ACTION, 4)))
             .setStyle(new androidx.media.app.NotificationCompat.MediaStyle()
@@ -314,6 +349,7 @@ public class MediaPlaybackService extends Service {
     // ── Lifecycle ───────────────────────────────────────────────────────────
 
     private void teardown() {
+        updateWakeLock(false);
         try { if (session != null) session.setActive(false); } catch (Exception ignored) {}
         if (foreground) {
             stopForeground(true);
@@ -325,6 +361,7 @@ public class MediaPlaybackService extends Service {
     @Override
     public void onDestroy() {
         running = false;
+        updateWakeLock(false);
         artExecutor.shutdownNow();
         try { if (session != null) session.release(); } catch (Exception ignored) {}
         super.onDestroy();

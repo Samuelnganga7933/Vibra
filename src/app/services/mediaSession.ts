@@ -25,6 +25,8 @@ export interface MediaNowPlaying {
   album?: string;
   artworkUrl?: string;
   durationSec: number;
+  /** Mirrors the heart state onto the notification's Like action. */
+  liked?: boolean;
 }
 
 export interface MediaState {
@@ -41,6 +43,8 @@ export interface MediaHandlers {
   onSeek(positionSec: number): void;
   /** Custom lock-screen action: open the lyrics view. */
   onOpenLyrics(): void;
+  /** Custom notification/lock-screen action: like the current track. */
+  onLike(): void;
 }
 
 interface VybraMediaPluginType {
@@ -77,6 +81,8 @@ function installWebHandlers(handlers: MediaHandlers): void {
   });
   try { ms.setActionHandler("seekbackward", () => handlers.onSeek(Math.max(0, lastPositionSec - 15))); } catch { /* optional */ }
   try { ms.setActionHandler("seekforward", () => handlers.onSeek(lastPositionSec + 15)); } catch { /* optional */ }
+  // "like" is in the spec but missing from older TS MediaSessionAction types.
+  try { ms.setActionHandler("like" as MediaSessionAction, () => handlers.onLike()); } catch { /* action unsupported here */ }
 }
 
 let lastPositionSec = 0;
@@ -98,6 +104,7 @@ export function mediaInit(handlers: MediaHandlers): void {
     Native.addListener("onNext", () => handlers.onNext()),
     Native.addListener("onPrev", () => handlers.onPrev()),
     Native.addListener("onOpenLyrics", () => handlers.onOpenLyrics()),
+    Native.addListener("onLike", () => handlers.onLike()),
     Native.addListener("onSeek", ev => {
       const pos = ev?.positionSec;
       if (typeof pos === "number") handlers.onSeek(pos);
@@ -117,7 +124,12 @@ export function mediaInit(handlers: MediaHandlers): void {
 /** Publish (or clear, with null) the now-playing metadata + artwork. */
 export function mediaSetNowPlaying(np: MediaNowPlaying | null): void {
   try {
-    if (nativeReady) {
+    // Push to the native service even before the listeners finish attaching —
+    // the foreground service must be alive on the FIRST play, or Android
+    // freezes the WebView renderer once the app is backgrounded and audio
+    // dies. The call is fire-and-forget: an old APK without the plugin
+    // rejects and we swallow it.
+    if (isNativeApp()) {
       if (np) void Native.updateNowPlaying(np).catch(swallow);
       else void Native.release().catch(swallow);
     }
@@ -144,7 +156,9 @@ export function mediaSetNowPlaying(np: MediaNowPlaying | null): void {
 export function mediaSetState(st: MediaState, durationSec: number): void {
   lastPositionSec = st.positionSec;
   try {
-    if (nativeReady) {
+    // Same as mediaSetNowPlaying: reach the service unconditionally on native
+    // so the foreground-service promotion happens on the first play tick.
+    if (isNativeApp()) {
       void Native.setPlaybackState({ ...st, durationSec }).catch(swallow);
     }
     const ms = navigator.mediaSession;
@@ -165,7 +179,7 @@ export function mediaSetState(st: MediaState, durationSec: number): void {
 
 /** Android 13+: ask for notification permission once, before first play. */
 export function mediaRequestNotificationPermission(): void {
-  if (!nativeReady) return;
+  if (!isNativeApp()) return;
   void Native.requestNotificationPermission().catch(swallow);
 }
 

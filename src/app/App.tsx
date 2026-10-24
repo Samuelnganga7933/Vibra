@@ -3642,8 +3642,12 @@ export default function App() {
   isPlayingRef.current = isPlaying;
   const audioDurRef = useRef(audioDuration);
   audioDurRef.current = audioDuration;
-  const mediaControlsRef = useRef({ togglePlay, playNext, playPrev, handleSeek, openLyrics: () => openPanel("lyrics") });
-  mediaControlsRef.current = { togglePlay, playNext, playPrev, handleSeek, openLyrics: () => openPanel("lyrics") };
+  const mediaControlsRef = useRef({ togglePlay, playNext, playPrev, handleSeek, openLyrics: () => openPanel("lyrics"), likeCurrent: () => {} });
+  mediaControlsRef.current = {
+    togglePlay, playNext, playPrev, handleSeek,
+    openLyrics: () => openPanel("lyrics"),
+    likeCurrent: () => { if (currentTrack) toggleLike(currentTrack.id); },
+  };
 
   useEffect(() => {
     mediaInit({
@@ -3656,6 +3660,7 @@ export default function App() {
         if (dur > 0) mediaControlsRef.current.handleSeek(Math.max(0, Math.min(1, posSec / dur)));
       },
       onOpenLyrics: () => mediaControlsRef.current.openLyrics(),
+      onLike: () => mediaControlsRef.current.likeCurrent(),
     });
     return () => mediaRelease();
   }, []);
@@ -3669,8 +3674,9 @@ export default function App() {
       album: currentTrack.album,
       artworkUrl: currentTrack.imageUrl,
       durationSec: audioDuration || currentTrack.durationSec || 0,
+      liked: likedTrackIds.has(currentTrack.id),
     });
-  }, [currentTrack, audioDuration]);
+  }, [currentTrack, audioDuration, likedTrackIds]);
 
   // Play/pause flips always reach the system UI; position ticks only while the
   // app is visible (background ticks would just churn the foreground service).

@@ -92,6 +92,7 @@ public class VybraMediaPlugin extends Plugin {
         intent.putExtra(MediaPlaybackService.EXTRA_ARTIST, opts.getString("artist", ""));
         intent.putExtra(MediaPlaybackService.EXTRA_ALBUM, opts.getString("album", ""));
         intent.putExtra(MediaPlaybackService.EXTRA_ARTWORK, opts.getString("artworkUrl", ""));
+        intent.putExtra(MediaPlaybackService.EXTRA_LIKED, opts.getBoolean("liked", false));
         intent.putExtra(MediaPlaybackService.EXTRA_DURATION_SEC, opts.optDouble("durationSec", 0d));
         startServiceSafely(intent);
         call.resolve();
