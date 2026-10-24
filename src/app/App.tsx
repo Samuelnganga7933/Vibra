@@ -214,18 +214,18 @@ function TrackRow({ track, index, queue, showLike = false, showAlbum = false, al
         style={{ width: 22, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0 }}>
         {isActive && isPlaying
           ? <Pause size={13} color={C.accent} fill={C.accent} />
-          : <span style={{ fontSize: 12, color: isActive ? C.accent : C.muted, fontWeight: 600 }}>{index !== undefined ? index + 1 : <Play size={12} />}</span>}
+          : <span style={{ fontSize: 12, color: isActive ? C.accent : C.dim, fontWeight: 600 }}>{index !== undefined ? index + 1 : <Play size={12} />}</span>}
       </div>
       <div role="button" tabIndex={0} onClick={() => playTrack(track, queue, sourceShelfId)} onKeyDown={e => e.key === "Enter" && playTrack(track, queue, sourceShelfId)}
         style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 0, cursor: "pointer" }}>
         <CoverArt bg={track.bg} imageUrl={track.imageUrl} size={44} radius={8} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 700, fontSize: 14, color: isActive ? C.accent : C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{track.title}</div>
-          <div style={{ fontSize: 12, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{track.artist}</div>
+          <div style={{ fontSize: 12, color: C.dim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{track.artist}</div>
         </div>
       </div>
       {showAlbum && (
-        <div style={{ flex: "0 1 200px", minWidth: 0, fontSize: 12.5, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <div style={{ flex: "0 1 200px", minWidth: 0, fontSize: 12.5, color: C.dim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {albumName || "—"}
         </div>
       )}
@@ -235,7 +235,7 @@ function TrackRow({ track, index, queue, showLike = false, showAlbum = false, al
           <Heart size={13} fill={isLiked ? C.accent : "none"} />
         </button>
       )}
-      <span style={{ fontSize: 12, color: C.muted, flexShrink: 0, minWidth: showAlbum ? 64 : 36, textAlign: "right" }}>{track.duration}</span>
+      <span style={{ fontSize: 12, color: C.dim, flexShrink: 0, minWidth: showAlbum ? 64 : 36, textAlign: "right" }}>{track.duration}</span>
       <button onClick={e => { e.stopPropagation(); openTrackOptions(track); }}
         style={{ width: 28, height: 28, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.muted, flexShrink: 0 }}>
         <MoreHorizontal size={13} />
@@ -749,7 +749,7 @@ function SearchScreen({ seed }: { seed?: string }) {
         </div>
         <input ref={inputRef} value={query} onChange={e => setQuery(e.target.value)}
           placeholder="Songs, artists, albums…"
-          style={{ width: "100%", height: 48, borderRadius: 12, border: `1px solid ${C.border}`, background: C.surf, color: C.text, fontSize: 15, padding: "0 44px 0 46px", outline: "none", boxSizing: "border-box" }} />
+          style={{ width: "100%", height: 48, borderRadius: 999, border: "none", background: C.surf, color: C.text, fontSize: 15, padding: "0 44px 0 46px", outline: "none", boxSizing: "border-box" }} />
         {query && (
           <button onClick={() => setQuery("")}
             style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: C.muted, display: "grid", placeItems: "center" }}>

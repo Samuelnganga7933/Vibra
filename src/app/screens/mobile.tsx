@@ -111,14 +111,14 @@ function MRow({ track, queue, trailing, onClick, sub }: {
   const play = () => { if (onClick) { onClick(); return; } playTrack(track, queue); };
   return (
     <div role="button" tabIndex={0} onClick={play} onKeyDown={e => e.key === "Enter" && play()}
-      style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 0", cursor: "pointer", minWidth: 0 }}>
+      style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 8px", margin: "0 -8px", borderRadius: 12, background: active ? C.surf : "transparent", cursor: "pointer", minWidth: 0 }}>
       <CoverArt bg={track.bg} imageUrl={track.imageUrl} size={52} radius={12} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontWeight: 700, fontSize: 14, color: active ? C.accent : C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{track.title}</div>
-        <div style={{ fontSize: 12, color: C.muted, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sub ?? track.artist}</div>
+        <div style={{ fontSize: 12, color: C.dim, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sub ?? track.artist}</div>
       </div>
       {trailing ?? (
-        <span style={{ fontSize: 12, color: C.muted, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
+        <span style={{ fontSize: 12, color: C.dim, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
           {active && isPlaying ? <Pause size={13} color={C.accent} fill={C.accent} /> : track.duration}
         </span>
       )}
@@ -432,7 +432,7 @@ function MobileSearch({ seed }: { seed?: string }) {
           </div>
           <input ref={inputRef} value={query} onChange={e => setQuery(e.target.value)}
             placeholder="Songs, artists, albums…"
-            style={{ width: "100%", height: 50, borderRadius: 10, border: "none", background: C.surf, color: C.text, fontSize: 15, padding: "0 48px 0 50px", outline: "none", boxSizing: "border-box", fontFamily: "inherit" }} />
+            style={{ width: "100%", height: 50, borderRadius: 999, border: "none", background: C.surf, color: C.text, fontSize: 15, padding: "0 48px 0 50px", outline: "none", boxSizing: "border-box", fontFamily: "inherit" }} />
           {query && (
             <button onClick={() => setQuery("")} aria-label="Clear search"
               style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: C.muted, display: "grid", placeItems: "center", padding: 4 }}>
@@ -446,7 +446,7 @@ function MobileSearch({ seed }: { seed?: string }) {
             [...Array(6)].map((_, i) => <MSkelRow key={i} />)
           ) : results.length > 0 ? (
             <>
-              <div style={{ fontSize: 13, fontWeight: 700, color: C.muted, marginBottom: 8 }}>{results.length} result{results.length !== 1 ? "s" : ""}</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.dim, marginBottom: 8 }}>{results.length} result{results.length !== 1 ? "s" : ""}</div>
               {results.slice(0, 25).map((t, i) => (
                 <MRow key={t.id} track={t} queue={results.slice(i + 1)} />
               ))}
