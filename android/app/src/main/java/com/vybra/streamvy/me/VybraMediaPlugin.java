@@ -10,6 +10,7 @@ import android.os.Build;
 import android.os.Environment;
 import android.content.ContentValues;
 import android.provider.MediaStore;
+import android.provider.Settings;
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.PermissionState;
@@ -161,6 +162,17 @@ public class VybraMediaPlugin extends Plugin {
         return Build.VERSION.SDK_INT >= 33 ? "audioFiles" : "audioFilesLegacy";
     }
 
+    /** Permanent deny ("Don't ask again") — the system will never show the
+     *  dialog again, so the only way in is the app's settings page. */
+    @PluginMethod
+    public void openAudioSettings(PluginCall call) {
+        Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.fromParts("package", getContext().getPackageName(), null));
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        getContext().startActivity(intent);
+        call.resolve();
+    }
+
     @PluginMethod
     public void listLocalMusic(PluginCall call) {
         if (getPermissionState(audioAlias()) != PermissionState.GRANTED) {
@@ -179,11 +191,14 @@ public class VybraMediaPlugin extends Plugin {
                 MediaStore.Audio.Media.DATE_ADDED,
                 MediaStore.Audio.Media.DATA
             };
-            // Music files only, title-sorted like a library list.
+            // Every audio file the user owns — sideloaded downloads rarely
+            // carry IS_MUSIC=1, so match on MIME too or the list looks empty
+            // right after the permission is granted. Title-sorted like a library.
             try (Cursor cursor = getContext().getContentResolver().query(
                     MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
                     projection,
-                    MediaStore.Audio.Media.IS_MUSIC + " != 0",
+                    MediaStore.Audio.Media.IS_MUSIC + " != 0 OR "
+                        + MediaStore.Audio.Media.MIME_TYPE + " LIKE 'audio/%'",
                     null,
                     MediaStore.Audio.Media.TITLE + " ASC")) {
                 if (cursor != null) {

@@ -24,10 +24,15 @@ export interface LocalSong {
 interface VybraMediaLocalType {
   listLocalMusic(): Promise<{ songs: LocalSong[] }>;
   requestAudioPermission(): Promise<void>;
+  openAudioSettings(): Promise<void>;
   checkPermissions(): Promise<Record<string, string>>;
 }
 
 const Native = registerPlugin<VybraMediaLocalType>("VybraMedia");
+
+const AUDIO_KEYS = ["audioFiles", "audioFilesLegacy"];
+const audioGranted = (state: Record<string, string> | undefined) =>
+  AUDIO_KEYS.some(k => state?.[k] === "granted");
 
 /** Gradient palette for artwork-less local rows — same family as BG_PALETTE. */
 const LOCAL_BGS = [
@@ -65,12 +70,39 @@ export async function requestLocalMusicPermission(): Promise<boolean> {
   if (!Capacitor.isNativePlatform()) return false;
   try {
     await Native.requestAudioPermission();
-    const state = await Native.checkPermissions();
-    const keys = ["audioFiles", "audioFilesLegacy"];
-    return keys.some(k => state?.[k] === "granted");
+    if (audioGranted(await Native.checkPermissions())) return true;
+    // Some OEMs publish the grant a beat AFTER the dialog callback resolves;
+    // poll briefly instead of reporting a false denial.
+    for (let i = 0; i < 4; i++) {
+      await new Promise(r => setTimeout(r, 300));
+      if (audioGranted(await Native.checkPermissions())) return true;
+    }
+    return false;
   } catch {
     return false;
   }
+}
+
+/**
+ * True when the system will still show the permission dialog. A hard
+ * "denied" means the user chose "Don't ask again" — the only way forward is
+ * the app settings screen (see openAudioPermissionSettings).
+ */
+export async function audioPermissionAskable(): Promise<boolean> {
+  if (!Capacitor.isNativePlatform()) return false;
+  try {
+    const state = await Native.checkPermissions();
+    const mine = AUDIO_KEYS.map(k => state?.[k]);
+    return mine.some(s => s === "prompt" || s === "prompt-with-rationale" || s === "granted");
+  } catch {
+    return false;
+  }
+}
+
+/** Jump straight to this app's system settings page (permission toggles). */
+export function openAudioPermissionSettings(): void {
+  if (!Capacitor.isNativePlatform()) return;
+  void Native.openAudioSettings().catch(() => { /* not native after all */ });
 }
 
 /** Absolute path → a URL the WebView's <audio> can play. */

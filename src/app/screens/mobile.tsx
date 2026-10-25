@@ -20,6 +20,7 @@ import { marketLabel, marketChartQuery } from "../services/locale";
 import { clearOfflineTracks, readOfflineTracks, type OfflineTrack } from "../services/offlineStorage";
 import {
   isNativeMediaAvailable, listLocalMusic, requestLocalMusicPermission, localSongToTrack,
+  audioPermissionAskable, openAudioPermissionSettings,
   type LocalSong,
 } from "../services/localMusic";
 import { bffJson } from "../services/bff";
@@ -801,9 +802,20 @@ function MobileDownloads() {
   const localTracks = useMemo(() => (localSongs ?? []).map(localSongToTrack), [localSongs]);
   const grantLocal = async () => {
     const granted = await requestLocalMusicPermission();
-    const songs = await loadLocal();
-    if (!granted) toast("Permission denied — device music stays hidden");
-    else if (songs === null) toast("Couldn't read music on this device");
+    // MediaStore may index the first grant a moment after it lands — give
+    // the query one short settle before deciding the section is empty.
+    const songs = granted
+      ? await new Promise<LocalSong[] | null>(resolve => {
+          setTimeout(() => { void loadLocal().then(resolve); }, 250);
+        })
+      : await loadLocal();
+    if (!granted) {
+      if (await audioPermissionAskable()) toast("Permission denied — device music stays hidden");
+      else toast("Music access is blocked", {
+        description: "Allow music and audio in system settings to see your files.",
+        action: { label: "Settings", onClick: openAudioPermissionSettings },
+      });
+    } else if (songs === null) toast("Couldn't read music on this device");
   };
 
   useEffect(() => { setLocalMeta(readOfflineTracks()); }, [downloadedTracks.length, activeDownloads.length]);
