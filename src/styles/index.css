@@ -95,3 +95,10 @@
     overflow: hidden !important;
   }
 }
+
+/* ─── Search field — high-contrast text + placeholder on the surf pill ───────
+   The runtime theme publishes --vibra-text on :root (App.tsx) so the
+   placeholder tracks dark/oled/light instead of the browser's dim grey. */
+.vibra-search-input { color: var(--vibra-text, #f4f3f8); caret-color: var(--vibra-text, #f4f3f8); }
+.vibra-search-input::placeholder { color: var(--vibra-text, #f4f3f8); opacity: 0.75; }
+.vibra-search-input:focus::placeholder { opacity: 0.5; }

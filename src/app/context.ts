@@ -294,19 +294,25 @@ export const ACCENT_OPTIONS = [
   { label: "Cyan",     value: "#06B6D4" },
 ];
 
+/**
+ * Search browse categories. `query` is the phrase actually sent to the
+ * catalogue — bare genre words ("hip hop", "new releases") match video
+ * titles, so each tile carries a playlist-scoped phrase verified against
+ * the search API. Labels stay short; queries stay music.
+ */
 export const BROWSE_CATEGORIES = [
-  { id: "trending",   label: "Trending",     bg: "#7A2438" },
-  { id: "new",        label: "New releases", bg: "#1F4E5F" },
-  { id: "pop",        label: "Pop",          bg: "#5B3FD0" },
-  { id: "hiphop",     label: "Hip-hop",      bg: "#8A3A1F" },
-  { id: "electronic", label: "Electronic",   bg: "#2F5A3A" },
-  { id: "rnb",        label: "R&B",          bg: "#9B3B63" },
-  { id: "rock",       label: "Rock",         bg: "#3A3A3A" },
-  { id: "jazz",       label: "Jazz",         bg: "#2C4A5E" },
-  { id: "classical",  label: "Classical",    bg: "#4A3280" },
-  { id: "podcasts",   label: "Podcasts",     bg: "#6E2A2A" },
-  { id: "ambient",    label: "Ambient",      bg: "#1B4A6A" },
-  { id: "workout",    label: "Workout",      bg: "#8A4A1F" },
+  { id: "trending",   label: "Trending",     bg: "#7A2438", query: "top songs playlist" },
+  { id: "new",        label: "New releases", bg: "#1F4E5F", query: "new music playlist" },
+  { id: "pop",        label: "Pop",          bg: "#5B3FD0", query: "pop hits playlist" },
+  { id: "hiphop",     label: "Hip-hop",      bg: "#8A3A1F", query: "top hip hop songs playlist" },
+  { id: "electronic", label: "Electronic",   bg: "#2F5A3A", query: "electronic dance music playlist" },
+  { id: "rnb",        label: "R&B",          bg: "#9B3B63", query: "r&b hits playlist" },
+  { id: "rock",       label: "Rock",         bg: "#3A3A3A", query: "rock hits playlist" },
+  { id: "jazz",       label: "Jazz",         bg: "#2C4A5E", query: "jazz playlist" },
+  { id: "classical",  label: "Classical",    bg: "#4A3280", query: "classical music playlist" },
+  { id: "afrobeats",  label: "Afrobeats",    bg: "#6E2A2A", query: "afrobeats hits playlist" },
+  { id: "ambient",    label: "Ambient",      bg: "#1B4A6A", query: "ambient music playlist" },
+  { id: "workout",    label: "Workout",      bg: "#8A4A1F", query: "workout playlist gym" },
 ];
 
 export const BG_PALETTE = ["#2C4A5E", "#4A3280", "#8A3A1F", "#1F4E5F", "#9B3B63", "#2F5A3A", "#7A2438", "#B0587A", "#3A3A3A", "#3A2F55", "#5A3A10", "#2A2A3A"];

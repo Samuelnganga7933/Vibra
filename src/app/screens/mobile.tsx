@@ -131,7 +131,7 @@ function MChip({ label, active, onClick }: { label: string; active?: boolean; on
   const { C } = useApp();
   return (
     <button onClick={onClick}
-      style={{ border: "none", borderRadius: 999, padding: "10px 18px", fontSize: 13.5, fontWeight: 700, fontFamily: "inherit", cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0, transition: "all .15s", background: active ? C.text : C.surf, color: active ? C.pane : C.muted }}>
+      style={{ border: "none", borderRadius: 999, padding: "10px 18px", fontSize: 13.5, fontWeight: 700, fontFamily: "inherit", cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0, transition: "all .15s", background: active ? C.text : C.surf, color: active ? C.pane : C.text }}>
       {label}
     </button>
   );
@@ -431,7 +431,7 @@ function MobileSearch({ seed }: { seed?: string }) {
             <SearchIcon size={20} />
           </div>
           <input ref={inputRef} value={query} onChange={e => setQuery(e.target.value)}
-            placeholder="Songs, artists, albums…"
+            placeholder="Songs, artists, albums…" className="vibra-search-input"
             style={{ width: "100%", height: 50, borderRadius: 999, border: "none", background: C.surf, color: C.text, fontSize: 15, padding: "0 48px 0 50px", outline: "none", boxSizing: "border-box", fontFamily: "inherit" }} />
           {query && (
             <button onClick={() => setQuery("")} aria-label="Clear search"
@@ -474,7 +474,7 @@ function MobileSearch({ seed }: { seed?: string }) {
             <MSectionTitle>Browse all</MSectionTitle>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               {browseTiles.map(tile => (
-                <button key={tile.id} onClick={() => setQuery("query" in tile ? (tile as { query: string }).query : tile.label)}
+                <button key={tile.id} onClick={() => setQuery(tile.query)}
                   style={{ position: "relative", height: 88, borderRadius: 10, border: "none", cursor: "pointer", overflow: "hidden", background: `linear-gradient(135deg, ${tile.bg}, color-mix(in srgb, ${tile.bg} 55%, #000))`, padding: "12px 14px", display: "flex", alignItems: "flex-start", textAlign: "left", transition: "transform .15s", fontFamily: "inherit" }}
                   onMouseEnter={e => (e.currentTarget.style.transform = "scale(1.02)")}
                   onMouseLeave={e => (e.currentTarget.style.transform = "scale(1)")}>

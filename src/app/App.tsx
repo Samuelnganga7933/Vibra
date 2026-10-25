@@ -750,7 +750,7 @@ function SearchScreen({ seed }: { seed?: string }) {
           <Search size={18} />
         </div>
         <input ref={inputRef} value={query} onChange={e => setQuery(e.target.value)}
-          placeholder="Songs, artists, albums…"
+          placeholder="Songs, artists, albums…" className="vibra-search-input"
           style={{ width: "100%", height: 48, borderRadius: 999, border: "none", background: C.surf, color: C.text, fontSize: 15, padding: "0 44px 0 46px", outline: "none", boxSizing: "border-box" }} />
         {query && (
           <button onClick={() => setQuery("")}
@@ -784,7 +784,7 @@ function SearchScreen({ seed }: { seed?: string }) {
             <h2 style={{ fontSize: 17, fontWeight: 700, color: C.text, margin: "0 0 12px" }}>Recommended for you</h2>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(168px, 1fr))", gap: 10 }}>
               {browseTiles.map(tile => (
-                <button key={tile.id} onClick={() => setQuery("query" in tile ? tile.query : tile.label)}
+                <button key={tile.id} onClick={() => setQuery(tile.query)}
                   style={{ position: "relative", height: 74, borderRadius: 12, border: "none", cursor: "pointer", overflow: "hidden", background: tile.bg, padding: "0 16px", display: "flex", alignItems: "flex-end", textAlign: "left", transition: "transform .15s" }}
                   onMouseEnter={e => (e.currentTarget.style.transform = "scale(1.02)")}
                   onMouseLeave={e => (e.currentTarget.style.transform = "scale(1)")}>
@@ -961,7 +961,7 @@ function DiscoverScreen() {
         <h2 style={{ fontSize: 20, fontWeight: 800, color: C.text, margin: "0 0 12px" }}>Moods & genres</h2>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
           {BROWSE_CATEGORIES.slice(0, 6).map(cat => (
-            <button key={cat.id} onClick={() => navigate({ id: "search", q: cat.label })}
+            <button key={cat.id} onClick={() => navigate({ id: "search", q: cat.query })}
               style={{ height: 60, borderRadius: 10, background: cat.bg, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 13, color: "#fff" }}>
               {cat.label}
             </button>
@@ -3008,6 +3008,14 @@ export default function App() {
   const [shareData, setShareData]                       = useState(false);
 
   const C = useMemo(() => makeColors(theme, accent), [theme, accent]);
+
+  // Theme colours CSS can't read from React state — placeholders and other
+  // pseudo-element styling pick them up from these (see styles/index.css).
+  useEffect(() => {
+    const root = document.documentElement.style;
+    root.setProperty("--vibra-text", C.text);
+    root.setProperty("--vibra-muted", C.muted);
+  }, [C]);
 
   // ── Contextual UI ─────────────────────────────────────────────────────────────
   /** Right panel — closed by default; the bar opens it per tab. */
