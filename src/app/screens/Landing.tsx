@@ -320,7 +320,7 @@ export function LandingScreen({ onEnter }: { onEnter?: () => void }) {
     const meta = document.querySelector('meta[name="description"]');
     const prevDesc = meta?.getAttribute("content") ?? null;
     document.title = "Vybra: your music, wherever you play";
-    meta?.setAttribute("content", "Search any song and press play. No account needed. Apps for Android, iPhone, Mac and Windows.");
+    meta?.setAttribute("content", "Every song, one search away. Sign up free — playlists and likes on every device. Apps for Android, iPhone, Mac and Windows.");
     return () => {
       document.title = prevTitle;
       if (meta && prevDesc !== null) meta.setAttribute("content", prevDesc);
@@ -348,7 +348,10 @@ export function LandingScreen({ onEnter }: { onEnter?: () => void }) {
     return () => { cancelled = true; };
   }, []);
 
-  const goHome = enter({ id: "home" }, "/");
+  const scrollTop = (e: React.MouseEvent) => {
+    e.preventDefault();
+    rootRef.current?.scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" });
+  };
   const goApp = enter({ id: "download" }, "/get-app");
   const goLogin = enter({ id: "auth", mode: "login" }, "/login");
   const goSignup = enter({ id: "auth", mode: "signup" }, "/signup");
@@ -362,7 +365,7 @@ export function LandingScreen({ onEnter }: { onEnter?: () => void }) {
       <header className={`vy-header${stuck ? " vy-stuck" : ""}`}>
         <div className="vy-wrap">
           <div className="vy-header-in">
-            <a href="/" onClick={goHome} aria-label="Vybra home"><Wordmark /></a>
+            <a href="/home" onClick={scrollTop} aria-label="Vybra home"><Wordmark /></a>
             <nav className="vy-nav">
               <a className="vy-navlink" href="/get-app" onClick={goApp}>Get the app</a>
               <a className="vy-btn vy-ghost" href="/login" onClick={goLogin}>Log in</a>
@@ -407,8 +410,8 @@ export function LandingScreen({ onEnter }: { onEnter?: () => void }) {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: reduced ? 0.2 : 0.6, delay: reduced ? 0 : 0.42, ease: EASE_OUT }}
             >
-              Search any song and press play. No account needed. Sign up when you want to
-              save playlists and likes.
+              Every song, one search away. Sign up free — your playlists and
+              likes follow you to every device.
             </motion.p>
 
             <motion.div
@@ -417,7 +420,7 @@ export function LandingScreen({ onEnter }: { onEnter?: () => void }) {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: reduced ? 0.2 : 0.6, delay: reduced ? 0 : 0.54, ease: EASE_OUT }}
             >
-              <a className="vy-btn vy-light vy-big" href="/" onClick={goHome}>
+              <a className="vy-btn vy-light vy-big" href="/signup" onClick={goSignup}>
                 <Play size={18} fill="currentColor" /> Start listening
               </a>
               <a className="vy-btn vy-ghost vy-big" href="/get-app" onClick={goApp}>
@@ -438,7 +441,7 @@ export function LandingScreen({ onEnter }: { onEnter?: () => void }) {
           <HeroDeck track={trending[0] ?? null} reduced={reduced} />
         </section>
 
-        <TrendingSection tracks={trending} loading={loading} onEnter={goHome} />
+        <TrendingSection tracks={trending} loading={loading} onEnter={goLogin} />
 
         <section className="vy-sec" id="get">
           <Reveal>
