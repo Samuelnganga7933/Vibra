@@ -241,7 +241,17 @@ export function AuthScreen({ mode: initialMode }: { mode: "login" | "signup" }) 
 
             {isSignup && (
               <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5, color: C.dim, textAlign: "center" }}>
-                By signing up you agree to the Terms and the Privacy Policy.
+                By signing up you agree to our{" "}
+                <a href="https://streamvy.me/tos" target="_blank" rel="noopener noreferrer"
+                  style={{ color: C.muted, fontWeight: 700, textDecoration: "underline", textUnderlineOffset: 2 }}>
+                  Terms
+                </a>{" "}
+                and{" "}
+                <a href="https://streamvy.me/privacy-policy" target="_blank" rel="noopener noreferrer"
+                  style={{ color: C.muted, fontWeight: 700, textDecoration: "underline", textUnderlineOffset: 2 }}>
+                  Privacy Policy
+                </a>
+                .
               </p>
             )}
           </form>

@@ -35,7 +35,7 @@ export function PlayerPage() {
     lyrics, plainLyrics, lyricsLoading, uiState,
     playPrev, playNext, shuffleOn, toggleShuffle, repeatMode, cycleRepeat,
     outputDevice,
-    downloadedTracks, downloadTrack, refreshDownloads,
+    downloadedTracks, downloadTrack, refreshDownloads, activeDownloads,
   } = useApp();
   const scrubRef = useRef<HTMLDivElement | null>(null);
   /** Mobile footer's queue icon opens the TOP queue sheet (per the ask). */
@@ -80,6 +80,7 @@ export function PlayerPage() {
   if (!currentTrack) return null;
   const isLiked = likedTrackIds.has(currentTrack.id);
   const isDownloaded = downloadedTracks.some(t => String(t.id) === String(currentTrack.id));
+  const dlBusy = activeDownloads.some(d => d.id === String(currentTrack.id));
   const total = audioDuration > 0 ? audioDuration : currentTrack.durationSec ?? 0;
 
   const seekFromEvent = (clientX: number) => {
@@ -176,7 +177,7 @@ export function PlayerPage() {
   };
 
   const onDownloadPress = () => {
-    if (!currentTrack) return;
+    if (!currentTrack || dlBusy) return;
     if (isDownloaded) {
       void removeDownload(String(currentTrack.id)).then(() => refreshDownloads());
       toast("Removed download");
@@ -460,9 +461,11 @@ export function PlayerPage() {
               <Heart size={22} fill={isLiked ? C.accent : "none"} />
             </button>
             {/* Download sits right beside Like — same row, same weight. */}
-            <button onClick={onDownloadPress} aria-label={isDownloaded ? "Remove download" : "Download"}
+            <button onClick={onDownloadPress} aria-label={dlBusy ? "Downloading" : isDownloaded ? "Remove download" : "Download"}
               style={{ width: 42, height: 42, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: isDownloaded ? DEVICE_GREEN : C.muted, flexShrink: 0 }}>
-              {isDownloaded ? <Check size={22} /> : <Download size={22} />}
+              {dlBusy
+                ? <span style={{ width: 20, height: 20, borderRadius: "50%", border: `2px solid ${C.muted}`, borderTopColor: C.accent, animation: "spin .8s linear infinite" }} />
+                : isDownloaded ? <Check size={22} /> : <Download size={22} />}
             </button>
           </div>
 

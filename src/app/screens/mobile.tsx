@@ -7,7 +7,7 @@ import {
 import { toast } from "sonner";
 import {
   useApp, toTrackItem, fromApiTrack, BROWSE_CATEGORIES,
-  type Screen, type Track, type LibTab, type ArtistItem, type ActiveDownload,
+  type Screen, type Track, type LibTab, type ArtistItem,
 } from "../context";
 import type { HomeShelf, HomeItem } from "../services/home";
 import { TrackCard } from "../components/ui/cards";
@@ -753,32 +753,7 @@ function fmtBytes(n: number): string {
   return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
-/** One in-flight save — cover, artist · percent, progress bar, ring. */
-function MActiveDownloadRow({ d }: { d: ActiveDownload }) {
-  const { C } = useApp();
-  const pct = Math.round(Math.min(1, Math.max(0, d.progress)) * 100);
-  const R = 15.5, CIRC = 2 * Math.PI * R;
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 0", minWidth: 0 }}>
-      <CoverArt bg={d.bg} imageUrl={d.imageUrl} size={52} radius={12} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontWeight: 700, fontSize: 14, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.title}</div>
-        <div style={{ fontSize: 12, color: C.muted, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.artist} · {pct}%</div>
-        <div style={{ height: 3, borderRadius: 2, background: C.border, marginTop: 7, overflow: "hidden" }}>
-          <div style={{ width: `${pct}%`, height: "100%", borderRadius: 2, background: C.accent, transition: "width .3s linear" }} />
-        </div>
-      </div>
-      <div style={{ position: "relative", width: 36, height: 36, flexShrink: 0 }}>
-        <svg viewBox="0 0 36 36" width={36} height={36} style={{ transform: "rotate(-90deg)" }} aria-hidden>
-          <circle cx="18" cy="18" r={R} fill="none" stroke={C.border} strokeWidth="3" />
-          <circle cx="18" cy="18" r={R} fill="none" stroke={C.accent} strokeWidth="3" strokeLinecap="round"
-            strokeDasharray={CIRC} strokeDashoffset={CIRC * (1 - d.progress)}
-            style={{ transition: "stroke-dashoffset .3s linear" }} />
-        </svg>
-      </div>
-    </div>
-  );
-}
+
 
 function MobileDownloads() {
   const { C, navigate, canGoBack, goBack, downloadedTracks, refreshDownloads, activeDownloads } = useApp();
@@ -861,17 +836,8 @@ function MobileDownloads() {
         )}
       </div>
 
-      {activeDownloads.length > 0 && (
-        <div style={{ padding: "22px 24px 0" }}>
-          <MSectionTitle right={<span style={{ fontSize: 13, color: C.muted, fontWeight: 600 }}>{activeDownloads.length} {activeDownloads.length === 1 ? "song" : "songs"}</span>}>
-            Downloading
-          </MSectionTitle>
-          {activeDownloads.map(d => <MActiveDownloadRow key={d.id} d={d} />)}
-        </div>
-      )}
-
       {downloadedTracks.length > 0 ? (
-        <div style={{ padding: `${activeDownloads.length > 0 ? 26 : 22}px 24px 0` }}>
+        <div style={{ padding: "22px 24px 0" }}>
           <MSectionTitle right={<span style={{ fontSize: 13, color: C.muted, fontWeight: 600 }}>{downloadedTracks.length} {downloadedTracks.length === 1 ? "song" : "songs"}</span>}>
             Downloaded
           </MSectionTitle>

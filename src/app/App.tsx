@@ -1605,8 +1605,11 @@ function SettingsScreen() {
             onClick={() => setFbOpen(true)}
             right={<Star size={16} color={C.accent} />} />
           <Row label="Version" sub="Vybra 2.1.0" right={<span style={{ fontSize: 13, color: C.accent, fontWeight: 600 }}>Latest</span>} />
-          <Row label="Terms of service" onClick={() => toast("Opening terms…")} right={<ChevronRight size={16} color={C.muted} />} />
-          <Row label="Privacy policy" onClick={() => toast("Opening privacy policy…")} last right={<ChevronRight size={16} color={C.muted} />} />
+          <Row label="Terms of service" onClick={() => window.open("https://streamvy.me/tos", "_blank", "noopener")} right={<ChevronRight size={16} color={C.muted} />} />
+          <Row label="Privacy policy" onClick={() => window.open("https://streamvy.me/privacy-policy", "_blank", "noopener")} right={<ChevronRight size={16} color={C.muted} />} />
+          <Row label="Contact" sub="vy.legal@protonmail.com"
+            onClick={() => { window.location.href = "mailto:vy.legal@protonmail.com"; }}
+            last right={<ChevronRight size={16} color={C.muted} />} />
         </Section>
 
         {/* Sign out lives under Profile (mobile + desktop boards), not here. */}
@@ -1908,12 +1911,16 @@ function TrackOptionsSheet({ track, onClose }: { track: Track; onClose: () => vo
             toast("Download removed");
           });
         }, true)
-      : option(<Download size={18} />, dlBusy ? "Downloading…" : "Download", () => {
-          if (dlBusy) return;
-          void downloadTrack(track).then(outcome => {
-            if (outcome !== "failed") setDownloaded(true);
-          });
-        }),
+      : option(
+          dlBusy
+            ? <span style={{ width: 17, height: 17, borderRadius: "50%", border: `2px solid ${C.muted}`, borderTopColor: C.accent, animation: "spin .8s linear infinite" }} />
+            : <Download size={18} />,
+          "Download", () => {
+            if (dlBusy) return;
+            void downloadTrack(track).then(outcome => {
+              if (outcome !== "failed") setDownloaded(true);
+            });
+          }),
     option(<Compass size={18} />, `More from ${track.artist}`, () => { onClose(); navigate({ id: "search", q: track.artist }); }),
     option(<Share2 size={18} />, "Share track", () => {
       // Prefer the OS share sheet when the browser offers one.
@@ -2791,6 +2798,8 @@ function MobileLayout() {
 // ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [navStack, setNavStack] = useState<Screen[]>([{ id: "home" }]);
+  /** Signed-out visitors land on the marketing page until they pick a door. */
+  const [entered, setEntered] = useState(false);
   const screen   = navStack[navStack.length - 1];
   const navigate = useCallback((s: Screen) => setNavStack(p => [...p, s]), []);
   const goBack   = useCallback(() => setNavStack(p => p.length > 1 ? p.slice(0, -1) : p), []);
@@ -2970,7 +2979,7 @@ export default function App() {
   /** Metadata snapshots from GET /library/liked — render without local cache. */
   const [serverLiked, setServerLiked]               = useState<Track[]>([]);
   const [downloadedTracks, setDownloadedTracks]     = useState<Track[]>([]);
-  /** In-flight saves — the Downloads board's Downloading section reads these. */
+  /** In-flight saves — track menus and the player derive their spinner from these. */
   const [activeDownloads, setActiveDownloads]       = useState<ActiveDownload[]>([]);
   const [artists, setArtists]                       = useState<ArtistItem[]>([]);
 
@@ -4027,30 +4036,24 @@ export default function App() {
 
   // ── downloadTrack ────────────────────────────────────────────────────────────
   /**
-   * One save flow for every entry point (track menu, player): live progress
-   * rows on the Downloads board, a plain "Downloading…" toast that vanishes
-   * the instant the file lands, then a list refresh.
+   * One save flow for every entry point (track menu, player): callers render
+   * their own spinner from `activeDownloads`, success stays silent (the icon
+   * turns into a tick), and only a failure interrupts with a toast.
    */
   const downloadTrack = useCallback(async (track: Track): Promise<"saved" | "already" | "failed"> => {
     const id = String(track.id);
     setActiveDownloads(list => (list.some(d => d.id === id) ? list : [
       ...list, { id, title: track.title, artist: track.artist, bg: track.bg, imageUrl: track.imageUrl, progress: 0 },
     ]));
-    const toastId = toast.loading("Downloading…");
     const outcome = await saveDownload(toOfflineTrack(track), fraction => {
-      // Progress rides the Downloads board's row — the toast stays plain.
       if (fraction == null) return;
       setActiveDownloads(list => list.map(d => (d.id === id ? { ...d, progress: fraction } : d)));
     });
     setActiveDownloads(list => list.filter(d => d.id !== id));
     if (outcome === "failed") {
-      toast.error("Couldn't download — check your connection", { id: toastId });
-    } else {
-      // Done: drop the toast immediately (success is visible as the row in
-      // Downloads / the filled icon on the track). Failures are the only case
-      // worth interrupting for.
-      toast.dismiss(toastId);
-      if (outcome === "saved") void refreshDownloads();
+      toast.error("Couldn't download");
+    } else if (outcome === "saved") {
+      void refreshDownloads();
     }
     return outcome;
   }, [refreshDownloads]);
@@ -4376,9 +4379,10 @@ export default function App() {
         .native-app .mobile-shell { display: block !important; }
       `}</style>
 
-      {screen.id === "landing" ? (
-        /* Public marketing page — no shell, no auth gate, full viewport. */
-        <LandingScreen />
+      {!isNativeApp() && (screen.id === "landing" || (authGate && screen.id === "home" && !entered)) ? (
+        /* Public marketing page — the signed-out default on the web; no shell,
+           no auth gate, full viewport. */
+        <LandingScreen onEnter={() => setEntered(true)} />
       ) : userLoading ? (
         /* Splash — while bootstrap checks the session (including the return
            from Google sign-in), the app shows neither Home nor the gate. */

@@ -85,30 +85,17 @@ export function DownloadsView({ tracks = [], onPlay, onSync, colors }: Downloads
     const id = String(t.id);
     if (busyId) return;
     setBusyId(id);
-    let lastShown = -1;
-    const toastId = toast.loading(`Downloading “${t.title}”…`);
+    // The row's icon is the progress signal (spinner → tick), so success and
+    // "already saved" stay silent — only a failure earns a toast.
     try {
       const outcome = await saveDownload(
         { id: t.id, title: t.title, artist: t.artist, duration: t.duration, bg: t.bg, imageUrl: t.imageUrl },
-        fraction => {
-          if (fraction == null) return;
-          const pct = Math.round(fraction * 100);
-          if (pct >= 100 || pct - lastShown >= 4) {
-            lastShown = pct;
-            toast.loading(`${pct}% — “${t.title}”`, { id: toastId });
-          }
-        },
       );
-      if (outcome === "saved") {
+      if (outcome === "saved" || outcome === "already") {
         setOfflineIds(prev => new Set(prev).add(id));
         setCached(readOfflineTracks());
-        toast.success("Saved to Documents/Vybra", { id: toastId });
-      } else if (outcome === "already") {
-        setOfflineIds(prev => new Set(prev).add(id));
-        setCached(readOfflineTracks());
-        toast("Already downloaded", { id: toastId });
       } else {
-        toast.error("Couldn't download this track", { id: toastId });
+        toast.error("Couldn't download");
       }
     } finally {
       setBusyId(null);
