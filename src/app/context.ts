@@ -56,6 +56,9 @@ export interface PlaylistItem {
   trackCount: number;
   creator?: string;
   tracks: Track[];
+  /** Fallback lookup (album deep links / album cards): when the id isn't a
+      real library playlist, the screen fills this via search instead. */
+  query?: string;
 }
 
 export interface AlbumItem {

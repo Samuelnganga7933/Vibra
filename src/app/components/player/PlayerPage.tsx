@@ -7,8 +7,10 @@ import {
 import { toast } from "sonner";
 import { useApp, fmtSec } from "../../context";
 import { CoverArt } from "../CoverArt";
+import { ReorderList, ReorderRow, moveFromReorder } from "../reorder";
 import { LyricsPanel } from "./LyricsPanel";
 import { removeDownload } from "../../services/localAudio";
+import { trackShareUrl } from "../../services/share";
 
 /** Green of the output-device chip — same semantic green as the Offline pills. */
 const DEVICE_GREEN = "#1ED760";
@@ -27,7 +29,7 @@ const DEVICE_GREEN = "#1ED760";
 export function PlayerPage() {
   const {
     C, currentTrack, progress, elapsed, audioDuration, handleSeek,
-    likedTrackIds, toggleLike, queue, playTrack,
+    likedTrackIds, toggleLike, queue, playTrack, moveQueueItem,
     closePlayer,
     playerPageMode: mediaMode, setPlayerPageMode: setMediaMode,
     openTrackOptions,
@@ -141,10 +143,20 @@ export function PlayerPage() {
     setDrag({ active: false, y: 0 });
   };
 
-  const shareUrl = currentTrack.videoId
-    ? `https://www.youtube.com/watch?v=${currentTrack.videoId}`
-    : window.location.href;
+  // Shares route INTO Vybra via the /track deep link — never out to YouTube.
+  const shareUrl = trackShareUrl(currentTrack);
   const shareText = `${currentTrack.title} — ${currentTrack.artist}`;
+
+  /** The lyric line under the playhead right now — the snippet that gets shared. */
+  const activeLyricText = (): string => {
+    if (lyrics.length === 0) return "";
+    let line = lyrics[0]?.text ?? "";
+    for (const l of lyrics) {
+      if (l.time <= elapsed + 0.2) line = l.text;
+      else break;
+    }
+    return line;
+  };
 
   /** Social share options — Spotify-style sheet, one tap per network. */
   const shareTargets = [
@@ -159,6 +171,10 @@ export function PlayerPage() {
       href: `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(shareUrl)}` },
     { key: "email", label: "Email", Icon: Mail,
       href: `mailto:?subject=${encodeURIComponent(currentTrack.title)}&body=${encodeURIComponent(`${shareText}\n${shareUrl}`)}` },
+    // Only offered when there IS something to share — never a dead control.
+    ...(lyrics.length > 0
+      ? [{ key: "lyrics", label: "Share lyrics", Icon: Mic2, href: "lyrics" as const }]
+      : []),
     { key: "more", label: "More…", Icon: Send, href: "native" as const },
   ];
 
@@ -170,6 +186,18 @@ export function PlayerPage() {
     } else if (target.href === "native") {
       if (navigator.share) void navigator.share({ title: currentTrack.title, text: shareText, url: shareUrl }).catch(() => { /* dismissed */ });
       else toast.error("Sharing isn't available here");
+    } else if (target.href === "lyrics") {
+      // Synced snippet + a deep link that reopens the player ON the lyrics.
+      const line = activeLyricText();
+      const body = line ? `“${line}”\n— ${shareText}` : shareText;
+      const url = trackShareUrl(currentTrack, { lyrics: true });
+      if (navigator.share) {
+        void navigator.share({ title: currentTrack.title, text: body, url }).catch(() => { /* dismissed */ });
+      } else {
+        void navigator.clipboard?.writeText(`${body}\n${url}`)
+          .then(() => toast("Lyrics copied"))
+          .catch(() => toast.error("Couldn't copy the lyrics"));
+      }
     } else if (target.href) {
       window.open(target.href, "_blank");
     }
@@ -212,29 +240,41 @@ export function PlayerPage() {
 
   /** Shared deck list — the desktop context column and the compact top sheet
       both render exactly this; rows stop pointer propagation so the player's
-      pull-down drag can never swallow a tap-to-play. */
+      pull-down drag can never swallow a tap-to-play. Grip handles reorder the
+      queue (mouse and touch). */
   const queueRows = queue.length > 0 ? (
-    queue.map((t, i) => (
-      <div key={`${t.id}-${i}`} role="button" tabIndex={0}
-        onPointerDown={e => e.stopPropagation()}
-        onClick={() => { playTrack(t, queue); if (isCompact) setQueueOpen(false); }}
-        onKeyDown={e => e.key === "Enter" && playTrack(t, queue)}
-        style={{
-          display: "flex", alignItems: "center", gap: 10, padding: "7px 8px",
-          borderRadius: 10, cursor: "pointer",
-          background: t.id === currentTrack?.id ? C.surf : "transparent",
-        }}>
-        <div style={{ width: 20, fontSize: 12, color: t.id === currentTrack?.id ? C.accent : C.muted, textAlign: "center", flexShrink: 0 }}>
-          {i + 1}
-        </div>
-        <CoverArt bg={t.bg} imageUrl={t.imageUrl} size={38} radius={8} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 700, fontSize: 13.5, color: t.id === currentTrack?.id ? C.accent : C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</div>
-          <div style={{ fontSize: 11.5, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.artist}</div>
-        </div>
-        <span style={{ fontSize: 11.5, color: C.muted, flexShrink: 0 }}>{t.duration}</span>
-      </div>
-    ))
+    <ReorderList values={queue} onReorder={next => {
+      const move = moveFromReorder(queue, next);
+      if (move) moveQueueItem(move.from, move.to);
+    }}>
+      {queue.map((t, i) => (
+        <ReorderRow key={`${t.id}-${i}`} value={t} label={t.title}
+          itemProps={{
+            role: "button", tabIndex: 0,
+            onPointerDown: (e: React.PointerEvent) => e.stopPropagation(),
+            onClick: () => { playTrack(t, queue); if (isCompact) setQueueOpen(false); },
+            onKeyDown: (e: React.KeyboardEvent) => e.key === "Enter" && playTrack(t, queue),
+          }}
+          style={{
+            display: "flex", alignItems: "center", gap: 10, padding: "7px 8px",
+            borderRadius: 10, cursor: "pointer",
+            background: t.id === currentTrack?.id ? C.surf : "transparent",
+          }}>
+          {grip => (<>
+            <div style={{ width: 20, fontSize: 12, color: t.id === currentTrack?.id ? C.accent : C.muted, textAlign: "center", flexShrink: 0 }}>
+              {i + 1}
+            </div>
+            <CoverArt bg={t.bg} imageUrl={t.imageUrl} size={38} radius={8} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 700, fontSize: 13.5, color: t.id === currentTrack?.id ? C.accent : C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</div>
+              <div style={{ fontSize: 11.5, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.artist}</div>
+            </div>
+            <span style={{ fontSize: 11.5, color: C.muted, flexShrink: 0 }}>{t.duration}</span>
+            {grip}
+          </>)}
+        </ReorderRow>
+      ))}
+    </ReorderList>
   ) : (
     <div style={{ textAlign: "center", color: C.muted, fontSize: 13.5, padding: "28px 8px", lineHeight: 1.6 }}>
       Play an album or playlist to fill your queue.

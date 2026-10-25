@@ -71,6 +71,7 @@ import { resolveOnDevice } from "./services/deviceAudio";
 import { getLocalAudioUrl, hasDownload, removeDownload, saveDownload } from "./services/localAudio";
 import { localSongUrl } from "./services/localMusic";
 import { markBundleReady, checkForOtaUpdates, reloadIntoLatestBundle, isNativeApp } from "./services/ota";
+import { trackShareUrl, parseShareUrl } from "./services/share";
 import {
   mediaInit, mediaSetNowPlaying, mediaSetState, mediaRelease,
   mediaRequestNotificationPermission, mediaNotificationPermission, mediaMinimize,
@@ -89,6 +90,7 @@ import { UiThemeContext } from "./components/ui/ui-theme";
 import { TrackCard, AlbumCard, PlaylistItemCard } from "./components/ui/cards";
 import { DownloadsView } from "./components/vibra/DownloadsView";
 import { CoverArt, PlaylistCover } from "./components/CoverArt";
+import { ReorderList, ReorderRow, moveFromReorder } from "./components/reorder";
 import { PlayerPage } from "./components/player/PlayerPage";
 import { LyricsPanel } from "./components/player/LyricsPanel";
 import { ErrorScreen } from "./screens/ErrorScreen";
@@ -200,7 +202,7 @@ function queueRest<T extends { id: string | number }>(list: T[], clicked: T): T[
 }
 
 // ─── TrackRow ─────────────────────────────────────────────────────────────────
-function TrackRow({ track, index, queue, showLike = false, showAlbum = false, album, sourceShelfId }: { track: Track; index?: number; queue?: Track[]; showLike?: boolean; showAlbum?: boolean; album?: string; sourceShelfId?: string }) {
+function TrackRow({ track, index, queue, showLike = false, showAlbum = false, album, sourceShelfId, grip }: { track: Track; index?: number; queue?: Track[]; showLike?: boolean; showAlbum?: boolean; album?: string; sourceShelfId?: string; grip?: React.ReactNode }) {
   const { C, playTrack, currentTrack, isPlaying, likedTrackIds, toggleLike, openTrackOptions } = useApp();
   const isActive = currentTrack?.id === track.id;
   const isLiked  = likedTrackIds.has(track.id);
@@ -238,6 +240,7 @@ function TrackRow({ track, index, queue, showLike = false, showAlbum = false, al
         </button>
       )}
       <span style={{ fontSize: 12, color: C.dim, flexShrink: 0, minWidth: showAlbum ? 64 : 36, textAlign: "right" }}>{track.duration}</span>
+      {grip}
       <button onClick={e => { e.stopPropagation(); openTrackOptions(track); }}
         style={{ width: 28, height: 28, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.muted, flexShrink: 0 }}>
         <MoreHorizontal size={13} />
@@ -834,6 +837,7 @@ function DiscoverScreen() {
   const albumToPlaylist = (a: AlbumItem): PlaylistItem => ({
     id: a.id, name: a.title, description: `${a.artist} · ${a.year}`,
     bg: a.bg, imageUrl: a.imageUrl, trackCount: a.trackCount, creator: a.artist, tracks: [],
+    query: `${a.title} ${a.artist}`.trim(),
   });
 
   const artistPicks = curatedArtistPicks(artists);
@@ -989,6 +993,7 @@ function LibraryScreen({ tab: initTab = "playlists" }: { tab?: LibTab }) {
   const albumToPlaylist = (a: AlbumItem): PlaylistItem => ({
     id: a.id, name: a.title, description: `${a.artist} · ${a.year}`,
     bg: a.bg, imageUrl: a.imageUrl, trackCount: a.trackCount, creator: a.artist, tracks: [],
+    query: `${a.title} ${a.artist}`.trim(),
   });
 
   return (
@@ -1111,15 +1116,28 @@ function PlaylistScreen({ item }: { item: PlaylistItem }) {
   const { C, playTrack, canGoBack, goBack, discoveryTracks, reorderPlaylist } = useApp();
   const [fullPlaylist, setFullPlaylist] = useState<PlaylistItem>(item);
   const [loading, setLoading] = useState(item.tracks.length === 0);
-  const [dragIdx, setDragIdx] = useState<number | null>(null);
-  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+
+  const onTracksReorder = (next: Track[]) => {
+    const move = moveFromReorder(fullPlaylist.tracks, next);
+    if (!move) return;
+    reorderPlaylist(fullPlaylist.id, move.from, move.to);
+    setFullPlaylist(prev => ({ ...prev, tracks: next }));
+  };
 
   useEffect(() => {
     if (item.tracks.length > 0) { setFullPlaylist(item); setLoading(false); return; }
     setLoading(true);
     api<any>(`/library/playlists/${item.id}`).then(data => {
       if (data) setFullPlaylist(mapAPIPlaylist(data));
-      else if (discoveryTracks.length > 0) {
+      else if (item.query) {
+        // Not a library playlist — an album deep link / album card. Fill it
+        // from search so the view shows the REAL album, not a placeholder.
+        void searchTracks(item.query, 30).then(res => {
+          setFullPlaylist({ ...item, tracks: res.map((t, i) => fromApiTrack(t, i)) });
+          setLoading(false);
+        });
+        return;
+      } else if (discoveryTracks.length > 0) {
         setFullPlaylist({ ...item, tracks: discoveryTracks.slice(0, 12) });
       }
       setLoading(false);
@@ -1194,45 +1212,16 @@ function PlaylistScreen({ item }: { item: PlaylistItem }) {
             ? (
               <>
                 <TrackTableHead showLike />
-                {tracks.map((t, i) => {
-                const dropTarget = dragOverIdx === i && dragIdx !== null && dragIdx !== i;
-                return (
-                  <div key={`${t.id}-${i}`}
-                    draggable
-                    onDragStart={e => {
-                      setDragIdx(i);
-                      e.dataTransfer.effectAllowed = "move";
-                      e.dataTransfer.setData("text/plain", String(i));
-                    }}
-                    onDragEnd={() => { setDragIdx(null); setDragOverIdx(null); }}
-                    onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDragOverIdx(i); }}
-                    onDragLeave={() => setDragOverIdx(prev => (prev === i ? null : prev))}
-                    onDrop={e => {
-                      e.preventDefault();
-                      const from = dragIdx ?? Number(e.dataTransfer.getData("text/plain"));
-                      if (Number.isFinite(from) && from !== i) {
-                        reorderPlaylist(fullPlaylist.id, from, i);
-                        setFullPlaylist(prev => {
-                          const nextTracks = [...prev.tracks];
-                          const [moved] = nextTracks.splice(from, 1);
-                          nextTracks.splice(i, 0, moved);
-                          return { ...prev, tracks: nextTracks };
-                        });
-                      }
-                      setDragIdx(null);
-                      setDragOverIdx(null);
-                    }}
-                    style={{
-                      opacity: dragIdx === i ? 0.5 : 1,
-                      boxShadow: dropTarget ? `inset 0 2px 0 ${C.accent}` : "none",
-                      borderRadius: 8,
-                      cursor: dragIdx === i ? "grabbing" : "grab",
-                      transition: "box-shadow .12s",
-                    }}>
-                    <TrackRow track={t} index={i} queue={queueRest(tracks, t)} showLike showAlbum album={albumMap[String(t.id)]} />
-                  </div>
-                );
-                })}
+                <ReorderList values={tracks} onReorder={onTracksReorder}>
+                  {tracks.map((t, i) => (
+                    <ReorderRow key={`${t.id}-${i}`} value={t} label={t.title} style={{ borderRadius: 10 }}>
+                      {grip => (
+                        <TrackRow track={t} index={i} queue={queueRest(tracks, t)} showLike showAlbum
+                          album={albumMap[String(t.id)]} grip={grip} />
+                      )}
+                    </ReorderRow>
+                  ))}
+                </ReorderList>
               </>
             )
             : <EmptyState title="No tracks" sub="This playlist is empty." />
@@ -1863,7 +1852,8 @@ function TrackOptionsSheet({ track, onClose }: { track: Track; onClose: () => vo
     return () => { cancelled = true; };
   }, [track.id]);
 
-  const shareLink = track.videoId ? `https://www.youtube.com/watch?v=${track.videoId}` : window.location.href;
+  // Shares route back INTO Vybra (the /track deep link), never out to YouTube.
+  const shareLink = trackShareUrl(track);
   const shareText = `${track.title} — ${track.artist}`;
 
   const shareTargets = [
@@ -2266,8 +2256,6 @@ function RightPanel() {
     panelTab, openPanel, uiState, setPlayerPageOpen,
     lyrics, plainLyrics, lyricsLoading, elapsed,
   } = useApp();
-  const [dragIdx, setDragIdx] = useState<number | null>(null);
-  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
 
   const tab: PanelTab = panelTab ?? "nowplaying";
   const isLiked = currentTrack ? likedTrackIds.has(currentTrack.id) : false;
@@ -2426,65 +2414,56 @@ function RightPanel() {
           {queued.length > 0 ? (
             <>
               <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>Queue · {queued.length}</div>
-              {queued.map((t, i) => {
-                const isActive = i === activeQueueIdx;
-                const reveal = {
-                  onMouseEnter: (e: React.MouseEvent<HTMLDivElement>) => e.currentTarget.querySelectorAll<HTMLButtonElement>("button.qctl").forEach(b => { b.style.opacity = "1"; }),
-                  onMouseLeave: (e: React.MouseEvent<HTMLDivElement>) => e.currentTarget.querySelectorAll<HTMLButtonElement>("button.qctl").forEach(b => { b.style.opacity = "0"; }),
-                };
-                const ctlBtn: React.CSSProperties = {
-                  width: 22, height: 22, background: "none", border: "none", cursor: "pointer",
-                  display: "grid", placeItems: "center", color: C.muted, opacity: 0, transition: "opacity .15s", flexShrink: 0,
-                };
-                const dropTarget = dragOverIdx === i && dragIdx !== null && dragIdx !== i;
-                return (
-                  <div key={`${t.id}-${i}`} role="button" tabIndex={0}
-                    draggable
-                    onDragStart={e => {
-                      setDragIdx(i);
-                      e.dataTransfer.effectAllowed = "move";
-                      e.dataTransfer.setData("text/plain", String(i));
-                    }}
-                    onDragEnd={() => { setDragIdx(null); setDragOverIdx(null); }}
-                    onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDragOverIdx(i); }}
-                    onDragLeave={() => setDragOverIdx(prev => (prev === i ? null : prev))}
-                    onDrop={e => {
-                      e.preventDefault();
-                      const from = dragIdx ?? Number(e.dataTransfer.getData("text/plain"));
-                      if (Number.isFinite(from) && from !== i) moveQueueItem(from, i);
-                      setDragIdx(null);
-                      setDragOverIdx(null);
-                    }}
-                    onClick={() => playTrack(t, queue)}
-                    onKeyDown={e => e.key === "Enter" && playTrack(t, queue)}
-                    {...reveal}
-                    style={{
-                      display: "flex", alignItems: "center", gap: 10, padding: "6px 6px", borderRadius: 8,
-                      cursor: dragIdx === i ? "grabbing" : "pointer",
-                      background: isActive ? C.surf : "transparent",
-                      boxShadow: dropTarget ? `inset 0 2px 0 ${C.accent}` : "none",
-                      opacity: dragIdx === i ? 0.5 : 1,
-                      transition: "box-shadow .12s",
-                    }}>
-                    <span style={{ fontSize: 11, color: isActive ? C.accent : C.muted, width: 14, textAlign: "center", flexShrink: 0 }}>
-                      {isActive && isPlaying ? <Pause size={11} fill={C.accent} color={C.accent} /> : i + 1}
-                    </span>
-                    <CoverArt bg={t.bg} imageUrl={t.imageUrl} size={36} radius={6} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 600, fontSize: 13, color: isActive ? C.accent : C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</div>
-                      <div style={{ fontSize: 11, color: C.muted }}>{t.artist}</div>
-                    </div>
-                    <span style={{ fontSize: 11, color: C.muted, flexShrink: 0 }}>{t.duration}</span>
-                    <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
-                      <button className="qctl" aria-label="Remove from queue"
-                        style={ctlBtn}
-                        onClick={e => { e.stopPropagation(); removeFromQueue(i); }}>
-                        <X size={13} />
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
+              <ReorderList values={queued} onReorder={next => {
+                const move = moveFromReorder(queued, next);
+                if (move) moveQueueItem(move.from, move.to);
+              }}>
+                {queued.map((t, i) => {
+                  const isActive = i === activeQueueIdx;
+                  const reveal = {
+                    onMouseEnter: (e: React.MouseEvent<HTMLDivElement>) => e.currentTarget.querySelectorAll<HTMLButtonElement>("button.qctl").forEach(b => { b.style.opacity = "1"; }),
+                    onMouseLeave: (e: React.MouseEvent<HTMLDivElement>) => e.currentTarget.querySelectorAll<HTMLButtonElement>("button.qctl").forEach(b => { b.style.opacity = "0"; }),
+                  };
+                  const ctlBtn: React.CSSProperties = {
+                    width: 22, height: 22, background: "none", border: "none", cursor: "pointer",
+                    display: "grid", placeItems: "center", color: C.muted, opacity: 0, transition: "opacity .15s", flexShrink: 0,
+                  };
+                  return (
+                    <ReorderRow key={`${t.id}-${i}`} value={t} label={t.title}
+                      itemProps={{
+                        role: "button", tabIndex: 0,
+                        onClick: () => playTrack(t, queue),
+                        onKeyDown: (e: React.KeyboardEvent) => e.key === "Enter" && playTrack(t, queue),
+                        ...reveal,
+                      }}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 10, padding: "6px 6px", borderRadius: 8,
+                        cursor: "pointer",
+                        background: isActive ? C.surf : "transparent",
+                      }}>
+                      {grip => (<>
+                        <span style={{ fontSize: 11, color: isActive ? C.accent : C.muted, width: 14, textAlign: "center", flexShrink: 0 }}>
+                          {isActive && isPlaying ? <Pause size={11} fill={C.accent} color={C.accent} /> : i + 1}
+                        </span>
+                        <CoverArt bg={t.bg} imageUrl={t.imageUrl} size={36} radius={6} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 600, fontSize: 13, color: isActive ? C.accent : C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</div>
+                          <div style={{ fontSize: 11, color: C.muted }}>{t.artist}</div>
+                        </div>
+                        <span style={{ fontSize: 11, color: C.muted, flexShrink: 0 }}>{t.duration}</span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
+                          <span style={{ display: "grid", placeItems: "center", flexShrink: 0 }}>{grip}</span>
+                          <button className="qctl" aria-label="Remove from queue"
+                            style={ctlBtn}
+                            onClick={e => { e.stopPropagation(); removeFromQueue(i); }}>
+                            <X size={13} />
+                          </button>
+                        </div>
+                      </>)}
+                    </ReorderRow>
+                  );
+                })}
+              </ReorderList>
             </>
           ) : preview.length > 0 ? (
             <>
@@ -2814,6 +2793,12 @@ export default function App() {
   const goBack   = useCallback(() => setNavStack(p => p.length > 1 ? p.slice(0, -1) : p), []);
   const navStackRef = useRef(navStack);
   useEffect(() => { navStackRef.current = navStack; }, [navStack]);
+  // Deep-link intake: assigned every render (fresh closures) and read by the
+  // route guard (web/startup) and the native appUrlOpen listener. Signature
+  // (raw, fromNavigation) — navigation replays are deduped so a popstate can
+  // never restart a song that is already playing from that exact link.
+  const shareUrlHandlerRef = useRef<(raw: string, fromNavigation: boolean) => void>(() => {});
+  const lastNavShareRef = useRef("");
 
   // Route guard: the path (`/download`) or a known deep link (`#/search`, …)
   // navigates there; an unknown hash resolves to NotFound instead of a silent
@@ -2832,6 +2817,12 @@ export default function App() {
       return null;
     };
     const applyRoute = () => {
+      // Share deep links (…/track/xyz, …/album/name, #/lyrics/xyz) play or
+      // open content directly — handled by the shared share handler below.
+      if (parseShareUrl(window.location.href)) {
+        shareUrlHandlerRef.current(window.location.href, true);
+        return;
+      }
       const fromPath = window.location.pathname.replace(/\/+$/, "").split("/").pop() ?? "";
       const fromHash = window.location.hash.replace(/^#\/?/, "").split("/")[0].trim();
       const pathScreen = fromPath && fromPath !== "index.html" ? resolvePath(fromPath) : null;
@@ -3181,6 +3172,20 @@ export default function App() {
       .catch(() => { /* web — no hardware back to intercept */ });
     return () => { remove?.(); };
   }, [closePlayer, goBack]);
+
+  // ── Deep links ───────────────────────────────────────────────────────────────
+  // Opening a shared link (https://vybra.streamvy.me/track/… or vybra://…)
+  // lands inside the app: Capacitor turns the VIEW intent into appUrlOpen.
+  // Web keeps using the route guard above — same handler either way.
+  useEffect(() => {
+    let remove: (() => void) | undefined;
+    void CapApp.addListener("appUrlOpen", ev => {
+      if (ev?.url) shareUrlHandlerRef.current(ev.url, false);
+    })
+      .then(h => { remove = () => void h.remove(); })
+      .catch(() => { /* web — the route guard owns links here */ });
+    return () => { remove?.(); };
+  }, []);
   /**
    * Live viewport height for the shells — tracks keyboard (adjustResize),
    * rotation and toolbar collapse without trusting dvh alone. Published as
@@ -3909,6 +3914,56 @@ export default function App() {
       }
     },
     likeCurrent: () => { if (currentTrack) toggleLike(currentTrack.id); },
+  };
+
+  // ── Deep-link handler (shared by the route guard and appUrlOpen) ────────────
+  // A /track link starts playback immediately and lands in the player; a
+  // lyrics link lands on the lyrics view; an /album link opens the album view.
+  // Assigned every render so event listeners always see fresh state.
+  shareUrlHandlerRef.current = (raw, fromNavigation) => {
+    const parsed = parseShareUrl(raw);
+    if (!parsed) return;
+    if (fromNavigation) {
+      if (lastNavShareRef.current === raw) return; // popstate replay — never restart the song
+      lastNavShareRef.current = raw;
+    }
+    if (parsed.kind === "album") {
+      navigate({
+        id: "playlist",
+        item: {
+          id: `album:${parsed.name}`,
+          name: parsed.name,
+          description: parsed.artist || undefined,
+          bg: "#e8334f",
+          trackCount: 0,
+          creator: parsed.artist || undefined,
+          tracks: [],
+          query: `${parsed.name} ${parsed.artist}`.trim(),
+        },
+      });
+      return;
+    }
+    const looksVideo = /^[A-Za-z0-9_-]{10,16}$/.test(parsed.id);
+    const track: Track = {
+      id: parsed.id,
+      title: parsed.title || "Unknown title",
+      artist: parsed.artist,
+      bg: "#e8334f",
+      videoId: looksVideo ? parsed.id : undefined,
+    };
+    const sameTrack = String(currentTrack?.id) === String(parsed.id);
+    if (!sameTrack) playTrack(track, [track]);
+    const compact = window.matchMedia("(max-width: 1199.98px)").matches;
+    if (parsed.lyrics && (lyrics.length > 0 || !sameTrack)) {
+      // Arm PlayerPage's reset guard until the lyrics fetch flips loading on —
+      // otherwise the freshly-mounted player would bounce back to "song".
+      if (lyrics.length === 0) setLyricsLoading(true);
+      setPlayerPageMode("lyrics");
+      if (compact) openPlayerPage(true);
+      else openPanel("lyrics");
+    } else if (compact && (!sameTrack || !playerPageOpenRef.current)) {
+      openPlayerPage(true);
+    }
   };
 
   useEffect(() => {
