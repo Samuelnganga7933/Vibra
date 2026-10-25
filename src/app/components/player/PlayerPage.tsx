@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ChevronDown, Heart, Headphones, ListMusic, Mic2, MoreHorizontal,
   Pause, Play, Repeat, Repeat1, Send, Shuffle, SkipBack, SkipForward,
@@ -28,7 +28,7 @@ export function PlayerPage() {
   const {
     C, currentTrack, progress, elapsed, audioDuration, handleSeek,
     likedTrackIds, toggleLike, queue, playTrack,
-    setPlayerPageOpen,
+    closePlayerToHome,
     playerPageMode: mediaMode, setPlayerPageMode: setMediaMode,
     openTrackOptions,
     isPlaying, togglePlay,
@@ -44,10 +44,17 @@ export function PlayerPage() {
   const [shareOpen, setShareOpen] = useState(false);
   const hasLyricsOption = uiState.hasLyrics || lyricsLoading;
 
-  /** Pull-down to close — tracks the finger from the grabber/header zone. */
+  /** Pull-down to close — tracks the finger from the grabber/header zone.
+      Live values go in refs: React state may lag the final pointermove, so
+      the release handler must never read a stale distance. */
   const [drag, setDrag] = useState({ active: false, y: 0 });
   const dragStartY = useRef<number | null>(null);
-  /** Compact layout: waveform seek + full-bleed (the boards' mobile player). */
+  const dragStartX = useRef(0);
+  const dragYRef = useRef(0);
+  const dragStartOffsetRef = useRef(0);
+  const dragT0Ref = useRef(0);
+  const dragAxisRef = useRef<"x" | "y" | null>(null);
+  /** Compact layout: full-bleed (the boards' mobile player). */
   const [isCompact, setIsCompact] = useState(
     () => typeof window !== "undefined" && window.matchMedia("(max-width: 1199.98px)").matches,
   );
@@ -58,22 +65,11 @@ export function PlayerPage() {
     return () => mq.removeEventListener("change", on);
   }, []);
 
-  /** Deterministic bar heights per track — the waveform look of the boards. */
-  const waveBars = useMemo(() => {
-    const id = String(currentTrack?.id ?? "");
-    const seed = id.split("").reduce((a, c) => (a + c.charCodeAt(0)) % 9973, 17);
-    return Array.from({ length: 56 }, (_, i) => {
-      const x = Math.sin((seed + 1) * (i + 1) * 12.9898) * 43758.5453;
-      const frac = x - Math.floor(x);
-      return 6 + Math.round(frac * 22);
-    });
-  }, [currentTrack?.id]);
-
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setPlayerPageOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") closePlayerToHome(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [setPlayerPageOpen]);
+  }, [closePlayerToHome]);
 
   // A track without lyrics can't keep a lyrics view open; video is desktop-only.
   useEffect(() => {
@@ -90,30 +86,57 @@ export function PlayerPage() {
     const el = scrubRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
-    handleSeek((clientX - r.left) / r.width);
+    const pct = r.width > 0 ? (clientX - r.left) / r.width : 0;
+    handleSeek(Math.max(0, Math.min(1, pct)));
   };
 
-  /** Drag starts only in the grabber/header band and never off a control. */
+  /** Swipe-down dismiss — handlers live ONLY on the grabber+header band (a
+      dedicated wrapper in both layouts), so lyrics scrolling, artwork
+      gestures and the queue list can never start a drag. Live distances go
+      in refs: React state may lag the final pointermove. */
   const startDrag = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.target instanceof Element && e.target.closest("button, a, [role='button'], iframe, input")) return;
-    if (e.clientY - e.currentTarget.getBoundingClientRect().top > 110) return;
     dragStartY.current = e.clientY;
+    dragStartX.current = e.clientX;
+    dragStartOffsetRef.current = e.clientY - e.currentTarget.getBoundingClientRect().top;
+    dragYRef.current = 0;
+    dragT0Ref.current = performance.now();
+    dragAxisRef.current = null;
     e.currentTarget.setPointerCapture(e.pointerId);
     setDrag({ active: true, y: 0 });
   };
   const moveDrag = (e: React.PointerEvent<HTMLDivElement>) => {
     if (dragStartY.current == null) return;
-    setDrag({ active: true, y: Math.max(0, e.clientY - dragStartY.current) });
+    const dy = e.clientY - dragStartY.current;
+    const dx = e.clientX - dragStartX.current;
+    // Lock the axis on the first real movement — a horizontal gesture is a
+    // mis-touch, not a dismiss, and must never translate the sheet.
+    if (dragAxisRef.current == null) {
+      if (Math.abs(dy) < 4 && Math.abs(dx) < 4) return;
+      if (Math.abs(dx) > Math.abs(dy)) { cancelDrag(); return; }
+      dragAxisRef.current = "y";
+    }
+    const y = Math.max(0, dy);
+    dragYRef.current = y;
+    setDrag({ active: true, y });
   };
   const endDrag = () => {
     if (dragStartY.current == null) return;
-    const past = drag.y > 120;
+    const y = dragYRef.current;
+    const dt = Math.max(1, performance.now() - dragT0Ref.current);
+    // A flick (fast downward swipe) closes well before the 120px rest
+    // threshold; a bare tap on the grabber band closes like an iOS sheet.
+    const flick = dt < 320 && y / dt > 0.55;
+    const tap = y < 8 && dragStartOffsetRef.current <= 24;
+    const past = y > 120 || (y > 48 && flick) || tap;
     dragStartY.current = null;
+    dragYRef.current = 0;
     setDrag({ active: false, y: 0 });
-    if (past) setPlayerPageOpen(false);
+    if (past) closePlayerToHome();
   };
   const cancelDrag = () => {
     dragStartY.current = null;
+    dragYRef.current = 0;
     setDrag({ active: false, y: 0 });
   };
 
@@ -169,19 +192,22 @@ export function PlayerPage() {
    */
   const seekPct = total > 0 ? Math.max(0, Math.min(elapsed / total, 1)) : Math.min(progress, 1);
 
-  /** Waveform coloring: played = accent, the bar at the playhead = white, rest dim. */
-  const barColor = (i: number): string => {
-    const p = seekPct;
-    const before = (i + 1) / waveBars.length <= p;
-    const atHead = !before && i / waveBars.length <= p;
-    if (before) return C.accent;
-    if (atHead) return "#ffffff";
-    return `color-mix(in srgb, ${C.text} 22%, transparent)`;
-  };
-
-  /** The next track in the deck — the compact player's "Up next" glimpse. */
-  const qIdx = queue.findIndex(t => t.id === currentTrack?.id);
-  const nextUp = queue.length > 1 && qIdx >= 0 ? (queue[qIdx + 1] ?? queue[0]) : null;
+  /**
+   * Seek line — subtle translucent-white track over the full duration, bold
+   * red fill for the played portion. Tap anywhere to jump; a captured
+   * pointer drag scrubs continuously. One element serves both layouts.
+   */
+  const seekLine = (
+    <div ref={scrubRef} role="slider" aria-label="Seek"
+      aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(seekPct * 100)}
+      onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); seekFromEvent(e.clientX); }}
+      onPointerMove={e => { if (e.currentTarget.hasPointerCapture(e.pointerId)) seekFromEvent(e.clientX); }}
+      onPointerUp={e => { if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId); }}
+      style={{ position: "relative", flex: 1, width: "100%", height: 30, display: "flex", alignItems: "center", cursor: "pointer", touchAction: "none" }}>
+      <div aria-hidden style={{ position: "absolute", left: 0, right: 0, height: 6, borderRadius: 999, background: "rgba(255,255,255,0.16)" }} />
+      <div aria-hidden style={{ position: "absolute", left: 0, width: `${seekPct * 100}%`, height: 6, borderRadius: 999, background: C.accent, transition: "width .4s linear" }} />
+    </div>
+  );
 
   /** Shared deck list — the desktop context column and the compact top sheet
       both render exactly this; rows stop pointer propagation so the player's
@@ -267,10 +293,6 @@ export function PlayerPage() {
   if (isCompact && mediaMode === "lyrics") {
     return (
       <div className="player-page"
-        onPointerDown={startDrag}
-        onPointerMove={moveDrag}
-        onPointerUp={endDrag}
-        onPointerCancel={cancelDrag}
         style={{
         position: "fixed", left: 0, right: 0, top: 0, bottom: 0,
         zIndex: 40, background: C.bg,
@@ -282,6 +304,9 @@ export function PlayerPage() {
         paddingTop: "env(safe-area-inset-top, 0px)",
         paddingBottom: "env(safe-area-inset-bottom, 0px)",
       }}>
+        {/* Drag zone — grabber + header only; the lyrics scroller below never starts a drag. */}
+        <div onPointerDown={startDrag} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={cancelDrag}
+          style={{ flexShrink: 0, touchAction: "none", cursor: "grab" }}>
         <div aria-hidden style={{ width: 46, height: 5, borderRadius: 3, background: C.border, margin: "9px auto 0", flexShrink: 0, touchAction: "none" }} />
         <div className="player-page-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", flexShrink: 0, touchAction: "none" }}>
           <div style={{ width: 36 }} />
@@ -290,6 +315,7 @@ export function PlayerPage() {
             style={{ width: 36, height: 36, borderRadius: "50%", background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.muted }}>
             <MoreHorizontal size={20} />
           </button>
+        </div>
         </div>
 
         {/* Full-bleed lyrics — oversized lines, edge fade (the board). */}
@@ -318,18 +344,13 @@ export function PlayerPage() {
               <SkipForward size={22} fill="currentColor" />
             </button>
           </div>
-          {/* Mini waveform strip + times */}
-          <div ref={scrubRef} onClick={e => seekFromEvent(e.clientX)}
-            role="slider" aria-label="Seek"
-            aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(seekPct * 100)}
-            style={{ height: 22, display: "flex", alignItems: "center", gap: 2, cursor: "pointer", marginTop: 10 }}>
-            {waveBars.map((h, i) => (
-              <div key={i} style={{ flex: 1, minWidth: 0, height: Math.max(4, Math.round(h * 0.72)), borderRadius: 2, background: barColor(i), transition: "background .2s linear" }} />
-            ))}
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
-            <span style={{ fontSize: 11, color: C.muted }}>{fmtSec(elapsed)}</span>
-            <span style={{ fontSize: 11, color: C.muted }}>{total > 0 ? fmtSec(total) : "--:--"}</span>
+          {/* Seek line + times */}
+          <div style={{ marginTop: 10 }}>
+            {seekLine}
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: -2 }}>
+              <span style={{ fontSize: 11, color: C.muted }}>{fmtSec(elapsed)}</span>
+              <span style={{ fontSize: 11, color: C.muted }}>{total > 0 ? fmtSec(total) : "--:--"}</span>
+            </div>
           </div>
         </div>
         {compactQueuePanel}
@@ -339,10 +360,6 @@ export function PlayerPage() {
 
   return (
     <div className="player-page"
-      onPointerDown={startDrag}
-      onPointerMove={moveDrag}
-      onPointerUp={endDrag}
-      onPointerCancel={cancelDrag}
       style={{
       position: "fixed", left: 12, right: 12, top: 12, bottom: 112,
       zIndex: 40, borderRadius: 18, border: `1px solid ${C.border}`,
@@ -354,6 +371,10 @@ export function PlayerPage() {
       opacity: drag.y ? Math.max(0.6, 1 - drag.y / 520) : 1,
       transition: drag.active ? "none" : "transform .26s cubic-bezier(.2,.8,.24,1), opacity .26s ease",
     }}>
+      {/* Drag zone — grabber + header only; artwork, seek and queue below
+          keep their own gestures and never start a dismiss. */}
+      <div onPointerDown={startDrag} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={cancelDrag}
+        style={{ flexShrink: 0, touchAction: "none", cursor: "grab" }}>
       {/* Grabber — the boards' drag handle; pulling it (or the header) down closes */}
       <div aria-hidden style={{ width: 46, height: 5, borderRadius: 3, background: C.border, margin: "9px auto 0", flexShrink: 0, touchAction: "none" }} />
       {/* Header — compact: pill + more (close lives in the footer chevron) */}
@@ -361,7 +382,7 @@ export function PlayerPage() {
         {isCompact ? (
           <div style={{ width: 36 }} />
         ) : (
-          <button onClick={() => setPlayerPageOpen(false)} aria-label="Close full-screen player"
+          <button onClick={closePlayerToHome} aria-label="Close full-screen player"
             style={{ width: 36, height: 36, borderRadius: "50%", background: C.surf, border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.text }}>
             <ChevronDown size={18} />
           </button>
@@ -371,6 +392,7 @@ export function PlayerPage() {
           style={{ width: 36, height: 36, borderRadius: "50%", background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.muted }}>
           <MoreHorizontal size={17} />
         </button>
+      </div>
       </div>
 
       {/* Body: artwork, title, seek (stacks under 1200px — see index.css) */}
@@ -444,40 +466,17 @@ export function PlayerPage() {
             </button>
           </div>
 
-          {/* Seek — waveform bars on compact, a clean progress line on desktop */}
-          <div style={{ width: "100%", maxWidth: 560, display: "flex", flexDirection: isCompact ? "column" : "row", alignItems: isCompact ? "stretch" : "center", gap: isCompact ? 4 : 10 }}>
+          {/* Seek — one clean translucent track with a bold red fill */}
+          <div style={{ width: "100%", maxWidth: 560, display: "flex", flexDirection: isCompact ? "column" : "row", alignItems: isCompact ? "stretch" : "center", gap: isCompact ? 0 : 10 }}>
+            {!isCompact && <span style={{ fontSize: 11.5, color: C.muted, width: 38, textAlign: "right", flexShrink: 0 }}>{fmtSec(elapsed)}</span>}
+            {seekLine}
             {isCompact ? (
-              <>
-                <div ref={scrubRef} onClick={e => seekFromEvent(e.clientX)}
-                  role="slider" aria-label="Seek"
-                  aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(seekPct * 100)}
-                  style={{ width: "100%", height: 34, display: "flex", alignItems: "center", gap: 2, cursor: "pointer" }}>
-                  {waveBars.map((h, i) => (
-                    <div key={i}
-                      style={{
-                        flex: 1, minWidth: 0, height: h, borderRadius: 2,
-                        background: barColor(i),
-                        transition: "background .2s linear",
-                      }} />
-                  ))}
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ fontSize: 12, color: C.muted }}>{fmtSec(elapsed)}</span>
-                  <span style={{ fontSize: 12, color: C.muted }}>{total > 0 ? fmtSec(total) : "--:--"}</span>
-                </div>
-              </>
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: -2 }}>
+                <span style={{ fontSize: 12, color: C.muted }}>{fmtSec(elapsed)}</span>
+                <span style={{ fontSize: 12, color: C.muted }}>{total > 0 ? fmtSec(total) : "--:--"}</span>
+              </div>
             ) : (
-              <>
-                <span style={{ fontSize: 11.5, color: C.muted, width: 38, textAlign: "right", flexShrink: 0 }}>{fmtSec(elapsed)}</span>
-                <div ref={scrubRef}
-                  onClick={e => seekFromEvent(e.clientX)}
-                  role="slider" aria-label="Seek"
-                  aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(seekPct * 100)}
-                  style={{ flex: 1, height: 5, borderRadius: 3, background: C.border, cursor: "pointer", position: "relative" }}>
-                  <div style={{ width: `${seekPct * 100}%`, height: "100%", borderRadius: 3, background: C.accent, transition: "width .4s linear" }} />
-                </div>
-                <span style={{ fontSize: 11.5, color: C.muted, width: 38, flexShrink: 0 }}>{total > 0 ? fmtSec(total) : "--:--"}</span>
-              </>
+              <span style={{ fontSize: 11.5, color: C.muted, width: 38, flexShrink: 0 }}>{total > 0 ? fmtSec(total) : "--:--"}</span>
             )}
           </div>
         </div>
@@ -508,16 +507,6 @@ export function PlayerPage() {
           </button>
         </div>
 
-        {/* Up-next glimpse — compact only, one tappable line under transport. */}
-        {isCompact && nextUp && (
-          <button onClick={playNext} aria-label={`Up next: ${nextUp.title}`}
-            style={{ display: "flex", alignItems: "center", gap: 8, margin: "-6px auto 0", maxWidth: 420, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", color: C.muted, fontSize: 12.5, padding: "2px 10px", minWidth: 0 }}>
-            <span style={{ fontWeight: 800, color: C.accent, flexShrink: 0, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.4 }}>Up next</span>
-            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nextUp.title} — {nextUp.artist}</span>
-            <SkipForward size={13} style={{ flexShrink: 0 }} />
-          </button>
-        )}
-
         {/* Right: the deck. Lyrics is NOT a tab here — the single lyrics
             control is the Song|Lyrics pill at the top of the player. */}
         <div className="player-page-context" style={{ display: "flex", flexDirection: "column", minHeight: 0, background: C.pane, border: `1px solid ${C.border}`, borderRadius: 16, overflow: "hidden" }}>
@@ -546,13 +535,13 @@ export function PlayerPage() {
         </button>
         {/* Output device chip — only when a real device name is known */}
         {outputDevice.label && (
-          <button onClick={() => setPlayerPageOpen(false)} aria-label={`Output: ${outputDevice.name}`}
+          <button onClick={closePlayerToHome} aria-label={`Output: ${outputDevice.name}`}
             style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 34, padding: "0 14px", borderRadius: 999, background: `color-mix(in srgb, ${DEVICE_GREEN} 14%, transparent)`, border: "none", cursor: "pointer", color: DEVICE_GREEN, fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", flexShrink: 0 }}>
             <Headphones size={14} />
             <span style={{ maxWidth: 110, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{outputDevice.name}</span>
           </button>
         )}
-        <button onClick={() => setPlayerPageOpen(false)} aria-label="Close full-screen player"
+        <button onClick={closePlayerToHome} aria-label="Close full-screen player"
           style={{ width: 44, height: 44, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.muted, padding: 0 }}>
           <ChevronDown size={22} />
         </button>

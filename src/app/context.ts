@@ -81,6 +81,7 @@ export type LibTab = "playlists" | "liked" | "albums" | "artists" | "downloaded"
 
 export type Screen =
   | { id: "home" }
+  | { id: "landing" }
   | { id: "search"; q?: string }
   | { id: "discover" }
   | { id: "library"; tab?: LibTab }
@@ -194,6 +195,8 @@ export interface AppCtxType {
   togglePanel: (tab: PanelTab) => void;
   playerPageOpen: boolean;
   setPlayerPageOpen: (open: boolean) => void;
+  /** Dismiss the full-screen player AND land on Home (swipe-down / back). */
+  closePlayerToHome: () => void;
   /** Mode of the full-screen player — the lock-screen Lyrics action drives it. */
   playerPageMode: "song" | "lyrics" | "video";
   setPlayerPageMode: (mode: "song" | "lyrics" | "video") => void;

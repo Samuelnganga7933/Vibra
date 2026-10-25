@@ -14,6 +14,7 @@ import {
   Share2, Link2, MessageCircle, Send, Mail, Trash2, Star,
 } from "lucide-react";
 import { toast, Toaster } from "sonner";
+import { App as CapApp } from "@capacitor/app";
 import { ErrorBoundary, installRuntimeGuards } from "./components/ErrorBoundary";
 import { getConnectionStatus, subscribeConnection, startConnectionMonitor, type ConnectionStatus } from "./services/safeFetch";
 import {
@@ -94,6 +95,7 @@ import { ErrorScreen } from "./screens/ErrorScreen";
 import { AuthScreen } from "./screens/AuthScreen";
 import { DownloadScreen } from "./screens/DownloadScreen";
 import { MobileScreenView } from "./screens/mobile";
+import { LandingScreen } from "./screens/Landing";
 
 // ─── Backend API helper ────────────────────────────────────────────────────────
 // User-BFF endpoints (see backend/main.py): everything resolves through
@@ -2792,19 +2794,34 @@ export default function App() {
   const screen   = navStack[navStack.length - 1];
   const navigate = useCallback((s: Screen) => setNavStack(p => [...p, s]), []);
   const goBack   = useCallback(() => setNavStack(p => p.length > 1 ? p.slice(0, -1) : p), []);
+  // Back-button handlers run outside React renders — read live values from refs.
+  const navStackRef = useRef(navStack);
+  useEffect(() => { navStackRef.current = navStack; }, [navStack]);
 
   // Route guard: the path (`/download`) or a known deep link (`#/search`, …)
   // navigates there; an unknown hash resolves to NotFound instead of a silent
   // home. Pathnames only map when they name a known screen, so the hosted root
-  // and any base path stay untouched.
+  // and any base path stay untouched. `/home` is the public landing page (the
+  // native app never asks for a path, so it always boots into the player).
   useEffect(() => {
-    const KNOWN = new Set(["home", "search", "discover", "library", "settings", "profile", "download", "downloads"]);
+    const KNOWN = new Set(["search", "discover", "library", "settings", "profile", "download", "downloads"]);
+    const resolvePath = (p: string): Screen | null => {
+      if (p === "home") return isNativeApp() ? null : { id: "landing" };
+      if (p === "app") return { id: "home" };
+      if (p === "login") return { id: "auth", mode: "login" };
+      if (p === "signup") return { id: "auth", mode: "signup" };
+      if (p === "get-app") return { id: "download" };
+      if (KNOWN.has(p)) return { id: p } as Screen;
+      return null;
+    };
     const applyRoute = () => {
       const fromPath = window.location.pathname.replace(/\/+$/, "").split("/").pop() ?? "";
       const fromHash = window.location.hash.replace(/^#\/?/, "").split("/")[0].trim();
-      const id = KNOWN.has(fromPath) ? fromPath : fromHash;
-      if (!id) return;
-      if (KNOWN.has(id)) navigate({ id } as Screen);
+      const pathScreen = fromPath && fromPath !== "index.html" ? resolvePath(fromPath) : null;
+      if (pathScreen) { navigate(pathScreen); return; }
+      if (!fromHash) return;
+      if (fromHash === "home") { navigate({ id: "home" }); return; }
+      if (KNOWN.has(fromHash)) navigate({ id: fromHash } as Screen);
       else navigate({ id: "notfound" });
     };
     applyRoute();
@@ -2996,6 +3013,8 @@ export default function App() {
   /** Right panel — closed by default; the bar opens it per tab. */
   const [panelTab, setPanelTab] = useState<PanelTab | null>(null);
   const [playerPageOpen, setPlayerPageOpen] = useState(false);
+  const playerPageOpenRef = useRef(false);
+  useEffect(() => { playerPageOpenRef.current = playerPageOpen; }, [playerPageOpen]);
   /** Full-screen player mode — the lock-screen Lyrics action lands on "lyrics"
       instead of opening the sheet's duplicate lyrics panel. */
   const [playerPageMode, setPlayerPageMode] = useState<"song" | "lyrics" | "video">("song");
@@ -3102,6 +3121,34 @@ export default function App() {
     setPlayerPageOpen(open);
     if (open && window.matchMedia("(max-width: 1199.98px)").matches) setPanelTab(null);
   }, []);
+  /** Dismissing the full-screen player (swipe-down, close, back) lands on Home —
+      never exits the app and never leaves the player stuck above a dead stack. */
+  const closePlayerToHome = useCallback(() => {
+    setPlayerPageOpen(false);
+    setNavStack([{ id: "home" }]);
+  }, []);
+
+  // ── Hardware back button ────────────────────────────────────────────────────
+  // Player open → back dismisses it to Home. Anywhere else → back walks the
+  // nav stack. On Home → a second press within 2s exits ("Press back again to
+  // exit"); a lone press never closes the app. Back only moves the UI — it
+  // never touches playback or the media-session service, so leaving the app
+  // can't stop the music.
+  const backExitAt = useRef(0);
+  useEffect(() => {
+    let remove: (() => void) | undefined;
+    void CapApp.addListener("backButton", () => {
+      if (playerPageOpenRef.current) { closePlayerToHome(); return; }
+      if (navStackRef.current.length > 1) { goBack(); return; }
+      const now = Date.now();
+      if (now - backExitAt.current < 2000) { void CapApp.exitApp(); return; }
+      backExitAt.current = now;
+      toast("Press back again to exit");
+    })
+      .then(h => { remove = () => void h.remove(); })
+      .catch(() => { /* web — no hardware back to intercept */ });
+    return () => { remove?.(); };
+  }, [closePlayerToHome, goBack]);
   /**
    * Live viewport height for the shells — tracks keyboard (adjustResize),
    * rotation and toolbar collapse without trusting dvh alone. Published as
@@ -4248,6 +4295,7 @@ export default function App() {
     lyrics, plainLyrics, lyricsLoading,
     uiState, panelTab, openPanel, togglePanel,
     playerPageOpen, setPlayerPageOpen: openPlayerPage,
+    closePlayerToHome,
     playerPageMode, setPlayerPageMode,
     errorState, showError, clearError,
     user, userLoading, login, register, logout,
@@ -4320,7 +4368,10 @@ export default function App() {
         .native-app .mobile-shell { display: block !important; }
       `}</style>
 
-      {userLoading ? (
+      {screen.id === "landing" ? (
+        /* Public marketing page — no shell, no auth gate, full viewport. */
+        <LandingScreen />
+      ) : userLoading ? (
         /* Splash — while bootstrap checks the session (including the return
            from Google sign-in), the app shows neither Home nor the gate. */
         <div style={{ position: "fixed", inset: 0, background: C.bg, display: "grid", placeItems: "center" }}>
