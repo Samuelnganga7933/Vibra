@@ -24,7 +24,6 @@ export interface LocalSong {
 interface VybraMediaLocalType {
   listLocalMusic(): Promise<{ songs: LocalSong[] }>;
   requestAudioPermission(): Promise<void>;
-  openAudioSettings(): Promise<void>;
   checkPermissions(): Promise<Record<string, string>>;
 }
 
@@ -83,26 +82,31 @@ export async function requestLocalMusicPermission(): Promise<boolean> {
   }
 }
 
-/**
- * True when the system will still show the permission dialog. A hard
- * "denied" means the user chose "Don't ask again" — the only way forward is
- * the app settings screen (see openAudioPermissionSettings).
- */
-export async function audioPermissionAskable(): Promise<boolean> {
-  if (!Capacitor.isNativePlatform()) return false;
+export type AudioPermissionState = "granted" | "prompt" | "prompt-with-rationale" | "denied" | "unknown";
+
+/** Live permission state (Capacitor re-checks the OS on every call). */
+export async function audioPermissionState(): Promise<AudioPermissionState> {
+  if (!Capacitor.isNativePlatform()) return "unknown";
   try {
-    const state = await Native.checkPermissions();
-    const mine = AUDIO_KEYS.map(k => state?.[k]);
-    return mine.some(s => s === "prompt" || s === "prompt-with-rationale" || s === "granted");
+    const all = await Native.checkPermissions();
+    const raw = AUDIO_KEYS.map(k => all?.[k]).find(v => v);
+    if (raw === "granted" || raw === "prompt" || raw === "prompt-with-rationale" || raw === "denied") return raw;
+    return "unknown";
   } catch {
-    return false;
+    return "unknown";
   }
 }
 
-/** Jump straight to this app's system settings page (permission toggles). */
-export function openAudioPermissionSettings(): void {
-  if (!Capacitor.isNativePlatform()) return;
-  void Native.openAudioSettings().catch(() => { /* not native after all */ });
+/**
+ * One-shot, never nagging: the native dialog is shown only the first time
+ * the Local Music screen opens (state `prompt`). Once asked — granted or
+ * not — this returns silently and never triggers a dialog again.
+ */
+export async function ensureLocalMusicPermission(): Promise<boolean> {
+  const state = await audioPermissionState();
+  if (state === "granted") return true;
+  if (state === "prompt") return requestLocalMusicPermission();
+  return false;
 }
 
 /** Absolute path → a URL the WebView's <audio> can play. */

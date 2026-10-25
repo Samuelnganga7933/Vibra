@@ -10,7 +10,6 @@ import android.os.Build;
 import android.os.Environment;
 import android.content.ContentValues;
 import android.provider.MediaStore;
-import android.provider.Settings;
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.PermissionState;
@@ -160,17 +159,6 @@ public class VybraMediaPlugin extends Plugin {
      *  READ_EXTERNAL_STORAGE. Only ONE alias is ever consulted per device. */
     private static String audioAlias() {
         return Build.VERSION.SDK_INT >= 33 ? "audioFiles" : "audioFilesLegacy";
-    }
-
-    /** Permanent deny ("Don't ask again") — the system will never show the
-     *  dialog again, so the only way in is the app's settings page. */
-    @PluginMethod
-    public void openAudioSettings(PluginCall call) {
-        Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                Uri.fromParts("package", getContext().getPackageName(), null));
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        getContext().startActivity(intent);
-        call.resolve();
     }
 
     @PluginMethod

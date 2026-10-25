@@ -20,9 +20,10 @@ import { marketLabel, marketChartQuery } from "../services/locale";
 import { clearOfflineTracks, readOfflineTracks, type OfflineTrack } from "../services/offlineStorage";
 import {
   isNativeMediaAvailable, listLocalMusic, requestLocalMusicPermission, localSongToTrack,
-  audioPermissionAskable, openAudioPermissionSettings,
+  ensureLocalMusicPermission, audioPermissionState,
   type LocalSong,
 } from "../services/localMusic";
+import { App as CapApp } from "@capacitor/app";
 import { bffJson } from "../services/bff";
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -773,7 +774,30 @@ function MobileDownloads() {
     setLocalLoading(false);
     return songs;
   };
-  useEffect(() => { void loadLocal(); }, []);
+  // First open only: show the native dialog once (state "prompt"), then
+  // scan. After that this is a silent no-op — never a repeated prompt.
+  useEffect(() => {
+    void (async () => {
+      await ensureLocalMusicPermission();
+      await loadLocal();
+    })();
+  }, []);
+  // Returning from anywhere (including the system settings screen) re-checks
+  // silently and auto-loads a fresh grant — no restart, no extra tap.
+  useEffect(() => {
+    let handle: { remove(): Promise<void> } | undefined;
+    void CapApp.addListener("appStateChange", ev => {
+      // Fires on visibility change: reload only when returning to the
+      // foreground (isActive), never when leaving.
+      if (!ev || !ev.isActive) return;
+      void (async () => {
+        if ((await audioPermissionState()) === "granted") await loadLocal();
+      })();
+    })
+      .then(h => { handle = h; })
+      .catch(() => { /* web — no native app state to observe */ });
+    return () => { void handle?.remove(); };
+  }, []);
   const localTracks = useMemo(() => (localSongs ?? []).map(localSongToTrack), [localSongs]);
   const grantLocal = async () => {
     const granted = await requestLocalMusicPermission();
@@ -784,13 +808,8 @@ function MobileDownloads() {
           setTimeout(() => { void loadLocal().then(resolve); }, 250);
         })
       : await loadLocal();
-    if (!granted) {
-      if (await audioPermissionAskable()) toast("Permission denied — device music stays hidden");
-      else toast("Music access is blocked", {
-        description: "Allow music and audio in system settings to see your files.",
-        action: { label: "Settings", onClick: openAudioPermissionSettings },
-      });
-    } else if (songs === null) toast("Couldn't read music on this device");
+    if (!granted) toast("Permission denied — device music stays hidden");
+    else if (songs === null) toast("Couldn't read music on this device");
   };
 
   useEffect(() => { setLocalMeta(readOfflineTracks()); }, [downloadedTracks.length, activeDownloads.length]);
