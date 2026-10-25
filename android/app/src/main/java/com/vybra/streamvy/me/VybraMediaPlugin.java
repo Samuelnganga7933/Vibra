@@ -161,6 +161,21 @@ public class VybraMediaPlugin extends Plugin {
         return Build.VERSION.SDK_INT >= 33 ? "audioFiles" : "audioFilesLegacy";
     }
 
+    /**
+     * Back the task out instead of finishing: the WebView (and its <audio>
+     * element) and MediaPlaybackService stay alive, so exiting the visible
+     * app while music plays never kills the audio or the notification.
+     */
+    @PluginMethod
+    public void minimizeApp(PluginCall call) {
+        try {
+            getActivity().moveTaskToBack(true);
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("minimize-failed", "E_MINIMIZE", e);
+        }
+    }
+
     @PluginMethod
     public void listLocalMusic(PluginCall call) {
         if (getPermissionState(audioAlias()) != PermissionState.GRANTED) {

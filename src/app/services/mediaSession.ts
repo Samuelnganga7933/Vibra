@@ -52,6 +52,10 @@ interface VybraMediaPluginType {
   setPlaybackState(opts: MediaState & { durationSec: number }): Promise<void>;
   release(): Promise<void>;
   requestNotificationPermission(): Promise<void>;
+  /** Back the Android task out WITHOUT finishing the activity — keeps the
+   *  WebView (and its <audio>) and the media service alive while the app
+   *  visually leaves the screen. */
+  minimizeApp(): Promise<void>;
   /** Capacitor's built-in runtime-permission check for the "notifications" alias. */
   checkPermissions(): Promise<{ notifications: string }>;
   addListener(name: string, fn: (ev?: { positionSec?: number }) => void): Promise<PluginListenerHandle>;
@@ -197,6 +201,17 @@ export async function mediaNotificationPermission(): Promise<"granted" | "denied
   } catch {
     return "unknown"; // plugin predates the permissions API
   }
+}
+
+/**
+ * Leave the app while audio keeps running: moves the task to the back
+ * instead of destroying the WebView. Only used by the Home back-press exit
+ * when a track is playing — a silent app still exits for real.
+ */
+export function mediaMinimize(): void {
+  try {
+    void Native.minimizeApp().catch(swallow);
+  } catch { /* nothing to minimize (web) */ }
 }
 
 /** Tear down: drop metadata, deactivate the session, remove listeners. */

@@ -28,7 +28,7 @@ export function PlayerPage() {
   const {
     C, currentTrack, progress, elapsed, audioDuration, handleSeek,
     likedTrackIds, toggleLike, queue, playTrack,
-    closePlayerToHome,
+    closePlayer,
     playerPageMode: mediaMode, setPlayerPageMode: setMediaMode,
     openTrackOptions,
     isPlaying, togglePlay,
@@ -66,10 +66,10 @@ export function PlayerPage() {
   }, []);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") closePlayerToHome(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") closePlayer(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [closePlayerToHome]);
+  }, [closePlayer]);
 
   // A track without lyrics can't keep a lyrics view open; video is desktop-only.
   useEffect(() => {
@@ -133,7 +133,7 @@ export function PlayerPage() {
     dragStartY.current = null;
     dragYRef.current = 0;
     setDrag({ active: false, y: 0 });
-    if (past) closePlayerToHome();
+    if (past) closePlayer();
   };
   const cancelDrag = () => {
     dragStartY.current = null;
@@ -383,7 +383,7 @@ export function PlayerPage() {
         {isCompact ? (
           <div style={{ width: 36 }} />
         ) : (
-          <button onClick={closePlayerToHome} aria-label="Close full-screen player"
+          <button onClick={closePlayer} aria-label="Close full-screen player"
             style={{ width: 36, height: 36, borderRadius: "50%", background: C.surf, border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.text }}>
             <ChevronDown size={18} />
           </button>
@@ -538,13 +538,13 @@ export function PlayerPage() {
         </button>
         {/* Output device chip — only when a real device name is known */}
         {outputDevice.label && (
-          <button onClick={closePlayerToHome} aria-label={`Output: ${outputDevice.name}`}
+          <button onClick={closePlayer} aria-label={`Output: ${outputDevice.name}`}
             style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 34, padding: "0 14px", borderRadius: 999, background: `color-mix(in srgb, ${DEVICE_GREEN} 14%, transparent)`, border: "none", cursor: "pointer", color: DEVICE_GREEN, fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", flexShrink: 0 }}>
             <Headphones size={14} />
             <span style={{ maxWidth: 110, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{outputDevice.name}</span>
           </button>
         )}
-        <button onClick={closePlayerToHome} aria-label="Close full-screen player"
+        <button onClick={closePlayer} aria-label="Close full-screen player"
           style={{ width: 44, height: 44, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.muted, padding: 0 }}>
           <ChevronDown size={22} />
         </button>

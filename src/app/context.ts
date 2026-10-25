@@ -196,7 +196,7 @@ export interface AppCtxType {
   playerPageOpen: boolean;
   setPlayerPageOpen: (open: boolean) => void;
   /** Dismiss the full-screen player AND land on Home (swipe-down / back). */
-  closePlayerToHome: () => void;
+  closePlayer: () => void;
   /** Mode of the full-screen player — the lock-screen Lyrics action drives it. */
   playerPageMode: "song" | "lyrics" | "video";
   setPlayerPageMode: (mode: "song" | "lyrics" | "video") => void;

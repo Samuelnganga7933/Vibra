@@ -73,7 +73,7 @@ import { localSongUrl } from "./services/localMusic";
 import { markBundleReady, checkForOtaUpdates, reloadIntoLatestBundle, isNativeApp } from "./services/ota";
 import {
   mediaInit, mediaSetNowPlaying, mediaSetState, mediaRelease,
-  mediaRequestNotificationPermission, mediaNotificationPermission,
+  mediaRequestNotificationPermission, mediaNotificationPermission, mediaMinimize,
 } from "./services/mediaSession";
 import {
   useApp, AppCtx, makeColors, fmtSec, fmtDur, cleanTitle, toTrackItem,
@@ -2801,9 +2801,16 @@ export default function App() {
   /** Signed-out visitors land on the marketing page until they pick a door. */
   const [entered, setEntered] = useState(false);
   const screen   = navStack[navStack.length - 1];
-  const navigate = useCallback((s: Screen) => setNavStack(p => [...p, s]), []);
+  // Root tabs (home/search/discover/library) RESET the stack to
+  // [home, tab] instead of pushing duplicates — so walking back from any
+  // tab always lands on Home first, and Home itself is a stack of one
+  // (the exit guard's home). Everything else (playlists, player-backed
+  // screens, profile…) is a normal push.
+  const ROOT_TABS = new Set(["home", "search", "discover", "library"]);
+  const navigate = useCallback((s: Screen) => {
+    setNavStack(ROOT_TABS.has(s.id) ? (s.id === "home" ? [s] : [{ id: "home" }, s]) : p => [...p, s]);
+  }, []);
   const goBack   = useCallback(() => setNavStack(p => p.length > 1 ? p.slice(0, -1) : p), []);
-  // Back-button handlers run outside React renders — read live values from refs.
   const navStackRef = useRef(navStack);
   useEffect(() => { navStackRef.current = navStack; }, [navStack]);
 
@@ -3138,34 +3145,41 @@ export default function App() {
     setPlayerPageOpen(open);
     if (open && window.matchMedia("(max-width: 1199.98px)").matches) setPanelTab(null);
   }, []);
-  /** Dismissing the full-screen player (swipe-down, close, back) lands on Home —
-      never exits the app and never leaves the player stuck above a dead stack. */
-  const closePlayerToHome = useCallback(() => {
+  /** Dismissing the full-screen player (swipe-down, close, back) pops only
+      the overlay — the nav stack underneath stays intact, so the NEXT back
+      press continues walking history (player → playlist/search → home)
+      instead of jump-cutting to Home. Never exits the app. */
+  const closePlayer = useCallback(() => {
     setPlayerPageOpen(false);
-    setNavStack([{ id: "home" }]);
   }, []);
 
   // ── Hardware back button ────────────────────────────────────────────────────
-  // Player open → back dismisses it to Home. Anywhere else → back walks the
-  // nav stack. On Home → a second press within 2s exits ("Press back again to
-  // exit"); a lone press never closes the app. Back only moves the UI — it
-  // never touches playback or the media-session service, so leaving the app
-  // can't stop the music.
+  // Player open → back dismisses only the player, revealing the screen it was
+  // opened from. Anywhere else → back walks the nav stack one step
+  // (playlist/search → home). On Home the FIRST press is ignored with a brief
+  // toast ("Press back again to exit"); a second press within 2s leaves the
+  // app. While audio plays that exit only backs the task out (WebView +
+  // media service stay alive → music and notification survive); a silent app
+  // exits for real. Back never touches playback itself.
   const backExitAt = useRef(0);
   useEffect(() => {
     let remove: (() => void) | undefined;
     void CapApp.addListener("backButton", () => {
-      if (playerPageOpenRef.current) { closePlayerToHome(); return; }
+      if (playerPageOpenRef.current) { closePlayer(); return; }
       if (navStackRef.current.length > 1) { goBack(); return; }
       const now = Date.now();
-      if (now - backExitAt.current < 2000) { void CapApp.exitApp(); return; }
+      if (now - backExitAt.current < 2000) {
+        if (isPlayingRef.current) mediaMinimize();
+        else void CapApp.exitApp();
+        return;
+      }
       backExitAt.current = now;
       toast("Press back again to exit");
     })
       .then(h => { remove = () => void h.remove(); })
       .catch(() => { /* web — no hardware back to intercept */ });
     return () => { remove?.(); };
-  }, [closePlayerToHome, goBack]);
+  }, [closePlayer, goBack]);
   /**
    * Live viewport height for the shells — tracks keyboard (adjustResize),
    * rotation and toolbar collapse without trusting dvh alone. Published as
@@ -4306,7 +4320,7 @@ export default function App() {
     lyrics, plainLyrics, lyricsLoading,
     uiState, panelTab, openPanel, togglePanel,
     playerPageOpen, setPlayerPageOpen: openPlayerPage,
-    closePlayerToHome,
+    closePlayer,
     playerPageMode, setPlayerPageMode,
     errorState, showError, clearError,
     user, userLoading, login, register, logout,
