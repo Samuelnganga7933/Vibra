@@ -855,6 +855,29 @@ function MobileDownloads() {
         )}
       </div>
 
+      {/* In-flight downloads — live percentages instead of a mystery spinner. */}
+      {activeDownloads.length > 0 && (
+        <div style={{ padding: "22px 24px 0" }}>
+          <MSectionTitle right={<span style={{ fontSize: 13, color: C.muted, fontWeight: 600 }}>{activeDownloads.length} downloading</span>}>
+            Downloading
+          </MSectionTitle>
+          {activeDownloads.map(d => (
+            <div key={d.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 0" }}>
+              <div style={{ width: 44, height: 44, borderRadius: 8, background: d.bg ?? C.surf, overflow: "hidden", flexShrink: 0, display: "grid", placeItems: "center", position: "relative" }}>
+                {d.imageUrl && <img src={d.imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
+              </div>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontWeight: 700, fontSize: 14, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{d.title}</div>
+                <div style={{ fontSize: 12.5, color: C.muted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{d.artist}</div>
+              </div>
+              <span aria-label="Download progress" style={{ fontSize: 12.5, fontWeight: 800, color: C.accent, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
+                {Math.min(100, Math.round((d.progress ?? 0) * 100))}%
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
       {downloadedTracks.length > 0 ? (
         <div style={{ padding: "22px 24px 0" }}>
           <MSectionTitle right={<span style={{ fontSize: 13, color: C.muted, fontWeight: 600 }}>{downloadedTracks.length} {downloadedTracks.length === 1 ? "song" : "songs"}</span>}>

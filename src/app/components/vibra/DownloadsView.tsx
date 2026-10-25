@@ -66,6 +66,7 @@ export function DownloadsView({ tracks = [], onPlay, onSync, colors }: Downloads
   // genuine files get the green Offline marker plus a remove control.
   const [offlineIds, setOfflineIds] = useState<ReadonlySet<string>>(new Set());
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [busyPct, setBusyPct] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -85,20 +86,23 @@ export function DownloadsView({ tracks = [], onPlay, onSync, colors }: Downloads
     const id = String(t.id);
     if (busyId) return;
     setBusyId(id);
-    // The row's icon is the progress signal (spinner → tick), so success and
-    // "already saved" stay silent — only a failure earns a toast.
+    setBusyPct(0);
+    // The row's icon becomes a live percentage, then a tick — success and
+    // "already saved" stay silent, only a failure earns a toast.
     try {
       const outcome = await saveDownload(
         { id: t.id, title: t.title, artist: t.artist, duration: t.duration, bg: t.bg, imageUrl: t.imageUrl },
+        fraction => { if (fraction != null) setBusyPct(Math.min(100, Math.round(fraction * 100))); },
       );
       if (outcome === "saved" || outcome === "already") {
         setOfflineIds(prev => new Set(prev).add(id));
         setCached(readOfflineTracks());
       } else {
-        toast.error("Couldn't download");
+        toast.error("Couldn't download — check your connection and try again", { duration: 4000 });
       }
     } finally {
       setBusyId(null);
+      setBusyPct(0);
     }
   }, [busyId]);
 
@@ -294,8 +298,10 @@ export function DownloadsView({ tracks = [], onPlay, onSync, colors }: Downloads
                   disabled={busyId === String(t.id)}
                   onClick={() => void downloadOne(t)}
                   style={{
-                    width: 30,
+                    minWidth: 30,
+                    width: busyId === String(t.id) ? 44 : 30,
                     height: 30,
+                    padding: busyId === String(t.id) ? "0 6px" : 0,
                     borderRadius: 8,
                     border: `1px solid ${C.border}`,
                     background: busyId === String(t.id) ? C.surf : "transparent",
@@ -304,13 +310,16 @@ export function DownloadsView({ tracks = [], onPlay, onSync, colors }: Downloads
                     placeItems: "center",
                     cursor: busyId ? "default" : "pointer",
                     flexShrink: 0,
+                    fontSize: 11,
+                    fontWeight: 700,
+                    fontFamily: "inherit",
                   }}
                 >
-                  <Download
-                    size={14}
-                    aria-hidden
-                    className={busyId === String(t.id) ? "animate-spin" : undefined}
-                  />
+                  {busyId === String(t.id) ? (
+                    <span aria-hidden>{busyPct}%</span>
+                  ) : (
+                    <Download size={14} aria-hidden />
+                  )}
                 </button>
               )}
               {offlineIds.has(String(t.id)) && (

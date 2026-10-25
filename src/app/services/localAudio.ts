@@ -190,7 +190,9 @@ async function saveNative(
           progress: !!onProgress,
           recursive: true,
           connectTimeout: 15_000,
-          readTimeout: 180_000,
+          // Strict stall limit: no new bytes for 60s fails the download
+          // instead of spinning forever on an interrupted stream.
+          readTimeout: 60_000,
         });
       } catch (err) { lastError = err; return undefined; }
     };
@@ -234,12 +236,34 @@ async function saveWeb(
   onProgress?: (fraction: number | null) => void,
 ): Promise<SaveOutcome> {
   try {
-    const response = await fetch(getDownloadUrl(id), { headers: { Range: "bytes=0-" } });
+    const signal = typeof AbortSignal !== "undefined" && "timeout" in AbortSignal
+      ? AbortSignal.timeout(60_000) // strict cap — a stalled proxy can't spin forever
+      : undefined;
+    const response = await fetch(getDownloadUrl(id), { headers: { Range: "bytes=0-" }, signal });
     const type = (response.headers.get("content-type") ?? "").toLowerCase();
     if (!response.ok || type.startsWith("application/json") || type.startsWith("text/")) {
       return "failed";
     }
-    const blob = await response.blob();
+    const total = Number(response.headers.get("content-length")) || 0;
+    // Stream the body so in-flight rows can show real percentages (a whole
+    // response.blob() only ever reports 0% then 100%).
+    let blob: Blob;
+    const reader = response.body?.getReader?.();
+    if (reader && onProgress) {
+      const chunks: BlobPart[] = [];
+      let received = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        chunks.push(value);
+        received += value.length;
+        if (total > 0) onProgress(Math.min(1, received / total));
+      }
+      blob = new Blob(chunks, { type: type || "audio/mp4" });
+    } else {
+      blob = await response.blob();
+    }
     if (blob.size < 20_000) return "failed";
     const stored = await idbRun<IDBValidKey>("readwrite", store => store.put({ id, blob }));
     if (stored === null) return "failed";

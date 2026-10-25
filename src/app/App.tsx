@@ -1850,7 +1850,8 @@ function TrackOptionsSheet({ track, onClose }: { track: Track; onClose: () => vo
   } = useApp();
   const [view, setView] = useState<"root" | "playlists" | "share">("root");
   const [downloaded, setDownloaded] = useState(false);
-  const dlBusy = activeDownloads.some(d => d.id === String(track.id));
+  const dlActive = activeDownloads.find(d => d.id === String(track.id));
+  const dlPct = dlActive ? Math.round((dlActive.progress ?? 0) * 100) : null;
   const isLiked = likedTrackIds.has(track.id);
   const signedIn = uiState.signedIn;
 
@@ -1912,11 +1913,11 @@ function TrackOptionsSheet({ track, onClose }: { track: Track; onClose: () => vo
           });
         }, true)
       : option(
-          dlBusy
+          dlActive
             ? <span style={{ width: 17, height: 17, borderRadius: "50%", border: `2px solid ${C.muted}`, borderTopColor: C.accent, animation: "spin .8s linear infinite" }} />
             : <Download size={18} />,
-          "Download", () => {
-            if (dlBusy) return;
+          dlActive ? `Downloading ${dlPct ?? 0}%` : "Download", () => {
+            if (dlActive) return;
             void downloadTrack(track).then(outcome => {
               if (outcome !== "failed") setDownloaded(true);
             });
@@ -4068,13 +4069,19 @@ export default function App() {
     setActiveDownloads(list => (list.some(d => d.id === id) ? list : [
       ...list, { id, title: track.title, artist: track.artist, bg: track.bg, imageUrl: track.imageUrl, progress: 0 },
     ]));
-    const outcome = await saveDownload(toOfflineTrack(track), fraction => {
-      if (fraction == null) return;
-      setActiveDownloads(list => list.map(d => (d.id === id ? { ...d, progress: fraction } : d)));
-    });
-    setActiveDownloads(list => list.filter(d => d.id !== id));
+    let outcome: "saved" | "already" | "failed" = "failed";
+    try {
+      outcome = await saveDownload(toOfflineTrack(track), fraction => {
+        if (fraction == null) return;
+        setActiveDownloads(list => list.map(d => (d.id === id ? { ...d, progress: fraction } : d)));
+      });
+    } catch {
+      outcome = "failed"; // never let a thrown save leave a stuck row behind
+    } finally {
+      setActiveDownloads(list => list.filter(d => d.id !== id));
+    }
     if (outcome === "failed") {
-      toast.error("Couldn't download");
+      toast.error("Couldn't download — check your connection and try again", { duration: 4000 });
     } else if (outcome === "saved") {
       void refreshDownloads();
     }
