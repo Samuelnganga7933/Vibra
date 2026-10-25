@@ -3419,12 +3419,10 @@ export default function App() {
           setElapsed(a.currentTime);
           setProgress(a.currentTime / a.duration);
           setAudioDuration(a.duration);
-        } else {
-          // Duration not known yet — tick the clock but NEVER advance the
-          // progress bar on guesswork (a phantom "halfway" bar at 0:02 was
-          // exactly that guesswork drifting away from the real playhead).
-          setElapsed(e => e + 0.5);
         }
+        // Duration unknown → the clock HOLDS (honest). Fabricated ticks made
+        // a dead engine look like it was playing: elapsed only moves when the
+        // engine itself reports movement.
       }, 500);
     } else {
       clearInterval(timerRef.current);
@@ -3549,6 +3547,15 @@ export default function App() {
       });
       a.addEventListener("ended", () => {
         if (playSessionRef.current === session) handleTrackEndRef.current();
+      });
+      // Engine truth beats the optimistic flag: Chromium can pause the element
+      // behind our back (background suspension, interrupted stream). Ignore
+      // pauses we caused ourselves — engine switches (streamFailed) or the
+      // next session already took over.
+      a.addEventListener("pause", () => {
+        if (streamFailed || playSessionRef.current !== session || audioRef.current !== a) return;
+        if (a.ended) return; // "ended" advances the queue — not a pause
+        setIsPlaying(false);
       });
       audioRef.current = a;
       registerSinkElement(a);
@@ -3947,6 +3954,8 @@ export default function App() {
   // left the lock-screen seek bar frozen. A lightweight ticker keeps the system
   // UI honest in the background (10s cadence — every position update crosses a
   // JNI bridge into the foreground service, so this is deliberately sparse).
+  const currentTrackRef = useRef(currentTrack);
+  useEffect(() => { currentTrackRef.current = currentTrack; }, [currentTrack]);
   useEffect(() => {
     if (!isPlaying || !currentTrack) return;
     const push = (positionSec: number) => {
@@ -4286,11 +4295,14 @@ export default function App() {
   // explicit Sign out button does (and it still sticks).
 
   // ── Foreground nudge ─────────────────────────────────────────────────────────
-  // Chromium freezes media while the screen is off; on the way back the engine
-  // can be paused even though the app still believes it's playing (this is the
+  // Chromium can freeze media while the screen is off; on the way back the
+  // engine may be paused even though the app still believes it's playing (the
   // "pause, leave, come back, tap play a few times" complaint). Reconcile once
   // on return: sessions the user actually paused never run this — isPlaying is
-  // false there.
+  // false there. First try a plain resume; if the engine refuses (suspended or
+  // its stream URL expired while away) rebuild playback at the saved position,
+  // which re-resolves a fresh URL. If that fails too, beginPlayback's own
+  // failure path leaves an honest paused state instead of a dead "playing".
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState !== "visible" || !isPlayingRef.current) return;
@@ -4298,11 +4310,16 @@ export default function App() {
       if (!engine) return;
       const element = engine as HTMLAudioElement;
       if (typeof element.paused === "boolean" && !element.paused) return;
-      void engine.play().catch(() => { /* blocked until the next tap */ });
+      void engine.play().catch(() => {
+        const t = currentTrackRef.current;
+        if (!t) return;
+        resumePosRef.current = Math.floor(elapsedRef.current);
+        beginPlayback(t);
+      });
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
-  }, []);
+  }, [beginPlayback]);
 
   // ── Leaving the app stops the sound — nothing plays over the gate ────────────
   useEffect(() => {
