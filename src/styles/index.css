@@ -54,6 +54,10 @@
   flex-shrink: 0;
 }
 
+/* Queue column: always on at desktop widths; below 1200px it stays hidden
+   until the footer's queue icon adds .show-queue (the boards' behavior). */
+.player-page-context { display: flex; }
+
 @media (max-width: 1199.98px) {
   /* Full screen, edge to edge — not a card floating over the dock. */
   .player-page {

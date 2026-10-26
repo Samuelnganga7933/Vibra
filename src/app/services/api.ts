@@ -323,7 +323,11 @@ export async function fetchLyrics(title: string, artist: string): Promise<Lyrics
     /* empty result — panel shows its calm empty copy */
   }
 
-  LYRICS_CACHE.set(key, result);
+  // Cache only DEFINITIVE answers. An empty result here may just be lrclib
+  // answering 503 (or the network dropping) — caching that would freeze a
+  // transient failure in until the app restarts. Real misses (404 + engine
+  // miss) also land empty and simply cost one cheap retry on the next open.
+  if (result.synced.length > 0 || result.plain) LYRICS_CACHE.set(key, result);
   return result;
 }
 

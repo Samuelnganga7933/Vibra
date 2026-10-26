@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown, Heart, Headphones, ListMusic, Mic2, MoreHorizontal,
   Pause, Play, Repeat, Repeat1, Send, Shuffle, SkipBack, SkipForward,
@@ -221,10 +221,30 @@ export function PlayerPage() {
    */
   const seekPct = total > 0 ? Math.max(0, Math.min(elapsed / total, 1)) : Math.min(progress, 1);
 
+  /** Waveform bar heights — seeded by track id (stable per track, varied
+      across tracks) with a sine envelope so it reads as a waveform rather
+      than flat noise. */
+  const waveBars = useMemo(() => {
+    const seedStr = String(currentTrack?.id ?? "0");
+    let seed = 2166136261;
+    for (let i = 0; i < seedStr.length; i++) seed = (Math.imul(seed ^ seedStr.charCodeAt(i), 16777619)) >>> 0;
+    const bars: number[] = [];
+    const N = 72;
+    for (let i = 0; i < N; i++) {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      const r = (seed >>> 8) / 0xFFFFFF;
+      const env = 0.55 + 0.45 * Math.sin((i / N) * Math.PI);
+      bars.push(0.3 + 0.7 * r * env);
+    }
+    return bars;
+  }, [currentTrack?.id]);
+
   /**
-   * Seek line — subtle translucent-white track over the full duration, bold
-   * red fill for the played portion. Tap anywhere to jump; a captured
-   * pointer drag scrubs continuously. One element serves both layouts.
+   * Waveform seek — a full-width bar strip: played bars in bold red, the
+   * unplayed remainder in subtle white/translucent. Tap anywhere to jump; a
+   * captured pointer drag scrubs continuously. One element serves both
+   * layouts. Bar heights are seeded per track so the shape is stable (no
+   * jitter while playing) but differs track to track.
    */
   const seekLine = (
     <div ref={scrubRef} role="slider" aria-label="Seek"
@@ -232,9 +252,15 @@ export function PlayerPage() {
       onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); seekFromEvent(e.clientX); }}
       onPointerMove={e => { if (e.currentTarget.hasPointerCapture(e.pointerId)) seekFromEvent(e.clientX); }}
       onPointerUp={e => { if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId); }}
-      style={{ position: "relative", flex: 1, width: "100%", height: 30, display: "flex", alignItems: "center", cursor: "pointer", touchAction: "none" }}>
-      <div aria-hidden style={{ position: "absolute", left: 0, right: 0, height: 6, borderRadius: 999, background: "rgba(255,255,255,0.16)" }} />
-      <div aria-hidden style={{ position: "absolute", left: 0, width: `${seekPct * 100}%`, height: 6, borderRadius: 999, background: C.accent, transition: "width .4s linear" }} />
+      style={{ position: "relative", flex: 1, width: "100%", height: 44, display: "flex", alignItems: "center", gap: 2, cursor: "pointer", touchAction: "none", overflow: "hidden" }}>
+      {waveBars.map((h, i) => (
+        <span key={i} aria-hidden
+          style={{
+            flex: 1, minWidth: 0, height: `${Math.round(h * 100)}%`, borderRadius: 2,
+            background: i / waveBars.length < seekPct ? C.accent : "rgba(255,255,255,0.22)",
+            transition: "background .2s linear",
+          }} />
+      ))}
     </div>
   );
 
@@ -279,28 +305,6 @@ export function PlayerPage() {
     <div style={{ textAlign: "center", color: C.muted, fontSize: 13.5, padding: "28px 8px", lineHeight: 1.6 }}>
       Play an album or playlist to fill your queue.
     </div>
-  );
-
-  /** Compact deck — a TOP sheet under the header, visible in both Song and
-      Lyrics modes (the ask: the queue lives up top with the lyrics, never
-      as a bottom panel). */
-  const compactQueuePanel = isCompact && queueOpen && (
-    <>
-      <div onClick={() => setQueueOpen(false)} aria-hidden
-        style={{ position: "absolute", inset: 0, top: 108, background: "rgba(0,0,0,0.5)", zIndex: 5, animation: "fadeIn .15s ease" }} />
-      <div role="dialog" aria-label="Queue"
-        onPointerDown={e => e.stopPropagation()}
-        style={{ position: "absolute", left: 0, right: 0, top: 108, zIndex: 6, maxHeight: "46dvh", overflowY: "auto", scrollbarWidth: "none", background: `color-mix(in srgb, ${C.pane} 94%, transparent)`, backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", borderTop: `1px solid ${C.border}`, padding: "8px 10px 14px", boxShadow: "0 18px 44px rgba(0,0,0,0.5)" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "2px 8px 8px" }}>
-          <span style={{ fontSize: 13, fontWeight: 800, color: C.text }}>Queue</span>
-          <button onClick={() => setQueueOpen(false)} aria-label="Close queue"
-            style={{ border: "none", background: "none", color: C.muted, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", padding: 4 }}>
-            Done
-          </button>
-        </div>
-        {queueRows}
-      </div>
-    </>
   );
 
   /** The mode pill — compact: Song|Lyrics only, active = accent red per the boards. */
@@ -394,13 +398,12 @@ export function PlayerPage() {
             </div>
           </div>
         </div>
-        {compactQueuePanel}
       </div>
     );
   }
 
   return (
-    <div className="player-page"
+    <div className={`player-page${queueOpen ? " show-queue" : ""}`}
       style={{
       position: "fixed", left: 12, right: 12, top: 12, bottom: 112,
       zIndex: 40, borderRadius: 18, border: `1px solid ${C.border}`,
@@ -552,7 +555,7 @@ export function PlayerPage() {
 
         {/* Right: the deck. Lyrics is NOT a tab here — the single lyrics
             control is the Song|Lyrics pill at the top of the player. */}
-        <div className="player-page-context" style={{ display: "flex", flexDirection: "column", minHeight: 0, background: C.pane, border: `1px solid ${C.border}`, borderRadius: 16, overflow: "hidden" }}>
+        <div className="player-page-context" style={{ flexDirection: "column", minHeight: 0, background: C.pane, border: `1px solid ${C.border}`, borderRadius: 16, overflow: "hidden" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "12px 14px 4px", flexShrink: 0, color: C.text, fontSize: 12.5, fontWeight: 800 }}>
             <ListMusic size={14} /> Queue
           </div>
@@ -564,9 +567,6 @@ export function PlayerPage() {
 
       {/* Footer — mobile only (hidden by index.css above the shell breakpoint),
           per the boards' bottom row: queue, share, output device, collapse. */}
-      {/* Compact deck — TOP sheet, works in Song AND Lyrics modes. */}
-      {compactQueuePanel}
-
       <div className="player-page-foot">
         <button onClick={() => setQueueOpen(v => !v)} aria-label="Queue" aria-pressed={queueOpen}
           style={{ width: 44, height: 44, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: queueOpen ? C.accent : C.muted, padding: 0 }}>
