@@ -242,13 +242,33 @@ def _bearer(authorization: Optional[str]) -> Optional[str]:
     return token.strip()
 
 
+def _cookie_host() -> str:
+    """The BFF's own hostname — drives cookie Domain and Secure decisions."""
+    url = (os.getenv("PUBLIC_BFF_URL") or "https://bff.vybra.streamvy.me").strip()
+    host = urllib.parse.urlsplit(url).netloc.lower()
+    return host.split("@")[-1].split(":")[0]
+
+
+def _cookie_domain() -> Optional[str]:
+    """Auth cookies are scoped to `.streamvy.me` so every subdomain shares the
+    session (subdomain SSO). Dev hosts (localhost) must stay host-only — a
+    Domain attribute that doesn't match the request host is silently rejected
+    by the browser, which would break local sign-in outright."""
+    host = _cookie_host()
+    return ".streamvy.me" if host == "streamvy.me" or host.endswith(".streamvy.me") else None
+
+
 def _set_session_cookie(response: Response, token: str) -> None:
+    host = _cookie_host()
     response.set_cookie(
         "vibra_session",
         token,
         httponly=True,
-        secure=os.getenv("ENVIRONMENT", "development").lower() == "production",
+        # Secure everywhere except plain-HTTP localhost dev (Safari rejects a
+        # Secure cookie on http:// even for localhost).
+        secure=not (host.startswith("localhost") or host.startswith("127.0.0.1")),
         samesite="lax",
+        domain=_cookie_domain(),
         max_age=60 * 60 * 24 * 30,
         path="/",
     )
@@ -496,7 +516,7 @@ def logout(response: Response, user: User = Depends(get_token_user), db: Session
     user.session_token = None
     db.add(user)
     db.commit()
-    response.delete_cookie("vibra_session", path="/")
+    response.delete_cookie("vibra_session", path="/", domain=_cookie_domain())
     response.status_code = 204
     return response
 
@@ -713,6 +733,7 @@ def google_start(
         httponly=True,
         samesite="lax",
         secure=request.url.scheme == "https",
+        domain=_cookie_domain(),
         path="/",
     )
     return response
@@ -775,7 +796,7 @@ def google_callback(
     # One hop back into the app with the bearer in the fragment (fragments
     # never reach a server log); the SPA consumes it before React boots.
     response = RedirectResponse(f"{return_to}#vibra_token={user.session_token}", status_code=302)
-    response.delete_cookie("vibra_gstate", path="/")
+    response.delete_cookie("vibra_gstate", path="/", domain=_cookie_domain())
     return response
 
 

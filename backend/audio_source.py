@@ -2,14 +2,16 @@
 audio_source — resolve a playable, direct audio URL for a YouTube video id.
 
 The Lenium engine (`/api/v1/tracks/stream`) runs yt-dlp without cookies and
-currently dies with YouTube's bot-check ("Sign in to confirm you're not a
-bot"), so every stream request falls back to the hidden YouTube IFrame —
-which stops the moment the screen locks. This module restores real audio:
+dies with YouTube's bot-check, so this module resolves audio itself:
 
-1. YouTube innertube `player` with the ANDROID client. The android app
-   clients return plain (unciphered) streamingData URLs and have historically
-   been exempt from the web bot wall. Proven working with the android key,
-   playbackContext and the youtube android UA.
+1. YouTube innertube `player` with the ANDROID client first (android app
+   clients return plain, unciphered streamingData URLs and are the most
+   bot-wall tolerant), then the IOS client — across two Google hosts
+   (`youtubei.googleapis.com` answers a different bot policy than
+   `www.youtube.com`, so a rejection on one host is worth retrying on the
+   other). Serverless egress IPs rotate through YouTube's reputation pools;
+   trying several combinations is what keeps browser downloads and playback
+   redirects alive when one combination is flagged.
 2. Lenium engine stream endpoint as a redirect fallback (it 302s itself when
    yt-dlp succeeds).
 
@@ -20,16 +22,27 @@ YouTube's player endpoint.
 from __future__ import annotations
 
 import os
+import re
 import time
 
 import httpx
 
 # The android key — the WEB key (AIzaSyAO_FJ2Sl…) 400s on android clients.
 _INNERTUBE_KEY = "AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM37w"
-_INNERTUBE_URL = f"https://www.youtube.com/youtubei/v1/player?key={_INNERTUBE_KEY}"
+_INNERTUBE_PATH = f"/youtubei/v1/player?key={_INNERTUBE_KEY}"
 _YT_UA = "com.google.android.youtube/20.10.38 (Linux; U; Android 11) gzip"
-_CLIENT_NAME = "ANDROID"
-_CLIENT_VERSION = "20.10.38"
+_IOS_UA = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)"
+
+# Two hosts × two clients: first plain-URL win. Every combination historically
+# returns unciphered `url` fields when it answers OK at all.
+_HOSTS = ("https://youtubei.googleapis.com", "https://www.youtube.com")
+_CLIENTS: tuple[tuple[str, str, dict, str, str], ...] = (
+    ("ANDROID", "20.10.38", {"androidSdkVersion": 30}, _YT_UA, "3"),
+    ("IOS", "20.10.4",
+     {"deviceMake": "Apple", "deviceModel": "iPhone16,2",
+      "osName": "iPhone", "osVersion": "17.5.1.21F90"},
+     _IOS_UA, "5"),
+)
 
 _ENGINE = (os.environ.get("CATALOGUE_BASE") or "https://music.vybra.streamvy.me").rstrip("/")
 
@@ -37,47 +50,53 @@ _TTL = 15 * 60.0          # googlevideo URLs live ~6h; 15 min is plenty
 _CACHE: dict[str, tuple[float, str, str]] = {}   # video_id -> (ts, url, mime)
 LAST_DIAG: dict[str, str] = {}                   # video_id -> why it failed
 
+# Video ids carry `-` and `_` constantly (e.g. `57__wGDUzig`); an isalnum()
+# check silently rejected those and made their downloads fail outright.
+_VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{6,20}$")
 
-def _resolve_innertube(video_id: str) -> tuple[str | None, str]:
+# Whole-resolution budget — the playback redirect waits on this.
+_BUDGET_S = 15.0
+_ATTEMPT_TIMEOUT_S = 7.0
+
+
+def _attempt(host: str, client: tuple[str, str, dict, str, str], video_id: str) -> tuple[str, str] | None:
+    name, version, extra, ua, x_num = client
     payload = {
         "videoId": video_id,
         "contentCheckOk": True,
         "racyCheckOk": True,
         "playbackContext": {"contentPlaybackContext": {"html5Preference": "HTML5_PREF_WANTS"}},
-        "context": {
-            "client": {
-                "clientName": _CLIENT_NAME,
-                "clientVersion": _CLIENT_VERSION,
-                "androidSdkVersion": 30,
-                "hl": "en",
-                "gl": "US",
-            }
-        },
+        "context": {"client": {"clientName": name, "clientVersion": version,
+                               "hl": "en", "gl": "US", **extra}},
     }
     headers = {
         "Content-Type": "application/json",
-        "User-Agent": _YT_UA,
-        "X-Youtube-Client-Name": "3",
-        "X-Youtube-Client-Version": _CLIENT_VERSION,
+        "User-Agent": ua,
+        "X-Youtube-Client-Name": x_num,
+        "X-Youtube-Client-Version": version,
         "Origin": "https://www.youtube.com",
         "Referer": "https://www.youtube.com/",
     }
+    label = f"{host.split('/')[2]}/{name}"
     try:
         response = httpx.post(
-            _INNERTUBE_URL, json=payload, headers=headers, timeout=12.0
+            host + _INNERTUBE_PATH, json=payload, headers=headers,
+            timeout=_ATTEMPT_TIMEOUT_S,
         )
         if response.status_code != 200:
-            LAST_DIAG[video_id] = f"post_{response.status_code}:{response.text[:160]}"
-            return None, ""
+            LAST_DIAG[video_id] = f"{label}:post_{response.status_code}:{response.text[:120]}"
+            return None
         data = response.json()
     except Exception as exc:
-        LAST_DIAG[video_id] = f"post_error:{type(exc).__name__}:{exc}"
-        return None, ""
+        LAST_DIAG[video_id] = f"{label}:post_error:{type(exc).__name__}:{exc}"
+        return None
 
     status = (data.get("playabilityStatus") or {})
     if status.get("status") != "OK":
-        LAST_DIAG[video_id] = f"playability:{status.get('status')}:{status.get('reason', '')[:160]}"
-        return None, ""
+        LAST_DIAG[video_id] = (
+            f"{label}:playability:{status.get('status')}:{status.get('reason', '')[:120]}"
+        )
+        return None
     streaming = data.get("streamingData") or {}
     formats = [
         f
@@ -85,25 +104,37 @@ def _resolve_innertube(video_id: str) -> tuple[str | None, str]:
         if str(f.get("mimeType", "")).startswith("audio/")
     ]
     if not formats:
-        LAST_DIAG[video_id] = "no_audio_formats"
-        return None, ""
+        LAST_DIAG[video_id] = f"{label}:no_audio_formats"
+        return None
     # m4a first — WebView decodes mp4a everywhere; opus-in-webm is shakier
     # on older Android builds.
     mp4 = [f for f in formats if "mp4" in str(f.get("mimeType", ""))]
     best = max(mp4 or formats, key=lambda f: int(f.get("bitrate") or 0))
     url = best.get("url")
     if not url:
-        LAST_DIAG[video_id] = "ciphered_no_url"
-        return None, ""
-    LAST_DIAG.pop(video_id, None)
+        LAST_DIAG[video_id] = f"{label}:ciphered_no_url"
+        return None
     mime = str(best.get("mimeType", "")).split(";")[0].strip() or "audio/mp4"
     return str(url), mime
+
+
+def _resolve_innertube(video_id: str) -> tuple[str | None, str]:
+    deadline = time.monotonic() + _BUDGET_S
+    for host in _HOSTS:
+        for client in _CLIENTS:
+            if time.monotonic() > deadline:
+                LAST_DIAG.setdefault(video_id, "budget_exhausted")
+                return None, ""
+            hit = _attempt(host, client, video_id)
+            if hit:
+                return hit
+    return None, ""
 
 
 def resolve_audio_url(video_id: str) -> tuple[str, str] | None:
     """(direct_url, mime) for a video id, or None when nothing can play."""
     vid = (video_id or "").strip()
-    if not vid or not vid.isalnum() or len(vid) > 20:
+    if not vid or not _VIDEO_ID.match(vid):
         return None
     hit = _CACHE.get(vid)
     now = time.monotonic()
