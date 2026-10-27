@@ -138,10 +138,19 @@ export async function saveDownload(
   if (!id) return "failed";
   if (await hasDownload(id)) return "already";
   // Each path writes its own metadata (native: filePath + size; web: size).
-  return isNativePlatform()
-    ? await saveNative(track, id, onProgress)
-    : await saveWeb(track, id, onProgress);
+  if (!isNativePlatform()) return await saveWeb(track, id, onProgress);
+  // Native saves are QUEUED: the Filesystem "progress" channel is global, so
+  // two concurrent downloads would interleave bytes and show each other's
+  // percentages. One at a time keeps every row's % truthful. A failed or
+  // thrown save must never stall the queue — hence the ignored reject handler.
+  const run = () => saveNative(track, id, onProgress);
+  const next = nativeSaveChain.then(run, run);
+  nativeSaveChain = next.catch(() => { /* row already surfaced the failure */ });
+  return await next;
 }
+
+/** Tail of the native-save queue (see saveDownload). */
+let nativeSaveChain: Promise<unknown> = Promise.resolve();
 
 async function saveNative(
   track: DownloadableTrack,
@@ -235,34 +244,48 @@ async function saveWeb(
   id: string,
   onProgress?: (fraction: number | null) => void,
 ): Promise<SaveOutcome> {
+  // Stall watchdog (not a total cap): abort only when NO byte arrives for
+  // 60s. A slow-but-flowing BFF proxy download is allowed to finish; an
+  // interrupted stream dies within a minute instead of spinning forever.
+  // Credentials ride along so a cookie-gated proxy keeps working too.
+  const controller = new AbortController();
+  let watchdog = setTimeout(() => controller.abort(), 60_000);
+  const poke = () => {
+    clearTimeout(watchdog);
+    watchdog = setTimeout(() => controller.abort(), 60_000);
+  };
   try {
-    const signal = typeof AbortSignal !== "undefined" && "timeout" in AbortSignal
-      ? AbortSignal.timeout(60_000) // strict cap — a stalled proxy can't spin forever
-      : undefined;
-    const response = await fetch(getDownloadUrl(id), { headers: { Range: "bytes=0-" }, signal });
+    const response = await fetch(getDownloadUrl(id), {
+      headers: { Range: "bytes=0-" },
+      signal: controller.signal,
+      credentials: "include",
+    });
     const type = (response.headers.get("content-type") ?? "").toLowerCase();
     if (!response.ok || type.startsWith("application/json") || type.startsWith("text/")) {
       return "failed";
     }
     const total = Number(response.headers.get("content-length")) || 0;
     // Stream the body so in-flight rows can show real percentages (a whole
-    // response.blob() only ever reports 0% then 100%).
+    // response.blob() only ever reports 0% then 100%) — and so the watchdog
+    // can be reset on every chunk.
     let blob: Blob;
     const reader = response.body?.getReader?.();
-    if (reader && onProgress) {
+    if (reader) {
       const chunks: BlobPart[] = [];
       let received = 0;
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
         if (!value) continue;
+        poke();
         chunks.push(value);
         received += value.length;
-        if (total > 0) onProgress(Math.min(1, received / total));
+        if (total > 0 && onProgress) onProgress(Math.min(1, received / total));
       }
       blob = new Blob(chunks, { type: type || "audio/mp4" });
     } else {
       blob = await response.blob();
+      poke();
     }
     if (blob.size < 20_000) return "failed";
     const stored = await idbRun<IDBValidKey>("readwrite", store => store.put({ id, blob }));
@@ -277,6 +300,8 @@ async function saveWeb(
     return "saved";
   } catch {
     return "failed";
+  } finally {
+    clearTimeout(watchdog); // no orphaned abort timers after success/failure
   }
 }
 
