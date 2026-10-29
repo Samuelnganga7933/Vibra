@@ -1,8 +1,8 @@
 /**
  * localAudio — downloaded-track storage and lookup.
  *
- * Native: a real file under Documents/Vybra (visible in the phone's Files app),
- * streamed into <audio> through Capacitor's local asset server. Web: an
+ * Native: a real file under Downloads/Vybra (visible in the phone's Files app),
+ * streamed into <audio> through a MediaStore content URI. Web: an
  * IndexedDB blob (the BFF proxies googlevideo because it sets no CORS header
  * for our origin).
  *
@@ -30,7 +30,7 @@ const Media = registerPlugin<{
   deleteDownloadFile(opts: { path: string }): Promise<void>;
 }>("VybraMedia");
 
-/** Meta marker: filePath is an absolute Download/Vybra path, not plugin-relative. */
+/** Meta marker: filePath is a MediaStore content URI on Android 10+. */
 const DOWNLOADS_DIR = "Downloads";
 
 export type SaveOutcome = "saved" | "already" | "failed";
@@ -337,7 +337,8 @@ export async function getLocalAudioUrl(id: string): Promise<string | null> {
     const meta = metaFor(id);
     if (meta?.filePath && isNativePlatform()) {
       if (meta.fileDir === DOWNLOADS_DIR) {
-        // Absolute Download/Vybra path — the WebView bridge serves it directly.
+        // MediaStore content URI — the WebView bridge serves it through the
+        // scoped-storage-safe content bridge.
         const src = Capacitor.convertFileSrc(meta.filePath);
         if (src) return src;
       } else if (meta.fileDir) {

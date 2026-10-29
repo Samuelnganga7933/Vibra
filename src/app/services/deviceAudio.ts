@@ -98,8 +98,10 @@ export async function resolveOnDevice(videoId: string): Promise<ResolvedAudio | 
           },
         },
       },
-      connectTimeout: 12_000,
-      readTimeout: 12_000,
+      // Keep a slow or blocked resolver from delaying the first audible
+      // frame; the normal BFF/iframe fallbacks remain available below.
+      connectTimeout: 4_000,
+      readTimeout: 6_000,
     });
     if (response.status !== 200) return null;
 

@@ -3,6 +3,7 @@ package com.vybra.streamvy.me;
 import android.Manifest;
 import android.app.Activity;
 import android.content.ContentResolver;
+import android.content.ContentUris;
 import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
@@ -192,7 +193,6 @@ public class VybraMediaPlugin extends Plugin {
                 MediaStore.Audio.Media.DURATION,
                 MediaStore.Audio.Media.SIZE,
                 MediaStore.Audio.Media.DATE_ADDED,
-                MediaStore.Audio.Media.DATA
             };
             // Every audio file the user owns — sideloaded downloads rarely
             // carry IS_MUSIC=1, so match on MIME too or the list looks empty
@@ -212,19 +212,23 @@ public class VybraMediaPlugin extends Plugin {
                     int iDuration = cursor.getColumnIndex(MediaStore.Audio.Media.DURATION);
                     int iSize = cursor.getColumnIndex(MediaStore.Audio.Media.SIZE);
                     int iAdded = cursor.getColumnIndex(MediaStore.Audio.Media.DATE_ADDED);
-                    int iPath = cursor.getColumnIndex(MediaStore.Audio.Media.DATA);
                     while (cursor.moveToNext()) {
-                        String path = iPath >= 0 ? cursor.getString(iPath) : null;
-                        if (path == null || path.isEmpty()) continue; // unplayable without a path
+                        long mediaId = iId >= 0 ? cursor.getLong(iId) : -1L;
+                        if (mediaId < 0) continue;
                         JSObject song = new JSObject();
-                        song.put("id", iId >= 0 ? cursor.getString(iId) : null);
+                        song.put("id", String.valueOf(mediaId));
                         song.put("title", iTitle >= 0 ? cursor.getString(iTitle) : null);
                         song.put("artist", iArtist >= 0 ? safeArtist(cursor.getString(iArtist)) : null);
                         song.put("album", iAlbum >= 0 ? cursor.getString(iAlbum) : null);
                         song.put("durationMs", iDuration >= 0 ? cursor.getLong(iDuration) : 0L);
                         song.put("sizeBytes", iSize >= 0 ? cursor.getLong(iSize) : 0L);
                         song.put("dateAdded", iAdded >= 0 ? cursor.getLong(iAdded) : 0L);
-                        song.put("path", path);
+                        // DATA is deprecated and usually unreadable through scoped
+                        // storage on Android 10+. The content URI is stable, and
+                        // Capacitor's asset bridge can serve it to the WebView.
+                        Uri contentUri = ContentUris.withAppendedId(
+                            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, mediaId);
+                        song.put("path", contentUri.toString());
                         songs.put(song);
                     }
                 }
@@ -284,15 +288,9 @@ public class VybraMediaPlugin extends Plugin {
                 values.clear();
                 values.put(MediaStore.Downloads.IS_PENDING, 0);
                 resolver.update(uri, values, null, null);
-                outPath = queryDataPath(resolver, uri);
-                if (outPath == null) {
-                    // Own-file reads may deny DATA on exotic OEMs — fall back
-                    // to the conventional absolute location.
-                    outPath = new File(
-                        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                        "Vybra/" + fileName
-                    ).getAbsolutePath();
-                }
+                // Keep the MediaStore URI. DATA is deprecated on Android 10+
+                // and can point at a path that the WebView cannot read.
+                outPath = uri.toString();
             } else {
                 File dir = new File(
                     Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Vybra");
@@ -319,30 +317,42 @@ public class VybraMediaPlugin extends Plugin {
     public void fileExists(PluginCall call) {
         String path = call.getString("path");
         if (path == null) { call.reject("path required"); return; }
-        File f = new File(path);
-        JSObject ret = new JSObject();
-        ret.put("exists", f.exists());
-        ret.put("size", f.exists() ? f.length() : 0);
-        call.resolve(ret);
+        try {
+            if (path.startsWith("content://")) {
+                Uri uri = Uri.parse(path);
+                try (android.os.ParcelFileDescriptor fd = getContext().getContentResolver().openFileDescriptor(uri, "r")) {
+                    JSObject ret = new JSObject();
+                    ret.put("exists", fd != null);
+                    ret.put("size", fd != null && fd.getStatSize() > 0 ? fd.getStatSize() : 0);
+                    call.resolve(ret);
+                    return;
+                }
+            }
+            File f = new File(path);
+            JSObject ret = new JSObject();
+            ret.put("exists", f.exists());
+            ret.put("size", f.exists() ? f.length() : 0);
+            call.resolve(ret);
+        } catch (Exception e) {
+            JSObject ret = new JSObject();
+            ret.put("exists", false);
+            ret.put("size", 0);
+            call.resolve(ret);
+        }
     }
 
     @PluginMethod
     public void deleteDownloadFile(PluginCall call) {
         String path = call.getString("path");
         if (path == null) { call.reject("path required"); return; }
-        try { new File(path).delete(); } catch (Exception ignored) { /* already gone */ }
-        call.resolve();
-    }
-
-    /** Absolute path of a MediaStore row we just created (own file → readable). */
-    private String queryDataPath(ContentResolver resolver, Uri uri) {
-        try (Cursor cursor = resolver.query(uri, new String[]{ MediaStore.MediaColumns.DATA }, null, null, null)) {
-            if (cursor != null && cursor.moveToFirst()) {
-                int idx = cursor.getColumnIndex(MediaStore.MediaColumns.DATA);
-                if (idx >= 0) return cursor.getString(idx);
+        try {
+            if (path.startsWith("content://")) {
+                getContext().getContentResolver().delete(Uri.parse(path), null, null);
+            } else {
+                new File(path).delete();
             }
-        } catch (Exception ignored) { /* fall back to the conventional path */ }
-        return null;
+        } catch (Exception ignored) { /* already gone */ }
+        call.resolve();
     }
 
     @PermissionCallback

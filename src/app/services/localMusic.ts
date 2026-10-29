@@ -3,7 +3,7 @@
  *
  * The WebView can't list device files, so VybraMediaPlugin queries MediaStore
  * and hands back rows; playback uses Capacitor.convertFileSrc to turn each
- * absolute path into a URL the <audio> element can read — fully offline.
+ * MediaStore content URI into a URL the <audio> element can read — fully offline.
  * Absent permission answers `null` (the UI then shows the grant row).
  */
 
@@ -18,6 +18,7 @@ export interface LocalSong {
   durationMs: number;
   sizeBytes: number;
   dateAdded: number;
+  /** MediaStore content:// URI (or a legacy absolute path on old Android). */
   path: string;
 }
 
@@ -109,7 +110,7 @@ export async function ensureLocalMusicPermission(): Promise<boolean> {
   return false;
 }
 
-/** Absolute path → a URL the WebView's <audio> can play. */
+/** MediaStore content URI → a URL the WebView's <audio> can play. */
 export function localSongUrl(path: string): string {
   return Capacitor.convertFileSrc(path);
 }

@@ -249,7 +249,7 @@ export class YTAudioEngine implements PlaybackHandle {
     if (alreadyCurrent) return;
 
     const wait = this.waitForPlayback(
-      15_000,
+      8_000,
       { kind: "track", message: "The audio source isn't responding. Try the next track." },
     );
     this.player.loadVideoById(videoId);
@@ -298,7 +298,7 @@ export class YTAudioEngine implements PlaybackHandle {
   play(): Promise<void> {
     if (!this.player) return Promise.reject({ kind: "blocked" } as PlaybackFailure);
     if (this.player.getPlayerState?.() === YT_STATE_PLAYING) return Promise.resolve();
-    const wait = this.waitForPlayback(6_000, { kind: "blocked" });
+    const wait = this.waitForPlayback(4_000, { kind: "blocked" });
     this.player.playVideo();
     return wait;
   }
