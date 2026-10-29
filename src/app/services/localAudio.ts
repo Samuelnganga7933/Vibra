@@ -115,6 +115,7 @@ function sanitizeFileName(raw: string): string {
 function toMeta(track: DownloadableTrack): OfflineTrack {
   return {
     id: track.id,
+    videoId: track.videoId,
     title: track.title,
     artist: track.artist,
     duration: track.duration,
@@ -255,8 +256,12 @@ async function saveWeb(
     watchdog = setTimeout(() => controller.abort(), 60_000);
   };
   try {
-    const response = await fetch(getDownloadUrl(id), {
-      headers: { Range: "bytes=0-" },
+    // Do not send a Range header here. The BFF intentionally caps ranged
+    // responses at 64 KiB, which would make IndexedDB store a truncated file.
+    // A normal GET returns the complete audio object and still streams chunks
+    // through the reader below for progress updates.
+    const sourceId = (track.videoId ?? id).trim();
+    const response = await fetch(getDownloadUrl(sourceId), {
       signal: controller.signal,
       credentials: "include",
     });

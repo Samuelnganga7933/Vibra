@@ -111,6 +111,7 @@ installRuntimeGuards();
 function toOfflineTrack(t: Track): OfflineTrack {
   return {
     id: t.id,
+    videoId: t.videoId,
     title: t.title,
     artist: t.artist,
     duration: t.duration,

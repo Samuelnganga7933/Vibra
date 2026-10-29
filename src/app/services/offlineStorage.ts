@@ -9,6 +9,8 @@ export const OFFLINE_CLEARED_KEY = "vibra_downloads_cleared";
 
 export interface OfflineTrack {
   id: string | number;
+  /** YouTube/audio-engine video ID used to fetch the original bytes. */
+  videoId?: string;
   title: string;
   artist: string;
   duration?: string;
