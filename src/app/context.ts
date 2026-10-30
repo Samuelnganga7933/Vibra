@@ -251,15 +251,6 @@ export interface AppCtxType {
   // Settings
   theme: string; setTheme: (t: string) => void;
   accent: string; setAccent: (a: string) => void;
-  audioQuality: string; setAudioQuality: (q: string) => void;
-  normalizeVolume: boolean; setNormalizeVolume: (v: boolean) => void;
-  autoplay: boolean; setAutoplay: (v: boolean) => void;
-  crossfade: boolean; setCrossfade: (v: boolean) => void;
-  notifNewReleases: boolean; setNotifNewReleases: (v: boolean) => void;
-  notifRecommendations: boolean; setNotifRecommendations: (v: boolean) => void;
-  notifFollowers: boolean; setNotifFollowers: (v: boolean) => void;
-  shareListening: boolean; setShareListening: (v: boolean) => void;
-  shareData: boolean; setShareData: (v: boolean) => void;
   historyPaused: boolean; setHistoryPaused: (v: boolean) => void;
   resetRecommendations: () => Promise<void>;
 

@@ -91,7 +91,7 @@ export function DownloadsView({ tracks = [], onPlay, onSync, colors }: Downloads
     // "already saved" stay silent, only a failure earns a toast.
     try {
       const outcome = await saveDownload(
-        { id: t.id, title: t.title, artist: t.artist, duration: t.duration, bg: t.bg, imageUrl: t.imageUrl },
+        { id: t.id, videoId: t.videoId, title: t.title, artist: t.artist, duration: t.duration, bg: t.bg, imageUrl: t.imageUrl },
         fraction => { if (fraction != null) setBusyPct(Math.min(100, Math.round(fraction * 100))); },
       );
       if (outcome === "saved" || outcome === "already") {

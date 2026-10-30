@@ -122,6 +122,64 @@ function absoluteDownloadUrl(raw: string): string {
   }
 }
 
+/**
+ * Resolve the phone-direct and backend download sources concurrently. Yield
+ * each source as soon as it is ready so a slow resolver cannot hold up the
+ * first byte from a faster alternative.
+ */
+function streamCandidates(videoId: string): AsyncIterable<string> {
+  return {
+    [Symbol.asyncIterator]() {
+      const ready: string[] = [];
+      const seen = new Set<string>();
+      let pending = 0;
+      let wake: (() => void) | undefined;
+      const add = (url: string | null) => {
+        if (url && !seen.has(url)) {
+          seen.add(url);
+          ready.push(url);
+          wake?.();
+          wake = undefined;
+        }
+      };
+      const start = (request: Promise<string | null>) => {
+        pending += 1;
+        void request.then(add, () => {}).finally(() => {
+          pending -= 1;
+          wake?.();
+          wake = undefined;
+        });
+      };
+
+      start(resolveOnDevice(videoId).then(result => result?.url ?? null));
+      if (videoId.length > 0 && videoId.length <= 20) {
+        start(getDownloadDescriptor(videoId).then(descriptor =>
+          descriptor?.download_url
+            ? absoluteDownloadUrl(descriptor.download_url)
+            : getDownloadUrl(videoId),
+        ));
+      }
+
+      return (async function* () {
+        while (ready.length > 0 || pending > 0) {
+          if (ready.length > 0) {
+            yield ready.shift()!;
+            continue;
+          }
+          await new Promise<void>(resolve => {
+            wake = resolve;
+            if (ready.length > 0 || pending === 0) {
+              const resume = wake;
+              wake = undefined;
+              resume();
+            }
+          });
+        }
+      })();
+    },
+  };
+}
+
 function toMeta(track: DownloadableTrack): OfflineTrack {
   return {
     id: track.id,
@@ -169,25 +227,13 @@ async function saveNative(
   onProgress?: (fraction: number | null) => void,
 ): Promise<SaveOutcome> {
   const videoId = (track.videoId ?? id).trim();
-  // Two sources, same as playback: the phone's own innertube resolution
-  // (fastest, unciphhered), then the BFF proxy stream — so a resolution
-  // failure on the phone's network can never make Download dead-end.
-  const sources: string[] = [];
-  const resolved = await resolveOnDevice(videoId);
-  if (resolved?.url) sources.push(resolved.url);
-  if (videoId.length > 0 && videoId.length <= 20) {
-    const descriptor = await getDownloadDescriptor(videoId);
-    if (descriptor?.download_url) sources.push(absoluteDownloadUrl(descriptor.download_url));
-    // Compatibility fallback for older catalogue deployments.
-    if (!descriptor) sources.push(getDownloadUrl(videoId));
-  }
-  if (sources.length === 0) return "failed";
+  if (!videoId) return "failed";
 
   const fileName = `${sanitizeFileName(`${track.artist} - ${track.title}`)}.m4a`;
-  // Public Downloads/Vybra — visible straight from the phone's Downloads app
-  // and file managers (scoped-storage Documents hides the folder on modern
-  // Android, which made downloads look like they never happened).
-  const relativePath = `Vybra/${fileName}`;
+  // This is a temporary file in the app cache. Keep it flat: Capacitor's
+  // Android downloadFile() does not create nested parent directories, so a
+  // path such as Cache/Vybra/name.m4a fails on a fresh install.
+  const relativePath = fileName;
   let totalBytes = 0;
   const listener = onProgress
     ? await Filesystem.addListener("progress", progress => {
@@ -214,14 +260,16 @@ async function saveNative(
           directory: Directory.Cache,
           progress: !!onProgress,
           recursive: true,
-          connectTimeout: 15_000,
-          // Strict stall limit: no new bytes for 60s fails the download
+          connectTimeout: 8_000,
+          // A dead/stalled source should fail over quickly instead of holding
+          // up the other already-resolved URL for a full minute.
+          // No new bytes for 20s fails the download
           // instead of spinning forever on an interrupted stream.
-          readTimeout: 60_000,
+          readTimeout: 20_000,
         });
       } catch (err) { lastError = err; return undefined; }
     };
-    for (const url of sources) {
+    for await (const url of streamCandidates(videoId)) {
       written = await attempt(url);
       if (written?.path) break;
     }
@@ -341,6 +389,27 @@ export async function getLocalAudioUrl(id: string): Promise<string | null> {
     /* fall through — streaming will pick it up */
   }
   return null;
+}
+
+/** Raw native URI for the Android service player; unlike the WebView URL this
+ *  can be opened directly by ExoPlayer while the app is backgrounded. */
+export async function getNativeLocalAudioUri(id: string): Promise<string | null> {
+  if (!isNativePlatform()) return null;
+  try {
+    const meta = metaFor(id);
+    if (!meta?.filePath) return null;
+    if (meta.fileDir === DOWNLOADS_DIR) return meta.filePath;
+    if (meta.fileDir) {
+      const { uri } = await Filesystem.getUri({
+        path: meta.filePath,
+        directory: meta.fileDir as Directory,
+      });
+      return uri || null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 // ─── Remove ───────────────────────────────────────────────────────────────────

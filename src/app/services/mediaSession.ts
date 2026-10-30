@@ -34,6 +34,16 @@ export interface MediaState {
   positionSec: number;
 }
 
+export interface NativeAudioState extends MediaState {
+  durationSec: number;
+}
+
+export interface NativeAudioStartOptions extends MediaNowPlaying {
+  url: string;
+  positionSec: number;
+  volume: number;
+}
+
 export interface MediaHandlers {
   onPlay(): void;
   onPause(): void;
@@ -47,9 +57,20 @@ export interface MediaHandlers {
   onLike(): void;
 }
 
+type AudioStateListener = (state: NativeAudioState) => void;
+type AudioErrorListener = (message: string) => void;
+type AudioEndedListener = () => void;
+const audioStateListeners = new Set<AudioStateListener>();
+const audioErrorListeners = new Set<AudioErrorListener>();
+const audioEndedListeners = new Set<AudioEndedListener>();
+let lastNativeAudioState: NativeAudioState = { playing: false, positionSec: 0, durationSec: 0 };
+
 interface VybraMediaPluginType {
   updateNowPlaying(opts: MediaNowPlaying): Promise<void>;
   setPlaybackState(opts: MediaState & { durationSec: number }): Promise<void>;
+  startAudio(opts: NativeAudioStartOptions): Promise<void>;
+  controlAudio(opts: { action: "play" | "pause" | "seek" | "volume" | "stop"; positionSec?: number; volume?: number }): Promise<void>;
+  getAudioState(): Promise<NativeAudioState>;
   release(): Promise<void>;
   requestNotificationPermission(): Promise<void>;
   /** Back the Android task out WITHOUT finishing the activity — keeps the
@@ -58,7 +79,7 @@ interface VybraMediaPluginType {
   minimizeApp(): Promise<void>;
   /** Capacitor's built-in runtime-permission check for the "notifications" alias. */
   checkPermissions(): Promise<{ notifications: string }>;
-  addListener(name: string, fn: (ev?: { positionSec?: number }) => void): Promise<PluginListenerHandle>;
+  addListener(name: string, fn: (ev?: { positionSec?: number; durationSec?: number; playing?: boolean; message?: string }) => void): Promise<PluginListenerHandle>;
 }
 
 const Native = registerPlugin<VybraMediaPluginType>("VybraMedia");
@@ -69,6 +90,50 @@ let nativeHandles: PluginListenerHandle[] = [];
 let released = false;
 
 const swallow = () => { /* plugin absent or call raced a release — fine */ };
+
+/** Start the service-owned Android player. Missing methods indicate an older APK. */
+export async function mediaStartAudio(opts: NativeAudioStartOptions): Promise<void> {
+  if (!isNativeApp() || typeof Native.startAudio !== "function") {
+    throw Object.assign(new Error("Native background player is unavailable in this APK"), { __kind: "network" as const });
+  }
+  await Native.startAudio(opts);
+}
+
+export async function mediaControlAudio(
+  action: "play" | "pause" | "seek" | "volume" | "stop",
+  options: { positionSec?: number; volume?: number } = {},
+): Promise<void> {
+  if (!isNativeApp() || typeof Native.controlAudio !== "function") {
+    throw Object.assign(new Error("Native audio controls are unavailable in this APK"), { __kind: "network" as const });
+  }
+  await Native.controlAudio({ action, ...options });
+}
+
+export async function mediaGetAudioState(): Promise<NativeAudioState> {
+  if (!isNativeApp() || typeof Native.getAudioState !== "function") {
+    throw Object.assign(new Error("Native audio state is unavailable in this APK"), { __kind: "network" as const });
+  }
+  return Native.getAudioState();
+}
+
+export function mediaOnAudioState(listener: AudioStateListener): () => void {
+  audioStateListeners.add(listener);
+  return () => audioStateListeners.delete(listener);
+}
+
+export function mediaOnAudioError(listener: AudioErrorListener): () => void {
+  audioErrorListeners.add(listener);
+  return () => audioErrorListeners.delete(listener);
+}
+
+export function mediaOnAudioEnded(listener: AudioEndedListener): () => void {
+  audioEndedListeners.add(listener);
+  return () => audioEndedListeners.delete(listener);
+}
+
+export function mediaLastAudioState(): NativeAudioState {
+  return lastNativeAudioState;
+}
 
 /** Web Media Session API handlers (desktop browsers + old APKs). */
 function installWebHandlers(handlers: MediaHandlers): void {
@@ -114,6 +179,22 @@ export function mediaInit(handlers: MediaHandlers): void {
     Native.addListener("onSeek", ev => {
       const pos = ev?.positionSec;
       if (typeof pos === "number") handlers.onSeek(pos);
+    }),
+    Native.addListener("onAudioState", ev => {
+      if (!ev || typeof ev.playing !== "boolean") return;
+      lastNativeAudioState = {
+        playing: ev.playing,
+        positionSec: typeof ev.positionSec === "number" && Number.isFinite(ev.positionSec) ? Math.max(0, ev.positionSec) : 0,
+        durationSec: typeof ev.durationSec === "number" && Number.isFinite(ev.durationSec) ? Math.max(0, ev.durationSec) : 0,
+      };
+      audioStateListeners.forEach(listener => listener(lastNativeAudioState));
+    }),
+    Native.addListener("onAudioError", ev => {
+      const message = ev?.message || "Audio playback failed";
+      audioErrorListeners.forEach(listener => listener(message));
+    }),
+    Native.addListener("onAudioEnded", () => {
+      audioEndedListeners.forEach(listener => listener());
     }),
   ])
     .then(handles => {
