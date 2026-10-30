@@ -226,9 +226,12 @@ export interface DownloadDescriptor {
 /** Gets the backend's download descriptor, rather than buffering audio in JS. */
 export async function getDownloadDescriptor(videoId: string): Promise<DownloadDescriptor | null> {
   const id = encodeURIComponent(String(videoId));
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 5_000);
   try {
     const response = await fetch(`${API_BASE}/api/v1/tracks/download/${id}`, {
       headers: { Accept: "application/json" },
+      signal: controller.signal,
     });
     if (!response.ok) return null;
     const data = (await response.json()) as Partial<DownloadDescriptor>;
@@ -236,6 +239,8 @@ export async function getDownloadDescriptor(videoId: string): Promise<DownloadDe
     return { download_url: data.download_url, filename: data.filename };
   } catch {
     return null;
+  } finally {
+    window.clearTimeout(timeout);
   }
 }
 

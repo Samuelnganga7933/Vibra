@@ -16,6 +16,12 @@ export interface ShareableTrack {
   artist?: string;
 }
 
+export interface TrackSharePayload {
+  title: string;
+  text: string;
+  url: string;
+}
+
 /** Deep link for one song. `lyrics: true` opens the player on the lyrics view. */
 export function trackShareUrl(t: ShareableTrack, opts: { lyrics?: boolean } = {}): string {
   const id = encodeURIComponent(String(t.id ?? "").trim());
@@ -25,6 +31,20 @@ export function trackShareUrl(t: ShareableTrack, opts: { lyrics?: boolean } = {}
   if (opts.lyrics) params.set("lyrics", "1");
   const qs = params.toString();
   return `${APP_ORIGIN}/track/${id}${qs ? `?${qs}` : ""}`;
+}
+
+/** Music-first Web Share data: the track title leads, without app promotion. */
+export function trackSharePayload(
+  t: ShareableTrack,
+  opts: { lyrics?: boolean } = {},
+): TrackSharePayload {
+  const title = t.title?.trim() || "Unknown track";
+  const artist = t.artist?.trim();
+  return {
+    title,
+    text: artist ? `${title} — ${artist}` : title,
+    url: trackShareUrl(t, opts),
+  };
 }
 
 /** Deep link for an album (opens as a playlist view built from a search). */

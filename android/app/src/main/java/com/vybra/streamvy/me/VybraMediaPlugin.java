@@ -41,7 +41,8 @@ import java.io.OutputStream;
         // Android 13 and Capacitor 8's @Permission has no per-SDK gating:
         // we consult exactly one alias per device (see audioAlias()).
         @Permission(strings = Manifest.permission.READ_MEDIA_AUDIO, alias = "audioFiles"),
-        @Permission(strings = Manifest.permission.READ_EXTERNAL_STORAGE, alias = "audioFilesLegacy")
+        @Permission(strings = Manifest.permission.READ_EXTERNAL_STORAGE, alias = "audioFilesLegacy"),
+        @Permission(strings = Manifest.permission.WRITE_EXTERNAL_STORAGE, alias = "legacyDownloads")
     }
 )
 public class VybraMediaPlugin extends Plugin {
@@ -103,6 +104,37 @@ public class VybraMediaPlugin extends Plugin {
         }
     }
 
+    static void emitAudioState(boolean playing, double positionSec, double durationSec) {
+        VybraMediaPlugin plugin = activePlugin;
+        if (plugin != null) {
+            try {
+                JSObject data = new JSObject();
+                data.put("playing", playing);
+                data.put("positionSec", positionSec);
+                data.put("durationSec", durationSec);
+                plugin.notifyListeners("onAudioState", data);
+            } catch (Exception ignored) {}
+        }
+    }
+
+    static void emitAudioError(String message) {
+        VybraMediaPlugin plugin = activePlugin;
+        if (plugin != null) {
+            try {
+                JSObject data = new JSObject();
+                data.put("message", message == null ? "Audio playback failed" : message);
+                plugin.notifyListeners("onAudioError", data);
+            } catch (Exception ignored) {}
+        }
+    }
+
+    static void emitAudioEnded() {
+        VybraMediaPlugin plugin = activePlugin;
+        if (plugin != null) {
+            try { plugin.notifyListeners("onAudioEnded", new JSObject()); } catch (Exception ignored) {}
+        }
+    }
+
     @PluginMethod
     public void updateNowPlaying(PluginCall call) {
         JSObject opts = call.getData();
@@ -132,6 +164,64 @@ public class VybraMediaPlugin extends Plugin {
     public void release(PluginCall call) {
         startServiceSafely(serviceIntent(MediaPlaybackService.ACTION_STOP));
         call.resolve();
+    }
+
+    /** Load and play a URL in the native foreground service. */
+    @PluginMethod
+    public void startAudio(PluginCall call) {
+        JSObject opts = call.getData();
+        String url = opts.getString("url");
+        if (url == null || url.trim().isEmpty()) {
+            call.reject("url is required", "E_AUDIO_URL");
+            return;
+        }
+        Intent intent = serviceIntent(MediaPlaybackService.ACTION_START);
+        intent.putExtra(MediaPlaybackService.EXTRA_URL, url);
+        intent.putExtra(MediaPlaybackService.EXTRA_TITLE, opts.getString("title", ""));
+        intent.putExtra(MediaPlaybackService.EXTRA_ARTIST, opts.getString("artist", ""));
+        intent.putExtra(MediaPlaybackService.EXTRA_ALBUM, opts.getString("album", ""));
+        intent.putExtra(MediaPlaybackService.EXTRA_ARTWORK, opts.getString("artworkUrl", ""));
+        intent.putExtra(MediaPlaybackService.EXTRA_DURATION_SEC, opts.optDouble("durationSec", 0d));
+        intent.putExtra(MediaPlaybackService.EXTRA_POSITION_SEC, opts.optDouble("positionSec", 0d));
+        intent.putExtra(MediaPlaybackService.EXTRA_VOLUME, (float) opts.optDouble("volume", 1d));
+        try {
+            startServiceOrForeground(intent);
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("Unable to start native audio service", "E_AUDIO_START", e);
+        }
+    }
+
+    /** Control the service-owned player; no WebView audio state is involved. */
+    @PluginMethod
+    public void controlAudio(PluginCall call) {
+        JSObject opts = call.getData();
+        String action = opts.getString("action");
+        if (!"play".equals(action) && !"pause".equals(action) && !"seek".equals(action)
+                && !"volume".equals(action) && !"stop".equals(action)) {
+            call.reject("action must be play, pause, seek, volume, or stop", "E_AUDIO_ACTION");
+            return;
+        }
+        Intent intent = serviceIntent(MediaPlaybackService.ACTION_CONTROL);
+        intent.putExtra(MediaPlaybackService.EXTRA_CONTROL, action);
+        if (opts.has("positionSec")) intent.putExtra(MediaPlaybackService.EXTRA_POSITION_SEC, opts.optDouble("positionSec", 0d));
+        if (opts.has("volume")) intent.putExtra(MediaPlaybackService.EXTRA_VOLUME, (float) opts.optDouble("volume", 1d));
+        try {
+            startServiceOrForeground(intent);
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("Unable to control native audio", "E_AUDIO_CONTROL", e);
+        }
+    }
+
+    @PluginMethod
+    public void getAudioState(PluginCall call) {
+        double[] state = MediaPlaybackService.getAudioState();
+        JSObject result = new JSObject();
+        result.put("playing", state[0] != 0d);
+        result.put("positionSec", state[1]);
+        result.put("durationSec", state[2]);
+        call.resolve(result);
     }
 
     @PluginMethod
@@ -258,6 +348,13 @@ public class VybraMediaPlugin extends Plugin {
 
     @PluginMethod
     public void saveToDownloads(PluginCall call) {
+        // Public Downloads needs runtime write access on Android 9 and earlier.
+        // Android 10+ writes through MediaStore and must not prompt for storage.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
+                && getPermissionState("legacyDownloads") != PermissionState.GRANTED) {
+            requestPermissionForAlias("legacyDownloads", call, "handleLegacyDownloadsPermission");
+            return;
+        }
         String source = call.getString("source");
         String fileName = call.getString("fileName");
         if (source == null || fileName == null || fileName.isEmpty()) {
@@ -365,6 +462,15 @@ public class VybraMediaPlugin extends Plugin {
         call.resolve();
     }
 
+    @PermissionCallback
+    private void handleLegacyDownloadsPermission(PluginCall call) {
+        if (getPermissionState("legacyDownloads") == PermissionState.GRANTED) {
+            saveToDownloads(call);
+        } else {
+            call.reject("Storage permission is required to save downloads");
+        }
+    }
+
     private Intent serviceIntent(String action) {
         Intent intent = new Intent(getContext(), MediaPlaybackService.class);
         intent.setAction(action);
@@ -374,17 +480,17 @@ public class VybraMediaPlugin extends Plugin {
     /** Android 12+ blocks background FGS starts — degrade quietly rather than crash. */
     private void startServiceSafely(Intent intent) {
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                // Already-running services take plain startService even from
-                // the background; only a cold start needs the FGS variant.
-                if (MediaPlaybackService.isRunning()) {
-                    getContext().startService(intent);
-                } else {
-                    getContext().startForegroundService(intent);
-                }
-            } else {
-                getContext().startService(intent);
-            }
+            startServiceOrForeground(intent);
         } catch (Exception ignored) {}
+    }
+
+    private void startServiceOrForeground(Intent intent) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            // A cold audio request is explicitly launched as a foreground service.
+            if (MediaPlaybackService.isRunning()) getContext().startService(intent);
+            else getContext().startForegroundService(intent);
+        } else {
+            getContext().startService(intent);
+        }
     }
 }

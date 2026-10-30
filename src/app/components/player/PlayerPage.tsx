@@ -1,16 +1,16 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ChevronDown, Heart, Headphones, ListMusic, Mic2, MoreHorizontal,
-  Pause, Play, Repeat, Repeat1, Send, Shuffle, SkipBack, SkipForward,
-  Download, Check, Link2, MessageCircle, Mail,
+  Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward,
+  Download, Check,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useApp, fmtSec } from "../../context";
 import { CoverArt } from "../CoverArt";
 import { ReorderList, ReorderRow, moveFromReorder } from "../reorder";
 import { LyricsPanel } from "./LyricsPanel";
+import { WaveformSeekBar } from "./WaveformSeekBar";
 import { removeDownload } from "../../services/localAudio";
-import { trackShareUrl } from "../../services/share";
 
 /** Green of the output-device chip — same semantic green as the Offline pills. */
 const DEVICE_GREEN = "#1ED760";
@@ -39,11 +39,8 @@ export function PlayerPage() {
     outputDevice,
     downloadedTracks, downloadTrack, refreshDownloads, activeDownloads,
   } = useApp();
-  const scrubRef = useRef<HTMLDivElement | null>(null);
   /** Mobile footer's queue icon opens the TOP queue sheet (per the ask). */
   const [queueOpen, setQueueOpen] = useState(false);
-  /** Social share sheet — opened by the footer's share action. */
-  const [shareOpen, setShareOpen] = useState(false);
   const hasLyricsOption = uiState.hasLyrics || lyricsLoading;
 
   /** Pull-down to close — tracks the finger from the grabber/header zone.
@@ -73,6 +70,16 @@ export function PlayerPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [closePlayer]);
 
+  useEffect(() => {
+    const onBack = (event: Event) => {
+      if (!queueOpen) return;
+      setQueueOpen(false);
+      event.preventDefault();
+    };
+    window.addEventListener("vibra:back", onBack);
+    return () => window.removeEventListener("vibra:back", onBack);
+  }, [queueOpen]);
+
   // A track without lyrics can't keep a lyrics view open; video is desktop-only.
   useEffect(() => {
     if (mediaMode === "lyrics" && !hasLyricsOption) setMediaMode("song");
@@ -84,14 +91,6 @@ export function PlayerPage() {
   const isDownloaded = downloadedTracks.some(t => String(t.id) === String(currentTrack.id));
   const dlBusy = activeDownloads.some(d => d.id === String(currentTrack.id));
   const total = audioDuration > 0 ? audioDuration : currentTrack.durationSec ?? 0;
-
-  const seekFromEvent = (clientX: number) => {
-    const el = scrubRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    const pct = r.width > 0 ? (clientX - r.left) / r.width : 0;
-    handleSeek(Math.max(0, Math.min(1, pct)));
-  };
 
   /** Swipe-down dismiss — handlers live ONLY on the grabber+header band (a
       dedicated wrapper in both layouts), so lyrics scrolling, artwork
@@ -143,67 +142,6 @@ export function PlayerPage() {
     setDrag({ active: false, y: 0 });
   };
 
-  // Shares route INTO Vybra via the /track deep link — never out to YouTube.
-  const shareUrl = trackShareUrl(currentTrack);
-  const shareText = `${currentTrack.title} — ${currentTrack.artist}`;
-
-  /** The lyric line under the playhead right now — the snippet that gets shared. */
-  const activeLyricText = (): string => {
-    if (lyrics.length === 0) return "";
-    let line = lyrics[0]?.text ?? "";
-    for (const l of lyrics) {
-      if (l.time <= elapsed + 0.2) line = l.text;
-      else break;
-    }
-    return line;
-  };
-
-  /** Social share options — Spotify-style sheet, one tap per network. */
-  const shareTargets = [
-    { key: "copy", label: "Copy link", Icon: Link2, href: null },
-    { key: "whatsapp", label: "WhatsApp", Icon: MessageCircle,
-      href: `https://wa.me/?text=${encodeURIComponent(`${shareText} ${shareUrl}`)}` },
-    { key: "x", label: "X", Icon: Send,
-      href: `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(shareUrl)}` },
-    { key: "telegram", label: "Telegram", Icon: Send,
-      href: `https://t.me/share/url?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(shareText)}` },
-    { key: "facebook", label: "Facebook", Icon: Send,
-      href: `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(shareUrl)}` },
-    { key: "email", label: "Email", Icon: Mail,
-      href: `mailto:?subject=${encodeURIComponent(currentTrack.title)}&body=${encodeURIComponent(`${shareText}\n${shareUrl}`)}` },
-    // Only offered when there IS something to share — never a dead control.
-    ...(lyrics.length > 0
-      ? [{ key: "lyrics", label: "Share lyrics", Icon: Mic2, href: "lyrics" as const }]
-      : []),
-    { key: "more", label: "More…", Icon: Send, href: "native" as const },
-  ];
-
-  const shareVia = (target: typeof shareTargets[number]) => {
-    if (target.key === "copy") {
-      void navigator.clipboard?.writeText(shareUrl)
-        .then(() => toast("Link copied"))
-        .catch(() => toast.error("Couldn't copy the link"));
-    } else if (target.href === "native") {
-      if (navigator.share) void navigator.share({ title: currentTrack.title, text: shareText, url: shareUrl }).catch(() => { /* dismissed */ });
-      else toast.error("Sharing isn't available here");
-    } else if (target.href === "lyrics") {
-      // Synced snippet + a deep link that reopens the player ON the lyrics.
-      const line = activeLyricText();
-      const body = line ? `“${line}”\n— ${shareText}` : shareText;
-      const url = trackShareUrl(currentTrack, { lyrics: true });
-      if (navigator.share) {
-        void navigator.share({ title: currentTrack.title, text: body, url }).catch(() => { /* dismissed */ });
-      } else {
-        void navigator.clipboard?.writeText(`${body}\n${url}`)
-          .then(() => toast("Lyrics copied"))
-          .catch(() => toast.error("Couldn't copy the lyrics"));
-      }
-    } else if (target.href) {
-      window.open(target.href, "_blank");
-    }
-    setShareOpen(false);
-  };
-
   const onDownloadPress = () => {
     if (!currentTrack || dlBusy) return;
     if (isDownloaded) {
@@ -221,47 +159,14 @@ export function PlayerPage() {
    */
   const seekPct = total > 0 ? Math.max(0, Math.min(elapsed / total, 1)) : Math.min(progress, 1);
 
-  /** Waveform bar heights — seeded by track id (stable per track, varied
-      across tracks) with a sine envelope so it reads as a waveform rather
-      than flat noise. */
-  const waveBars = useMemo(() => {
-    const seedStr = String(currentTrack?.id ?? "0");
-    let seed = 2166136261;
-    for (let i = 0; i < seedStr.length; i++) seed = (Math.imul(seed ^ seedStr.charCodeAt(i), 16777619)) >>> 0;
-    const bars: number[] = [];
-    const N = 72;
-    for (let i = 0; i < N; i++) {
-      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
-      const r = (seed >>> 8) / 0xFFFFFF;
-      const env = 0.55 + 0.45 * Math.sin((i / N) * Math.PI);
-      bars.push(0.3 + 0.7 * r * env);
-    }
-    return bars;
-  }, [currentTrack?.id]);
-
-  /**
-   * Waveform seek — a full-width bar strip: played bars in bold red, the
-   * unplayed remainder in subtle white/translucent. Tap anywhere to jump; a
-   * captured pointer drag scrubs continuously. One element serves both
-   * layouts. Bar heights are seeded per track so the shape is stable (no
-   * jitter while playing) but differs track to track.
-   */
   const seekLine = (
-    <div ref={scrubRef} role="slider" aria-label="Seek"
-      aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(seekPct * 100)}
-      onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); seekFromEvent(e.clientX); }}
-      onPointerMove={e => { if (e.currentTarget.hasPointerCapture(e.pointerId)) seekFromEvent(e.clientX); }}
-      onPointerUp={e => { if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId); }}
-      style={{ position: "relative", flex: 1, width: "100%", height: 44, display: "flex", alignItems: "center", gap: 2, cursor: "pointer", touchAction: "none", overflow: "hidden" }}>
-      {waveBars.map((h, i) => (
-        <span key={i} aria-hidden
-          style={{
-            flex: 1, minWidth: 0, height: `${Math.round(h * 100)}%`, borderRadius: 2,
-            background: i / waveBars.length < seekPct ? C.accent : "rgba(255,255,255,0.22)",
-            transition: "background .2s linear",
-          }} />
-      ))}
-    </div>
+    <WaveformSeekBar
+      trackKey={currentTrack.id}
+      progress={seekPct}
+      onSeek={handleSeek}
+      color={C.accent}
+      ariaLabel={`Seek ${currentTrack.title}`}
+    />
   );
 
   /** Shared deck list — the desktop context column and the compact top sheet
@@ -565,16 +470,12 @@ export function PlayerPage() {
         </div>
       </div>
 
-      {/* Footer — mobile only (hidden by index.css above the shell breakpoint),
-          per the boards' bottom row: queue, share, output device, collapse. */}
+      {/* Footer — mobile only (hidden by index.css above the shell breakpoint):
+          queue, output device, collapse. Sharing stays in track options. */}
       <div className="player-page-foot">
         <button onClick={() => setQueueOpen(v => !v)} aria-label="Queue" aria-pressed={queueOpen}
           style={{ width: 44, height: 44, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: queueOpen ? C.accent : C.muted, padding: 0 }}>
           <ListMusic size={21} />
-        </button>
-        <button onClick={() => setShareOpen(true)} aria-label="Share track"
-          style={{ width: 44, height: 44, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.muted, padding: 0 }}>
-          <Send size={19} />
         </button>
         {/* Output device chip — only when a real device name is known */}
         {outputDevice.label && (
@@ -590,30 +491,6 @@ export function PlayerPage() {
         </button>
       </div>
 
-      {/* Social share sheet — one tap per network, like Spotify's share row. */}
-      {shareOpen && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 70 }}>
-          <div onClick={() => setShareOpen(false)} aria-hidden
-            style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.55)", animation: "fadeIn .15s ease" }} />
-          <div role="dialog" aria-label="Share"
-            style={{ position: "absolute", left: 0, right: 0, bottom: 0, background: C.pane, borderRadius: "20px 20px 0 0", border: `1px solid ${C.border}`, borderBottom: "none", padding: "10px 18px calc(18px + env(safe-area-inset-bottom, 0px))", animation: "slideUp .22s ease", boxShadow: "0 -16px 50px rgba(0,0,0,0.5)" }}>
-            <div style={{ width: 40, height: 4, borderRadius: 2, background: C.border, margin: "0 auto 12px" }} />
-            <div style={{ fontSize: 14, fontWeight: 800, color: C.text, marginBottom: 2 }}>{currentTrack.title}</div>
-            <div style={{ fontSize: 12, color: C.muted, marginBottom: 14 }}>Share this track</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
-              {shareTargets.map(({ key, label, Icon, href }) => (
-                <button key={key} onClick={() => shareVia({ key, label, Icon, href } as typeof shareTargets[number])}
-                  style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 7, padding: "12px 4px", borderRadius: 14, background: C.surf, border: "none", cursor: "pointer", color: C.text, fontFamily: "inherit" }}>
-                  <span style={{ width: 40, height: 40, borderRadius: "50%", background: key === "copy" ? `color-mix(in srgb, ${C.accent} 16%, transparent)` : C.pane, display: "grid", placeItems: "center", color: key === "copy" ? C.accent : C.text }}>
-                    <Icon size={18} />
-                  </span>
-                  <span style={{ fontSize: 11, fontWeight: 600, color: C.muted }}>{label}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

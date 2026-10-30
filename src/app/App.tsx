@@ -68,14 +68,15 @@ import {
 import { loginUser, registerUser, logoutUser, passwordStrengthError } from "./services/auth";
 import { exchangeNeonSession, signOutNeon, clearOAuthQueryParams, hasOAuthVerifier } from "./services/neonAuth";
 import { resolveOnDevice } from "./services/deviceAudio";
-import { getLocalAudioUrl, hasDownload, removeDownload, saveDownload } from "./services/localAudio";
+import { getLocalAudioUrl, getNativeLocalAudioUri, hasDownload, removeDownload, saveDownload } from "./services/localAudio";
 import { localSongUrl } from "./services/localMusic";
 import { markBundleReady, checkForOtaUpdates, reloadIntoLatestBundle, isNativeApp } from "./services/ota";
-import { trackShareUrl, parseShareUrl } from "./services/share";
+import { trackSharePayload, parseShareUrl } from "./services/share";
 import {
   mediaInit, mediaSetNowPlaying, mediaSetState, mediaRelease,
-  mediaRequestNotificationPermission, mediaNotificationPermission, mediaMinimize,
+  mediaMinimize, mediaRequestNotificationPermission,
 } from "./services/mediaSession";
+import { NativeAudioEngine } from "./services/nativePlayback";
 import {
   useApp, AppCtx, makeColors, fmtSec, fmtDur, cleanTitle, toTrackItem,
   fromApiTrack, mapAPITrack, mapAPIPlaylist, mapAPIAlbum, mapAPIArtist,
@@ -92,6 +93,7 @@ import { DownloadsView } from "./components/vibra/DownloadsView";
 import { CoverArt, PlaylistCover } from "./components/CoverArt";
 import { ReorderList, ReorderRow, moveFromReorder } from "./components/reorder";
 import { PlayerPage } from "./components/player/PlayerPage";
+import { WaveformSeekBar } from "./components/player/WaveformSeekBar";
 import { LyricsPanel } from "./components/player/LyricsPanel";
 import { ErrorScreen } from "./screens/ErrorScreen";
 import { AuthScreen } from "./screens/AuthScreen";
@@ -103,6 +105,17 @@ import { LandingScreen } from "./screens/Landing";
 // User-BFF endpoints (see backend/main.py): everything resolves through
 // safeFetch (8s timeout, never throws) — failures return null quietly.
 const api = bffJson;
+
+/** Return promptly from a slow source lookup; its late result is ignored. */
+function resolveQuickly<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  return new Promise(resolve => {
+    const timer = window.setTimeout(() => resolve(fallback), timeoutMs);
+    promise.then(
+      value => { window.clearTimeout(timer); resolve(value); },
+      () => { window.clearTimeout(timer); resolve(fallback); },
+    );
+  });
+}
 
 // Neutralise unhandled promise rejections / global errors (idempotent).
 installRuntimeGuards();
@@ -1237,14 +1250,6 @@ function SettingsScreen() {
   const {
     C, canGoBack, goBack, navigate, user, refreshDownloads, updateProfile, uiState,
     theme, setTheme, accent, setAccent,
-    audioQuality, setAudioQuality,
-    normalizeVolume, setNormalizeVolume,
-    autoplay, setAutoplay, crossfade, setCrossfade,
-    notifNewReleases, setNotifNewReleases,
-    notifRecommendations, setNotifRecommendations,
-    notifFollowers, setNotifFollowers,
-    shareListening, setShareListening,
-    shareData, setShareData,
     outputDevice, devices, refreshDevices, selectOutput,
     historyPaused, setHistoryPaused, resetRecommendations,
   } = useApp();
@@ -1256,11 +1261,6 @@ function SettingsScreen() {
   useEffect(() => { setCachedCount(readOfflineTracks().length); }, []);
   // Device labels need a user gesture — ask once when Settings opens.
   useEffect(() => { refreshDevices(true); }, [refreshDevices]);
-
-  // Notification permission status — Settings is the ONLY place that ever
-  // asks (no system prompt interrupts playback).
-  const [notifPerm, setNotifPerm] = useState<"granted" | "denied" | "prompt" | "unknown">("unknown");
-  useEffect(() => { void mediaNotificationPermission().then(setNotifPerm); }, []);
 
   // Send feedback: star rating + a note, stored in the BFF's feedback table.
   const [fbOpen, setFbOpen] = useState(false);
@@ -1291,6 +1291,14 @@ function SettingsScreen() {
   // Persistent engines: profile name editing.
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
+  useEffect(() => {
+    const onBack = (event: Event) => {
+      if (fbOpen) { setFbOpen(false); event.preventDefault(); }
+      else if (editingName) { setEditingName(false); event.preventDefault(); }
+    };
+    window.addEventListener("vibra:back", onBack);
+    return () => window.removeEventListener("vibra:back", onBack);
+  }, [fbOpen, editingName]);
 
   // OTA: manual check from Settings — spinner while the bundle sync runs.
   const [otaBusy, setOtaBusy] = useState(false);
@@ -1412,12 +1420,6 @@ function SettingsScreen() {
                 ) : <div style={{ width: 40, height: 40, borderRadius: "50%", background: C.surf, display: "grid", placeItems: "center", flexShrink: 0, color: C.muted }}><Settings size={18} /></div>
               } />
           )}
-          <Row label="Subscription"
-            sub={user ? `${user.subscription === "premium" ? "Vybra Premium" : "Free"} plan` : "Sign in to manage your plan"}
-            onClick={() => toast("Manage subscription")} last
-            right={user?.subscription === "premium"
-              ? <div style={{ height: 24, padding: "0 10px", borderRadius: 12, background: C.accent + "33", color: C.accent, fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center" }}>PREMIUM</div>
-              : <ChevronRight size={16} color={C.muted} />} />
         </Section>
 
         <Section title="Appearance">
@@ -1449,48 +1451,8 @@ function SettingsScreen() {
           </div>
         </Section>
 
-        <Section title="Playback">
-          <div style={{ padding: 16, borderBottom: `1px solid ${C.border}` }}>
-            <div style={{ fontSize: 15, color: C.text, fontWeight: 500, marginBottom: 12 }}>Audio quality</div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {["Low", "Normal", "High", "Lossless"].map(q => (
-                <button key={q} onClick={() => { setAudioQuality(q.toLowerCase()); updateProfile({ audioQuality: q.toLowerCase() }); saveSettings({ audioQuality: q.toLowerCase() }); toast(`Quality → ${q}`); }}
-                  style={{ height: 34, padding: "0 14px", borderRadius: 17, border: `1px solid ${audioQuality === q.toLowerCase() ? C.accent : C.border}`, background: audioQuality === q.toLowerCase() ? C.accent + "1A" : "transparent", color: audioQuality === q.toLowerCase() ? C.accent : C.muted, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
-                  {q}
-                </button>
-              ))}
-            </div>
-          </div>
-          <Row label="Normalize volume" sub="Keep consistent levels" right={<Toggle value={normalizeVolume} onChange={v => { setNormalizeVolume(v); saveSettings({ normalizeVolume: v }); }} />} />
-          <Row label="Crossfade" sub="Smooth transitions between tracks" right={<Toggle value={crossfade} onChange={v => { setCrossfade(v); saveSettings({ crossfade: v }); }} />} />
-          <Row label="Autoplay" sub="Continue with similar songs" last right={<Toggle value={autoplay} onChange={v => { setAutoplay(v); saveSettings({ autoplay: v }); }} />} />
-        </Section>
-
-        <Section title="Notifications">
-          {notifPerm !== "unknown" && (
-            <Row
-              label="Playback controls"
-              sub={notifPerm === "granted" ? "Lock screen & notification controls are on" : "Show controls on the lock screen"}
-              onClick={() => {
-                if (notifPerm === "granted") return;
-                mediaRequestNotificationPermission();
-                // The system dialog answers asynchronously; re-read after it.
-                window.setTimeout(() => { void mediaNotificationPermission().then(setNotifPerm); }, 600);
-              }}
-              right={notifPerm === "granted"
-                ? <Check size={16} color="#4ac2a0" />
-                : <ChevronRight size={16} color={C.muted} />}
-            />
-          )}
-          <Row label="New releases" sub="From artists you follow" right={<Toggle value={notifNewReleases} onChange={v => { setNotifNewReleases(v); saveSettings({ notifNewReleases: v }); }} />} />
-          <Row label="Recommendations" sub="Personalised suggestions" right={<Toggle value={notifRecommendations} onChange={v => { setNotifRecommendations(v); saveSettings({ notifRecommendations: v }); }} />} />
-          <Row label="New followers" last right={<Toggle value={notifFollowers} onChange={v => { setNotifFollowers(v); saveSettings({ notifFollowers: v }); }} />} />
-        </Section>
-
         <Section title="Privacy">
-          <Row label="Listening activity" sub="Let others see what you are playing" right={<Toggle value={shareListening} onChange={v => { setShareListening(v); saveSettings({ shareListening: v }); }} />} />
           <Row label="Pause listening history" sub="New plays stop shaping Home and mixes" right={<Toggle value={historyPaused} onChange={v => setHistoryPaused(v)} />} />
-          <Row label="Share usage data" sub="Help improve Vybra" right={<Toggle value={shareData} onChange={v => { setShareData(v); saveSettings({ shareData: v }); }} />} />
           <Row
             label="Reset recommendations"
             sub="Clear listening history and start Home fresh"
@@ -1840,6 +1802,15 @@ function TrackOptionsSheet({ track, onClose }: { track: Track; onClose: () => vo
   } = useApp();
   const [view, setView] = useState<"root" | "playlists" | "share">("root");
   const [downloaded, setDownloaded] = useState(false);
+  useEffect(() => {
+    const onBack = (event: Event) => {
+      if (view === "root") return;
+      setView("root");
+      event.preventDefault();
+    };
+    window.addEventListener("vibra:back", onBack);
+    return () => window.removeEventListener("vibra:back", onBack);
+  }, [view]);
   const dlActive = activeDownloads.find(d => d.id === String(track.id));
   const dlPct = dlActive ? Math.round((dlActive.progress ?? 0) * 100) : null;
   const isLiked = likedTrackIds.has(track.id);
@@ -1853,9 +1824,10 @@ function TrackOptionsSheet({ track, onClose }: { track: Track; onClose: () => vo
     return () => { cancelled = true; };
   }, [track.id]);
 
-  // Shares route back INTO Vybra (the /track deep link), never out to YouTube.
-  const shareLink = trackShareUrl(track);
-  const shareText = `${track.title} — ${track.artist}`;
+  // Shares carry the song first and route back into the app through its track link.
+  const sharePayload = trackSharePayload(track);
+  const shareLink = sharePayload.url;
+  const shareText = sharePayload.text;
 
   const shareTargets = [
     {
@@ -1917,7 +1889,7 @@ function TrackOptionsSheet({ track, onClose }: { track: Track; onClose: () => vo
     option(<Share2 size={18} />, "Share track", () => {
       // Prefer the OS share sheet when the browser offers one.
       if (navigator.share) {
-        void navigator.share({ title: track.title, text: shareText, url: shareLink })
+        void navigator.share(sharePayload)
           .catch(() => { /* user dismissed — stay quiet */ });
         onClose();
         return;
@@ -2555,15 +2527,7 @@ function PlayerBar() {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%" }}>
           <span style={{ fontSize: 11, color: C.muted, width: 34, textAlign: "right", flexShrink: 0 }}>{fmtSec(elapsed)}</span>
-          <div role="button" tabIndex={0} aria-label="Seek"
-            onClick={e => { const r = e.currentTarget.getBoundingClientRect(); handleSeek((e.clientX - r.left) / r.width); }}
-            onKeyDown={e => {
-              if (e.key === "ArrowRight") { e.preventDefault(); handleSeek(Math.min(1, progress + 0.02)); }
-              if (e.key === "ArrowLeft")  { e.preventDefault(); handleSeek(Math.max(0, progress - 0.02)); }
-            }}
-            style={{ flex: 1, height: 4, borderRadius: 2, background: C.border, cursor: "pointer", position: "relative", minWidth: 0 }}>
-            <div style={{ width: `${Math.min(progress, 1) * 100}%`, height: "100%", borderRadius: 2, background: C.accent, transition: "width .5s linear" }} />
-          </div>
+          <WaveformSeekBar trackKey={currentTrack?.id ?? "none"} progress={progress} onSeek={handleSeek} color={C.accent} height={18} />
           <span style={{ fontSize: 11, color: C.muted, width: 34, flexShrink: 0 }}>{audioDuration > 0 ? fmtSec(audioDuration) : (currentTrack?.duration ?? "--:--")}</span>
         </div>
       </div>
@@ -2652,11 +2616,6 @@ function MobileLayout() {
       elapsed time (buffering used to leave a phantom halfway bar at 0:02). */
   const dockPct = audioDuration > 0 ? Math.max(0, Math.min(elapsed / audioDuration, 1)) : Math.min(progress, 1);
 
-  const seek = (e: React.MouseEvent<HTMLDivElement>) => {
-    const r = e.currentTarget.getBoundingClientRect();
-    handleSeek((e.clientX - r.left) / r.width);
-  };
-
   return (
     <div ref={rootRef} style={{ display: "flex", flexDirection: "column", height: "100%", background: C.bg, overflow: "hidden", position: "relative" }}>
       <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column", paddingTop: "env(safe-area-inset-top, 0px)" }}>
@@ -2690,14 +2649,8 @@ function MobileLayout() {
       <div ref={dockRef} style={{ position: "absolute", left: 12, right: 12, bottom: "calc(24px + env(safe-area-inset-bottom, 0px))", zIndex: 3, borderRadius: 30, background: `color-mix(in srgb, ${C.pane} 74%, transparent)`, backdropFilter: "blur(26px) saturate(1.4)", WebkitBackdropFilter: "blur(26px) saturate(1.4)", border: `1px solid color-mix(in srgb, ${C.text} 9%, transparent)`, boxShadow: "0 18px 44px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.06)", overflow: "hidden" }}>
         {currentTrack && (
           <>
-            <div role="button" tabIndex={0} aria-label="Seek"
-              onClick={seek}
-              onKeyDown={e => {
-                if (e.key === "ArrowRight") { e.preventDefault(); handleSeek(Math.min(1, dockPct + 0.02)); }
-                if (e.key === "ArrowLeft")  { e.preventDefault(); handleSeek(Math.max(0, dockPct - 0.02)); }
-              }}
-              style={{ position: "absolute", left: 0, right: 0, top: 0, height: 2, zIndex: 1, cursor: "pointer" }}>
-              <div style={{ width: `${dockPct * 100}%`, height: "100%", background: C.accent, transition: "width .5s linear" }} />
+            <div style={{ position: "absolute", left: 10, right: 10, top: 0, height: 10, zIndex: 1, display: "flex" }}>
+              <WaveformSeekBar trackKey={currentTrack.id} progress={dockPct} onSeek={handleSeek} color={C.accent} height={10} ariaLabel={`Seek ${currentTrack.title}`} />
             </div>
             {/* Sheet-style grabber: the mini-player reads as a header you can
                 pull up into the full-screen player. */}
@@ -2779,6 +2732,17 @@ function MobileLayout() {
 // ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [navStack, setNavStack] = useState<Screen[]>([{ id: "home" }]);
+  const navStackRef = useRef(navStack);
+  const consumeBackLayerRef = useRef<() => boolean>(() => false);
+  const NAV_HISTORY_KEY = "__vibraNavStack";
+  const screenUrl = (s: Screen) => {
+    const route = s.id === "auth" ? s.mode : s.id === "playlist" ? "home" : s.id;
+    const url = new URL(window.location.href);
+    url.pathname = "/";
+    url.search = "";
+    url.hash = `#/${route}`;
+    return url.href;
+  };
   /** Signed-out visitors land on the marketing page until they pick a door. */
   const [entered, setEntered] = useState(false);
   const screen   = navStack[navStack.length - 1];
@@ -2789,10 +2753,29 @@ export default function App() {
   // screens, profile…) is a normal push.
   const ROOT_TABS = new Set(["home", "search", "discover", "library"]);
   const navigate = useCallback((s: Screen) => {
-    setNavStack(ROOT_TABS.has(s.id) ? (s.id === "home" ? [s] : [{ id: "home" }, s]) : p => [...p, s]);
+    const next = ROOT_TABS.has(s.id)
+      ? (s.id === "home" ? [s] : [{ id: "home" } as Screen, s])
+      : [...navStackRef.current, s];
+    navStackRef.current = next;
+    setNavStack(next);
+    try {
+      window.history.pushState({ ...(window.history.state ?? {}), [NAV_HISTORY_KEY]: next }, "", screenUrl(s));
+    } catch { /* navigation still works if this host disables History API writes */ }
   }, []);
-  const goBack   = useCallback(() => setNavStack(p => p.length > 1 ? p.slice(0, -1) : p), []);
-  const navStackRef = useRef(navStack);
+  const goBack = useCallback(() => {
+    const current = navStackRef.current;
+    if (current.length > 1 && window.history.state?.[NAV_HISTORY_KEY]) {
+      window.history.back();
+      return;
+    }
+    if (current.length > 1) {
+      const next = current.slice(0, -1);
+      navStackRef.current = next;
+      setNavStack(next);
+      return;
+    }
+    if (current[current.length - 1]?.id !== "home") navigate({ id: "home" });
+  }, [navigate]);
   useEffect(() => { navStackRef.current = navStack; }, [navStack]);
   // Deep-link intake: assigned every render (fresh closures) and read by the
   // route guard (web/startup) and the native appUrlOpen listener. Signature
@@ -2800,6 +2783,19 @@ export default function App() {
   // never restart a song that is already playing from that exact link.
   const shareUrlHandlerRef = useRef<(raw: string, fromNavigation: boolean) => void>(() => {});
   const lastNavShareRef = useRef("");
+
+  // Establish a serializable base entry, then keep browser Back and this
+  // in-memory stack on the same screen. A direct /settings launch gets Home
+  // beneath it instead of treating Settings itself as the app's exit root.
+  useEffect(() => {
+    const saved = window.history.state?.[NAV_HISTORY_KEY];
+    if (Array.isArray(saved) && saved.length > 0) {
+      navStackRef.current = saved as Screen[];
+      setNavStack(saved as Screen[]);
+    } else {
+      window.history.replaceState({ ...(window.history.state ?? {}), [NAV_HISTORY_KEY]: [{ id: "home" }] }, "", window.location.href);
+    }
+  }, []);
 
   // Route guard: the path (`/download`) or a known deep link (`#/search`, …)
   // navigates there; an unknown hash resolves to NotFound instead of a silent
@@ -2833,12 +2829,47 @@ export default function App() {
       if (KNOWN.has(fromHash)) navigate({ id: fromHash } as Screen);
       else navigate({ id: "notfound" });
     };
+    const applyPopstate = (event: PopStateEvent) => {
+      if (consumeBackLayerRef.current()) {
+        const current = navStackRef.current;
+        const top = current[current.length - 1] ?? { id: "home" as const };
+        try {
+          window.history.pushState({ ...(event.state ?? {}), [NAV_HISTORY_KEY]: current }, "", screenUrl(top));
+        } catch { /* overlay still dismisses even when history is locked */ }
+        return;
+      }
+      const saved = event.state?.[NAV_HISTORY_KEY];
+      if (Array.isArray(saved) && saved.length > 0) {
+        const restored = saved as Screen[];
+        navStackRef.current = restored;
+        setNavStack(restored);
+        const current = restored[restored.length - 1];
+        if (current) {
+          try {
+            window.history.replaceState({ ...(event.state ?? {}), [NAV_HISTORY_KEY]: restored }, "", screenUrl(current));
+          } catch { /* state restore is still authoritative */ }
+        }
+        return;
+      }
+      const current = navStackRef.current;
+      if (current.length > 1) {
+        const restored = current.slice(0, -1);
+        navStackRef.current = restored;
+        setNavStack(restored);
+        return;
+      }
+      applyRoute();
+    };
+    const applyExternalHash = () => {
+      if (window.history.state?.[NAV_HISTORY_KEY]) return;
+      applyRoute();
+    };
     applyRoute();
-    window.addEventListener("hashchange", applyRoute);
-    window.addEventListener("popstate", applyRoute);
+    window.addEventListener("hashchange", applyExternalHash);
+    window.addEventListener("popstate", applyPopstate);
     return () => {
-      window.removeEventListener("hashchange", applyRoute);
-      window.removeEventListener("popstate", applyRoute);
+      window.removeEventListener("hashchange", applyExternalHash);
+      window.removeEventListener("popstate", applyPopstate);
     };
   }, [navigate]);
 
@@ -2892,7 +2923,9 @@ export default function App() {
   const audioRef = useRef<PlaybackHandle | null>(null);
   const ytEngineRef = useRef<YTAudioEngine | null>(null);
   const playSessionRef = useRef(0);
-  const handleTrackEndRef = useRef<() => void>(() => {});
+  const notificationPermissionAskedRef = useRef(false);
+  const handleTrackEndRef = useRef<(failed?: boolean) => void>(() => {});
+  const failedTrackIdsRef = useRef<Set<string>>(new Set());
   const timerRef = useRef<number | undefined>(undefined);
   /** One-shot start offset for the next beginPlayback (session restore). */
   const resumePosRef = useRef(0);
@@ -3006,15 +3039,6 @@ export default function App() {
     // profiles land on the Vibra red default too.
     return stored && !/^#(1ED760|1db954)$/i.test(stored) ? stored : "#E8334F";
   });
-  const [audioQuality, setAudioQuality]                 = useState(() => getUserProfile()?.audioQuality ?? "high");
-  const [normalizeVolume, setNormalizeVolume]           = useState(true);
-  const [autoplay, setAutoplay]                         = useState(true);
-  const [crossfade, setCrossfade]                       = useState(false);
-  const [notifNewReleases, setNotifNewReleases]         = useState(true);
-  const [notifRecommendations, setNotifRecommendations] = useState(true);
-  const [notifFollowers, setNotifFollowers]             = useState(false);
-  const [shareListening, setShareListening]             = useState(true);
-  const [shareData, setShareData]                       = useState(false);
 
   const C = useMemo(() => makeColors(theme, accent), [theme, accent]);
 
@@ -3146,20 +3170,30 @@ export default function App() {
     setPlayerPageOpen(false);
   }, []);
 
-  // ── Hardware back button ────────────────────────────────────────────────────
-  // Player open → back dismisses only the player, revealing the screen it was
-  // opened from. Anywhere else → back walks the nav stack one step
-  // (playlist/search → home). On Home the FIRST press is ignored with a brief
-  // toast ("Press back again to exit"); a second press within 2s leaves the
-  // app. While audio plays that exit only backs the task out (WebView +
-  // media service stay alive → music and notification survive); a silent app
-  // exits for real. Back never touches playback itself.
+  // ── Back priority: transient layer → player → screen stack → Home exit ──────
+  const consumeBackLayer = useCallback(() => {
+    const event = new CustomEvent("vibra:back", { cancelable: true });
+    window.dispatchEvent(event);
+    if (event.defaultPrevented) return true;
+    if (createPlaylistOpen) { setCreatePlaylistOpen(false); return true; }
+    if (trackOptionsTrack) { setTrackOptionsTrack(null); return true; }
+    if (playerPageOpenRef.current) { closePlayer(); return true; }
+    if (panelTab) { setPanelTab(null); return true; }
+    return false;
+  }, [createPlaylistOpen, trackOptionsTrack, closePlayer, panelTab]);
+  consumeBackLayerRef.current = consumeBackLayer;
+
+  // At Home the first press is ignored with a brief toast; a second press
+  // exits (or backgrounds the task while audio continues). Any non-Home root,
+  // including a direct /settings launch, returns to Home instead of exiting.
   const backExitAt = useRef(0);
   useEffect(() => {
     let remove: (() => void) | undefined;
     void CapApp.addListener("backButton", () => {
-      if (playerPageOpenRef.current) { closePlayer(); return; }
-      if (navStackRef.current.length > 1) { goBack(); return; }
+      if (consumeBackLayerRef.current()) return;
+      const stack = navStackRef.current;
+      const top = stack[stack.length - 1];
+      if (stack.length > 1 || (top && top.id !== "home")) { goBack(); return; }
       const now = Date.now();
       if (now - backExitAt.current < 2000) {
         if (isPlayingRef.current) mediaMinimize();
@@ -3172,7 +3206,7 @@ export default function App() {
       .then(h => { remove = () => void h.remove(); })
       .catch(() => { /* web — no hardware back to intercept */ });
     return () => { remove?.(); };
-  }, [closePlayer, goBack]);
+  }, [goBack]);
 
   // ── Deep links ───────────────────────────────────────────────────────────────
   // Opening a shared link (https://vybra.streamvy.me/track/… or vybra://…)
@@ -3437,25 +3471,35 @@ export default function App() {
     return () => clearInterval(timerRef.current);
   }, [isPlaying]);
 
+  useEffect(() => {
+    const syncNativePlayback = () => {
+      const handle = audioRef.current;
+      if (handle instanceof NativeAudioEngine) void handle.refreshState();
+    };
+    document.addEventListener("visibilitychange", syncNativePlayback);
+    window.addEventListener("focus", syncNativePlayback);
+    return () => {
+      document.removeEventListener("visibilitychange", syncNativePlayback);
+      window.removeEventListener("focus", syncNativePlayback);
+    };
+  }, []);
+
   // ── Playback engines ─────────────────────────────────────────────────────────
-  /** Engine-level failures: only report them when the failing engine is the live one. */
+  /** Report only failures from the active YouTube engine and move past dead tracks. */
   const handleEngineFailure = useCallback((failure: PlaybackFailure) => {
     if (audioRef.current !== ytEngineRef.current) return;
     setIsPlaying(false);
     toast(describePlaybackFailure(failure));
+    if (failure.kind === "track") handleTrackEndRef.current(true);
   }, []);
 
   /**
-   * Starts a track on the best available engine:
-   *   1. direct stream URL via <audio> (used whenever the backend serves bytes);
-   *   2. hidden YouTube IFrame fallback the moment the stream errors out.
-   * Play-state flips to true immediately and only reverts — with a calm toast —
-   * once every engine has genuinely failed. No silent "playing".
+   * Start immediately from an already-known URL. Android uses the native
+   * service-owned ExoPlayer; source resolution runs concurrently as a fallback
+   * rather than delaying first audio. Every candidate has a startup deadline.
    */
   const beginPlayback = useCallback((t: Track) => {
     const session = ++playSessionRef.current;
-    // Session restore: the first beginPlayback after a relaunch resumes at
-    // the saved playhead; every later call starts fresh.
     const resumeAt = resumePosRef.current;
     resumePosRef.current = 0;
     setIsPlaying(true);
@@ -3465,6 +3509,11 @@ export default function App() {
       if (playSessionRef.current !== session) return;
       setIsPlaying(false);
       toast(describePlaybackFailure(failure));
+      if (failure.kind === "track") {
+        window.setTimeout(() => {
+          if (playSessionRef.current === session) handleTrackEndRef.current(true);
+        }, 0);
+      }
     };
 
     const startYouTube = async (videoId: string) => {
@@ -3489,100 +3538,182 @@ export default function App() {
       }
     };
 
-    audioRef.current?.pause();
+    const previous = audioRef.current;
+    previous?.pause();
+    if (previous instanceof NativeAudioEngine) previous.detach();
 
-    // Best source wins: a saved copy (offline-proof, wall-proof), then the
-    // phone's own IP via innertube (the BFF's serverless IP is bot-walled),
-    // then the BFF chain, and only then the IFrame fallback.
     void (async () => {
-      // A file ON THIS PHONE (MediaStore) plays straight from disk — no id
-      // recovery, no resolution, no network. That is the whole point.
-      let url: string | undefined;
-      let sourceId: string | undefined; // no IFrame fallback for local files
-      if (t.localPath) {
-        url = localSongUrl(t.localPath);
-      } else {
-        // Resolve a playable source id. The track's own videoId — or its id,
-        // when that IS a video id. Rows that never carried one (old library /
-        // UUID tracks) get one shot of recovery: search the exact title+artist
-        // and use the top hit's id, so they never dead-end on "can't play".
-        const looksPlayable = (v?: string) => !!v && /^[A-Za-z0-9_-]{10,16}$/.test(v);
-        sourceId = t.videoId ?? (typeof t.id === "string" && t.id ? t.id : undefined);
-        if (!looksPlayable(sourceId) && !playbackRecoveredRef.current.has(String(t.id))) {
-          playbackRecoveredRef.current.add(String(t.id));
-          try {
-            const hits = await searchTracks(`${t.title} ${t.artist}`.trim(), 5);
-            const hit = hits.find(h => looksPlayable(h.videoId ?? h.id));
-            if (playSessionRef.current !== session) return;
-            if (hit) sourceId = hit.videoId ?? hit.id;
-          } catch { /* offline — the failure toast below still fires */ }
-        }
+      const native = isNativeApp();
+      const looksPlayable = (value?: string) => !!value && /^[A-Za-z0-9_-]{10,16}$/.test(value);
+      let sourceId = t.videoId ?? (typeof t.id === "string" && t.id ? t.id : undefined);
+      let localUrl: string | null = null;
 
-        const local = await getLocalAudioUrl(String(t.id));
-        if (playSessionRef.current !== session) return;
-        url = local ?? undefined;
-        if (!url && sourceId) url = (await resolveOnDevice(sourceId))?.url;
-        if (playSessionRef.current !== session) return;
-        url = url ?? t.previewUrl ?? t.streamUrl ?? (sourceId ? getStreamUrl(sourceId) : undefined);
+      // Local files bypass all network resolution. Media3 receives the raw
+      // content/file URI, not the WebView-only https://localhost bridge URL.
+      if (t.localPath) localUrl = native ? t.localPath : localSongUrl(t.localPath);
+      else if (native) {
+        localUrl = await resolveQuickly(getNativeLocalAudioUri(String(t.id)), 1_200, null);
+      } else {
+        localUrl = await resolveQuickly(getLocalAudioUrl(String(t.id)), 1_000, null);
       }
-      if (!url) {
+      if (playSessionRef.current !== session) return;
+
+      // Old saved rows may not have a video ID. Recover once, but never let the
+      // catalogue search hold up a URL that is already playable.
+      if (!looksPlayable(sourceId) && !localUrl && !t.streamUrl && !t.previewUrl && !playbackRecoveredRef.current.has(String(t.id))) {
+        playbackRecoveredRef.current.add(String(t.id));
+        const hits = await resolveQuickly(searchTracks(`${t.title} ${t.artist}`.trim(), 5), 4_500, []);
+        if (playSessionRef.current !== session) return;
+        const hit = hits.find(item => looksPlayable(item.videoId ?? item.id));
+        if (hit) sourceId = hit.videoId ?? hit.id;
+      }
+
+      const bffUrl = sourceId ? getStreamUrl(sourceId) : undefined;
+      const remoteUrl = t.streamUrl || t.previewUrl || bffUrl;
+      const firstUrl = localUrl ?? remoteUrl;
+      if (!firstUrl) {
         fail({ kind: "track", message: "This track can't play right now." });
         return;
       }
 
+      if (native) {
+        // Resolve the device-direct URL in parallel; never wait for it before
+        // starting the already-known BFF/track URL.
+        const deviceSource = sourceId
+          ? resolveQuickly(resolveOnDevice(sourceId), 6_500, null)
+          : Promise.resolve(null);
+        let nativeBridgeUnavailable = false;
+        let lastError: unknown;
+        const attempted = new Set<string>();
+
+        const tryNative = async (url: string, timeoutMs: number): Promise<boolean> => {
+          if (playSessionRef.current !== session) return false;
+          attempted.add(url);
+          let engine!: NativeAudioEngine;
+          try {
+            engine = await NativeAudioEngine.create({
+              onEnded: () => {
+                if (playSessionRef.current === session && audioRef.current === engine) handleTrackEndRef.current();
+              },
+              onFailure: failure => {
+                if (playSessionRef.current === session && audioRef.current === engine) fail(failure);
+              },
+              onState: state => {
+                if (playSessionRef.current !== session || audioRef.current !== engine) return;
+                setIsPlaying(state.playing);
+                setElapsed(state.positionSec);
+                if (state.durationSec > 0) {
+                  setAudioDuration(state.durationSec);
+                  setProgress(Math.min(1, state.positionSec / state.durationSec));
+                }
+              },
+            });
+            if (playSessionRef.current !== session) { engine.detach(); return false; }
+            audioRef.current = engine;
+            await engine.load({
+              url,
+              title: t.title,
+              artist: t.artist,
+              album: t.album ?? "",
+              artworkUrl: t.imageUrl ?? "",
+              durationSec: t.durationSec ?? 0,
+              positionSec: resumeAt,
+              volume,
+            }, timeoutMs);
+            if (playSessionRef.current !== session) { engine.pause(); engine.detach(); return false; }
+            setIsPlaying(true);
+            void refreshOutput();
+            if (!notificationPermissionAskedRef.current) {
+              notificationPermissionAskedRef.current = true;
+              mediaRequestNotificationPermission();
+            }
+            return true;
+          } catch (error) {
+            lastError = error;
+            if (engine) {
+              engine.pause();
+              engine.detach();
+              if (audioRef.current === engine) audioRef.current = null;
+            }
+            if (/Native background player is unavailable/i.test(String((error as Error)?.message ?? error))) {
+              nativeBridgeUnavailable = true;
+            }
+            return false;
+          }
+        };
+
+        // Attempt one local source (if any) and one immediately available
+        // remote URL. Do not serially try a long list of dead endpoints.
+        const nativeCandidates = [...new Set([localUrl, remoteUrl].filter((value): value is string => !!value))];
+        for (const candidate of nativeCandidates) {
+          if (await tryNative(candidate, candidate === localUrl ? 4_500 : 5_500)) return;
+          if (nativeBridgeUnavailable) break;
+        }
+        if (!nativeBridgeUnavailable && sourceId) {
+          const direct = await resolveQuickly(deviceSource, 1_500, null);
+          if (direct?.url && !attempted.has(direct.url) && await tryNative(direct.url, 6_000)) return;
+        }
+        if (nativeBridgeUnavailable) {
+          // Keep older already-installed APKs usable during the rollout; new
+          // APKs always take the foreground-service path above.
+        } else {
+          fail(failureFromError(lastError ?? { kind: "track", message: "This track took too long to start." }));
+          return;
+        }
+      }
+
+      // Browser engine and compatibility fallback for APKs predating the
+      // native ExoPlayer bridge. Android builds with the bridge never reach
+      // this WebView-only path.
+      const url = firstUrl;
       const a = new Audio(url);
       a.volume = volume;
       let streamFailed = false;
       let everPlayed = false;
+      let watchdog = 0;
       const fallBackToYouTube = () => {
         if (streamFailed) return;
         streamFailed = true;
-        clearTimeout(watchdog);
+        window.clearTimeout(watchdog);
         a.pause();
         if (playSessionRef.current !== session) return;
-        if (sourceId) void startYouTube(sourceId);
+        if (native) {
+          fail({ kind: "track", message: "This track can't play in the current APK. Update the app and try again." });
+        } else if (sourceId) void startYouTube(sourceId);
         else fail({ kind: "track", message: "This track can't play right now." });
       };
       a.addEventListener("error", fallBackToYouTube);
       a.addEventListener("playing", () => {
         everPlayed = true;
-        clearTimeout(watchdog);
+        window.clearTimeout(watchdog);
         if (streamFailed || playSessionRef.current !== session) return;
         setIsPlaying(true);
-        // First audible frame: labels are now requestable, report real output.
         void refreshOutput();
       });
       a.addEventListener("ended", () => {
         if (playSessionRef.current === session) handleTrackEndRef.current();
       });
-      // Engine truth beats the optimistic flag: Chromium can pause the element
-      // behind our back (background suspension, interrupted stream). Ignore
-      // pauses we caused ourselves — engine switches (streamFailed) or the
-      // next session already took over.
       a.addEventListener("pause", () => {
         if (streamFailed || playSessionRef.current !== session || audioRef.current !== a) return;
-        if (a.ended) return; // "ended" advances the queue — not a pause
+        if (a.ended) return;
         setIsPlaying(false);
       });
       audioRef.current = a;
       registerSinkElement(a);
-      // Session restore: seek once the duration is known, before first play.
       if (resumeAt > 0) {
         a.addEventListener("loadedmetadata", () => {
           try { a.currentTime = a.duration > 0 ? Math.min(resumeAt, a.duration - 0.5) : resumeAt; } catch { /* ignore */ }
         }, { once: true });
       }
-      // Watchdog: if the stream neither errors nor actually plays within 5s
-      // (the backend sometimes answers 200 with an empty body), switch engines.
-      const watchdog = window.setTimeout(() => {
+      watchdog = window.setTimeout(() => {
         if (!streamFailed && !everPlayed) fallBackToYouTube();
-      }, 5000);
+      }, 5_000);
       a.play().catch((err: unknown) => {
         const failure = failureFromError(err);
         if (failure.kind === "blocked") { fail(failure); return; }
         fallBackToYouTube();
       });
-    })();
+    })().catch(error => fail(failureFromError(error)));
   }, [volume, handleEngineFailure]);
 
   /**
@@ -3592,7 +3723,7 @@ export default function App() {
    */
   const startVibeIfAny = useCallback((): boolean => {
     const queued = new Set(queue.map(t => String(t.id)));
-    const fresh = vibePool.filter(t => !queued.has(String(t.id)) && t.id !== currentTrack?.id);
+    const fresh = vibePool.filter(t => !queued.has(String(t.id)) && t.id !== currentTrack?.id && !failedTrackIdsRef.current.has(String(t.id)));
     // Continue the artist you're already on first — one feeling flows into the
     // next instead of getting ambushed by whatever else sits in the pool.
     const sameArtist = (t: Track) =>
@@ -3609,15 +3740,16 @@ export default function App() {
     return true;
   }, [queue, vibePool, currentTrack, beginPlayback, scheduleVibeRefresh]);
 
-  const handleTrackEnd = useCallback(() => {
-    if (repeatMode === "one") {
+  const handleTrackEnd = useCallback((failed = false) => {
+    if (!failed && repeatMode === "one") {
       setProgress(0); setElapsed(0);
       const a = audioRef.current;
       if (a) { a.currentTime = 0; a.play().catch(() => {}); }
       return;
     }
+    if (failed && currentTrack) failedTrackIdsRef.current.add(String(currentTrack.id));
     // Natural completion — feeds “Jump back in” / “Because you played …”.
-    if (currentTrack) {
+    if (!failed && currentTrack) {
       sendEvent({
         type: "complete",
         trackId: currentTrack.id,
@@ -3631,10 +3763,25 @@ export default function App() {
     if (queue.length === 0) { if (!startVibeIfAny()) setIsPlaying(false); return; }
     // Invalid queue index (the seeded queue didn't contain the clicked track)
     // → keep going from the first queued item rather than stopping.
-    const next = shuffleOn
-      ? Math.floor(Math.random() * queue.length)
-      : queueIdx < 0 || queueIdx >= queue.length ? 0
-      : queueIdx + 1 < queue.length ? queueIdx + 1 : repeatMode === "all" ? 0 : -1;
+    let next = -1;
+    if (!failed) {
+      next = shuffleOn
+        ? Math.floor(Math.random() * queue.length)
+        : queueIdx < 0 || queueIdx >= queue.length ? 0
+        : queueIdx + 1 < queue.length ? queueIdx + 1 : repeatMode === "all" ? 0 : -1;
+    } else {
+      const start = queueIdx < 0 || queueIdx >= queue.length ? 0 : queueIdx + 1;
+      const order = Array.from({ length: queue.length }, (_, i) => start + i)
+        .filter(index => index < queue.length || repeatMode === "all")
+        .map(index => index % queue.length);
+      if (shuffleOn) {
+        for (let i = order.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [order[i], order[j]] = [order[j], order[i]];
+        }
+      }
+      next = order.find(index => !failedTrackIdsRef.current.has(String(queue[index].id))) ?? -1;
+    }
     if (next < 0) { if (!startVibeIfAny()) setIsPlaying(false); return; }
     setQueueIdx(next);
     const t = queue[next];
@@ -3686,6 +3833,7 @@ export default function App() {
 
   // ── playTrack ─────────────────────────────────────────────────────────────────
   const playTrack = useCallback((t: Track, newQueue?: Track[], sourceShelfId?: string) => {
+    failedTrackIdsRef.current.delete(String(t.id));
     if (currentTrack && currentTrack.id !== t.id) {
       setHistory(h => [...h.slice(-19), currentTrack]);
     }
@@ -3824,6 +3972,7 @@ export default function App() {
       if (atEnd && startVibeIfAny()) return;
       return;
     }
+    failedTrackIdsRef.current.delete(String(t.id));
     // A manual skip — tell the BFF where the user bailed out.
     if (currentTrack) {
       sendEvent({ type: "skip", trackId: currentTrack.id, title: currentTrack.title, image: currentTrack.imageUrl, positionMs: Math.round(elapsed * 1000), artist: currentTrack.artist });
@@ -3847,6 +3996,7 @@ export default function App() {
     }
     if (history.length > 0) {
       const prev = history[history.length - 1];
+      failedTrackIdsRef.current.delete(String(prev.id));
       setHistory(h => h.slice(0, -1));
       setCurrentTrack(prev);
       setProgress(0); setElapsed(0);
@@ -3861,6 +4011,7 @@ export default function App() {
       if (currentTrack) {
         // No live engine (restored session): beginPlayback resumes at the
         // saved playhead instead of starting over.
+        failedTrackIdsRef.current.delete(String(currentTrack.id));
         resumePosRef.current = elapsedRef.current;
         beginPlayback(currentTrack);
       }
@@ -4042,8 +4193,8 @@ export default function App() {
     };
   }, [isPlaying, currentTrack, audioDuration]);
 
-  // Android 13+ notification permission is REQUESTED FROM SETTINGS ONLY (the
-  // Notifications row below): no system prompt ever interrupts first play.
+  // Android 13+ notification permission is requested once after the first
+  // native track starts, when lock-screen controls become relevant.
 
   // ── toggleLike ────────────────────────────────────────────────────────────────
   const toggleLike = useCallback((id: string | number) => {
@@ -4110,8 +4261,20 @@ export default function App() {
 
   // ── refreshDownloads ──────────────────────────────────────────────────────────
   const refreshDownloads = useCallback(async () => {
-    const dl = await api<any[]>("/library/downloaded");
-    if (dl) setDownloadedTracks(dl.map(mapAPITrack));
+    // The BFF endpoint is metadata-only (and currently returns an empty list).
+    // The device's verified files are authoritative for offline playback.
+    const serverRequest = api<any[]>("/library/downloaded");
+    const localRows = readOfflineTracks();
+    const verifiedLocal = await Promise.all(localRows.map(async row =>
+      await hasDownload(String(row.id)) ? mapAPITrack(row) : null,
+    ));
+    const serverRows = await serverRequest;
+    const byId = new Map<string, Track>();
+    for (const track of [...verifiedLocal.filter((t): t is Track => t !== null), ...(Array.isArray(serverRows) ? serverRows.map(mapAPITrack) : [])]) {
+      const key = String(track.id);
+      if (!byId.has(key)) byId.set(key, track);
+    }
+    setDownloadedTracks([...byId.values()]);
   }, []);
 
   // ── downloadTrack ────────────────────────────────────────────────────────────
@@ -4413,14 +4576,6 @@ export default function App() {
     shelves, homeLoading, refreshHome, hiddenIds, hideItem, vibePool,
     outputDevice, devices, refreshDevices, selectOutput,
     theme, setTheme, accent, setAccent,
-    audioQuality, setAudioQuality,
-    normalizeVolume, setNormalizeVolume,
-    autoplay, setAutoplay, crossfade, setCrossfade,
-    notifNewReleases, setNotifNewReleases,
-    notifRecommendations, setNotifRecommendations,
-    notifFollowers, setNotifFollowers,
-    shareListening, setShareListening,
-    shareData, setShareData,
     historyPaused, setHistoryPaused, resetRecommendations,
     following, toggleFollow,
     openTrackOptions: setTrackOptionsTrack,
