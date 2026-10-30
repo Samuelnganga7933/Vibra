@@ -19,8 +19,18 @@ import { sendEvent } from "../services/events";
 import { marketLabel, marketChartQuery } from "../services/locale";
 import { clearOfflineTracks, readOfflineTracks, type OfflineTrack } from "../services/offlineStorage";
 import {
+  cancelPlaylistDownload,
+  discardPlaylistDownloadJob,
+  readCurrentPlaylistDownloadJob,
+  retryFailedPlaylistDownloads,
+  resumePlaylistDownload,
+  subscribePlaylistDownloadProgress,
+  type PlaylistDownloadJob,
+  type PlaylistDownloadProgress,
+} from "../services/playlistDownloadQueue";
+import {
   isNativeMediaAvailable, listLocalMusic, requestLocalMusicPermission, localSongToTrack,
-  ensureLocalMusicPermission, audioPermissionState,
+  audioPermissionState,
   type LocalSong,
 } from "../services/localMusic";
 import { App as CapApp } from "@capacitor/app";
@@ -500,14 +510,38 @@ function MobileSearch({ seed }: { seed?: string }) {
 /* ─── Library ──────────────────────────────────────────────────────────────── */
 
 function MobileLibrary({ tab: initTab = "playlists" }: { tab?: LibTab }) {
-  const { C, navigate, playTrack, playlists, playlistsLoading, likedTracks, artists, openCreatePlaylist, uiState, following, toggleFollow } = useApp();
+  const { C, navigate, playTrack, playlists, playlistsLoading, likedTracks, artists, openCreatePlaylist, uiState, following, toggleFollow, downloadedTracks } = useApp();
   const [tab, setTab] = useState<LibTab>(initTab === "liked" || initTab === "artists" ? initTab : "playlists");
+  const [source, setSource] = useState<"library" | "downloads" | "device">("library");
+  const [localSongs, setLocalSongs] = useState<LocalSong[]>([]);
+  const [deviceStatus, setDeviceStatus] = useState<"idle" | "loading" | "denied" | "unavailable" | "empty" | "ready">("idle");
+  const localTracks = useMemo(() => localSongs.map(localSongToTrack), [localSongs]);
 
   const TABS: { id: LibTab; label: string }[] = [
     { id: "playlists", label: "Playlists" },
     { id: "liked",     label: "Liked"     },
     { id: "artists",   label: "Artists"   },
   ];
+
+  const selectSource = async (next: "library" | "downloads" | "device") => {
+    setSource(next);
+    if (next !== "device") return;
+    if (!isNativeMediaAvailable()) { setDeviceStatus("unavailable"); return; }
+
+    setDeviceStatus("loading");
+    const permissionState = await audioPermissionState();
+    if (permissionState === "denied") {
+      setDeviceStatus("denied");
+      return;
+    }
+    const granted = permissionState === "granted" || await requestLocalMusicPermission();
+    if (!granted) { setDeviceStatus("denied"); return; }
+
+    const songs = await listLocalMusic();
+    if (songs === null) { setDeviceStatus("denied"); return; }
+    setLocalSongs(songs);
+    setDeviceStatus(songs.length > 0 ? "ready" : "empty");
+  };
 
   return (
     <MPage>
@@ -525,13 +559,21 @@ function MobileLibrary({ tab: initTab = "playlists" }: { tab?: LibTab }) {
             </button>
           )}
         </div>
-        <div style={{ display: "flex", gap: 8, overflowX: "auto", scrollbarWidth: "none", paddingBottom: 16 }}>
+        <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: C.muted, marginBottom: 7 }} htmlFor="mobile-library-source">Browse source</label>
+        <select id="mobile-library-source" aria-label="Browse source" value={source}
+          onChange={e => { void selectSource(e.target.value as "library" | "downloads" | "device"); }}
+          style={{ width: "100%", height: 44, borderRadius: 12, padding: "0 12px", border: `1px solid ${C.border}`, background: C.surf, color: C.text, font: "inherit", fontSize: 14, fontWeight: 600, marginBottom: 14 }}>
+          <option value="library">Your library</option>
+          <option value="downloads">Vibra downloads</option>
+          <option value="device">On this device</option>
+        </select>
+        {source === "library" && <div style={{ display: "flex", gap: 8, overflowX: "auto", scrollbarWidth: "none", paddingBottom: 16 }}>
           {TABS.map(t => <MChip key={t.id} label={t.label} active={tab === t.id} onClick={() => setTab(t.id)} />)}
-        </div>
+        </div>}
       </div>
 
       <div style={pad(24)}>
-        {tab === "playlists" && (
+        {source === "library" && tab === "playlists" && (
           playlistsLoading ? (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
               {[...Array(6)].map((_, i) => <div key={i} style={{ aspectRatio: "1 / 1", borderRadius: 16, background: C.surf, opacity: 0.7 }} />)}
@@ -553,7 +595,7 @@ function MobileLibrary({ tab: initTab = "playlists" }: { tab?: LibTab }) {
           )
         )}
 
-        {tab === "liked" && (
+        {source === "library" && tab === "liked" && (
           likedTracks.length > 0 ? (
             likedTracks.map((t, i) => <MRow key={t.id} track={t} queue={likedTracks.slice(i + 1)} />)
           ) : (
@@ -561,13 +603,34 @@ function MobileLibrary({ tab: initTab = "playlists" }: { tab?: LibTab }) {
           )
         )}
 
-        {tab === "artists" && (
+        {source === "library" && tab === "artists" && (
           artists.length > 0 ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
               {artists.map(a => <MArtistRow key={a.id} artist={a} following={following.has(a.id)} onToggle={() => toggleFollow(a.id)} />)}
             </div>
           ) : <MEmpty title="No artists" sub="Artists you follow will appear here." />
         )}
+
+        {source === "downloads" && (downloadedTracks.length > 0 ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            {downloadedTracks.map((track, i) => <MRow key={track.id} track={track} queue={downloadedTracks.slice(i + 1)} />)}
+          </div>
+        ) : <MEmpty icon={Download} title="No Vibra downloads" sub="Songs you download in Vibra will appear here." />)}
+
+        {source === "device" && (deviceStatus === "loading" ? (
+          <div role="status" aria-live="polite" style={{ padding: "24px 0", color: C.muted, fontSize: 14 }}>Checking music on this device…</div>
+        ) : deviceStatus === "denied" ? (
+          <MEmpty title="Device music permission needed" sub="Allow audio access in your device settings, then check again to view music stored on this device."
+            action={<button onClick={() => void selectSource("device")} style={{ height: 38, padding: "0 16px", borderRadius: 19, border: `1px solid ${C.accent}`, background: "transparent", color: C.accent, font: "inherit", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Check again</button>} />
+        ) : deviceStatus === "unavailable" ? (
+          <MEmpty title="Device music isn’t available here" sub="Music stored on this device can only be viewed in the Vibra mobile app." />
+        ) : deviceStatus === "empty" ? (
+          <MEmpty title="No music found on this device" sub="Music files stored on this device will appear here." />
+        ) : deviceStatus === "ready" ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            {localTracks.map((track, i) => <MRow key={track.id} track={track} queue={localTracks.slice(i + 1)} />)}
+          </div>
+        ) : null)}
       </div>
     </MPage>
   );
@@ -759,9 +822,63 @@ function fmtBytes(n: number): string {
 function MobileDownloads() {
   const { C, navigate, canGoBack, goBack, downloadedTracks, refreshDownloads, activeDownloads } = useApp();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [playlistJob, setPlaylistJob] = useState<PlaylistDownloadJob | null>(() => readCurrentPlaylistDownloadJob());
+  const [playlistProgress, setPlaylistProgress] = useState<PlaylistDownloadProgress | null>(null);
+  const [playlistBusy, setPlaylistBusy] = useState(false);
   // Local metadata carries exact byte sizes beside the server list.
   const [localMeta, setLocalMeta] = useState<OfflineTrack[]>([]);
   const total = downloadedTracks.length + activeDownloads.length;
+
+  useEffect(() => subscribePlaylistDownloadProgress(progress => {
+    setPlaylistJob(progress.job);
+    setPlaylistProgress(progress);
+  }), []);
+
+  const resumeBatch = async () => {
+    if (playlistBusy) return;
+    setPlaylistBusy(true);
+    try {
+      setPlaylistJob(await resumePlaylistDownload());
+      await refreshDownloads();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Couldn't resume playlist downloads.");
+    } finally { setPlaylistBusy(false); }
+  };
+  const cancelBatch = async () => {
+    if (playlistBusy) return;
+    setPlaylistBusy(true);
+    try {
+      setPlaylistJob(await cancelPlaylistDownload());
+      await refreshDownloads();
+    }
+    finally { setPlaylistBusy(false); }
+  };
+  const retryBatchFailures = async () => {
+    if (playlistBusy) return;
+    setPlaylistBusy(true);
+    try {
+      setPlaylistJob(await retryFailedPlaylistDownloads());
+      await refreshDownloads();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Couldn't retry failed downloads.");
+    } finally { setPlaylistBusy(false); }
+  };
+  const discardBatch = () => {
+    try {
+      discardPlaylistDownloadJob();
+      setPlaylistJob(null);
+      setPlaylistProgress(null);
+      toast("Saved playlist batch removed; downloaded tracks were kept.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Couldn't discard the saved batch.");
+    }
+  };
+  const currentPlaylistJob = playlistProgress?.job ?? playlistJob;
+  const playlistIsRunning = currentPlaylistJob?.status === "running" || currentPlaylistJob?.status === "cancelling";
+  const playlistBatchPct = currentPlaylistJob && currentPlaylistJob.tracks.length > 0
+    ? Math.round(Math.min(1, ((playlistProgress?.processed ?? (currentPlaylistJob.completedIds.length + currentPlaylistJob.failedIds.length))
+      + (playlistProgress?.activeFraction ?? 0)) / currentPlaylistJob.tracks.length) * 100)
+    : 0;
 
   // "On this phone" — the device's own files (YT Music style).
   // null = unknown yet (web, native loading, or permission not granted).
@@ -774,12 +891,12 @@ function MobileDownloads() {
     setLocalLoading(false);
     return songs;
   };
-  // First open only: show the native dialog once (state "prompt"), then
-  // scan. After that this is a silent no-op — never a repeated prompt.
+  // Check silently on open. Local-music permission is requested only after
+  // the user explicitly chooses On this device or taps the grant button.
   useEffect(() => {
     void (async () => {
-      await ensureLocalMusicPermission();
-      await loadLocal();
+      if ((await audioPermissionState()) === "granted") await loadLocal();
+      else { setLocalSongs(null); setLocalLoading(false); }
     })();
   }, []);
   // Returning from anywhere (including the system settings screen) re-checks
@@ -854,6 +971,35 @@ function MobileDownloads() {
           </>
         )}
       </div>
+
+      {currentPlaylistJob && (currentPlaylistJob.status !== "completed" || currentPlaylistJob.failedIds.length > 0) && (
+        <div style={{ margin: "20px 24px 0", padding: "14px 15px", borderRadius: 14, border: `1px solid ${C.border}`, background: C.pane }}>
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: C.accent, textTransform: "uppercase", letterSpacing: 0.7 }}>Playlist download</div>
+              <div style={{ marginTop: 3, fontSize: 14, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentPlaylistJob.playlist.title}</div>
+            </div>
+            <div style={{ flexShrink: 0, fontSize: 12, color: C.muted }}>{currentPlaylistJob.completedIds.length}/{currentPlaylistJob.tracks.length}</div>
+          </div>
+          <div aria-label="Playlist download progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={playlistBatchPct}
+            style={{ height: 5, borderRadius: 999, background: C.surf, overflow: "hidden", marginTop: 10 }}>
+            <div style={{ width: `${playlistBatchPct}%`, height: "100%", borderRadius: 999, background: C.accent, transition: "width .2s ease" }} />
+          </div>
+          <div style={{ display: "flex", gap: 16, marginTop: 9 }}>
+            {playlistIsRunning ? (
+              <button onClick={() => void cancelBatch()} disabled={playlistBusy} style={{ padding: 0, border: 0, background: "none", color: C.muted, font: "inherit", fontSize: 12, cursor: "pointer" }}>Cancel batch</button>
+            ) : currentPlaylistJob.status !== "completed" && currentPlaylistJob.currentIndex < currentPlaylistJob.tracks.length ? (
+              <button onClick={() => void resumeBatch()} disabled={playlistBusy} style={{ padding: 0, border: 0, background: "none", color: C.accent, font: "inherit", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Resume downloads</button>
+            ) : null}
+            {currentPlaylistJob.failedIds.length > 0 && (
+              <button onClick={() => void retryBatchFailures()} disabled={playlistBusy} style={{ padding: 0, border: 0, background: "none", color: C.accent, font: "inherit", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Retry failed ({currentPlaylistJob.failedIds.length})</button>
+            )}
+            {!playlistIsRunning && (
+              <button onClick={discardBatch} style={{ padding: 0, border: 0, background: "none", color: C.muted, font: "inherit", fontSize: 12, cursor: "pointer" }}>Discard saved batch</button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* In-flight downloads — live percentages instead of a mystery spinner. */}
       {activeDownloads.length > 0 && (
