@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   ChevronDown, Heart, Headphones, ListMusic, Mic2, MoreHorizontal,
   Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward,
-  Download, Check,
+  Download, Check, Music2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useApp, fmtSec } from "../../context";
@@ -86,7 +86,16 @@ export function PlayerPage() {
     if (mediaMode === "video" && isCompact) setMediaMode("song");
   }, [mediaMode, hasLyricsOption, isCompact]);
 
-  if (!currentTrack) return null;
+  if (!currentTrack) return (
+    <div role="dialog" aria-label="Player" style={{ position: "fixed", inset: 12, zIndex: 40, borderRadius: 18, border: `1px solid ${C.border}`, background: `linear-gradient(180deg, ${C.pane} 0%, ${C.bg} 130%)`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, color: C.text, boxShadow: "0 24px 80px rgba(0,0,0,0.55)" }}>
+      <div style={{ width: 112, height: 112, borderRadius: 24, background: C.surf, display: "grid", placeItems: "center", border: `1px solid ${C.border}` }}>
+        <Music2 size={42} color={C.accent} />
+      </div>
+      <div style={{ fontSize: 21, fontWeight: 800 }}>Nothing playing</div>
+      <div style={{ fontSize: 14, color: C.muted, textAlign: "center", maxWidth: 280 }}>Choose a song from Home, Search, or Your Library to start listening.</div>
+      <button onClick={closePlayer} style={{ height: 42, padding: "0 20px", marginTop: 4, borderRadius: 21, border: "none", background: C.accent, color: C.bg, font: "inherit", fontSize: 14, fontWeight: 800, cursor: "pointer" }}>Browse music</button>
+    </div>
+  );
   const isLiked = likedTrackIds.has(currentTrack.id);
   const isDownloaded = downloadedTracks.some(t => String(t.id) === String(currentTrack.id));
   const dlBusy = activeDownloads.some(d => d.id === String(currentTrack.id));
@@ -320,10 +329,15 @@ export function PlayerPage() {
       opacity: drag.y ? Math.max(0.6, 1 - drag.y / 520) : 1,
       transition: drag.active ? "none" : "transform .26s cubic-bezier(.2,.8,.24,1), opacity .26s ease",
     }}>
+      {mediaMode === "song" && currentTrack.imageUrl && (
+        <img src={currentTrack.imageUrl} alt="" aria-hidden loading="eager"
+          style={{ position: "absolute", inset: "-18%", width: "136%", height: "136%", objectFit: "cover", filter: "blur(72px) saturate(1.5)", opacity: 0.18, pointerEvents: "none", zIndex: 0 }}
+          onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+      )}
       {/* Drag zone — grabber + header only; artwork, seek and queue below
           keep their own gestures and never start a dismiss. */}
       <div onPointerDown={startDrag} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={cancelDrag}
-        style={{ flexShrink: 0, touchAction: "none", cursor: "grab" }}>
+        style={{ position: "relative", zIndex: 1, flexShrink: 0, touchAction: "none", cursor: "grab" }}>
       {/* Grabber — the boards' drag handle; pulling it (or the header) down closes */}
       <div aria-hidden style={{ width: 46, height: 5, borderRadius: 3, background: C.border, margin: "9px auto 0", flexShrink: 0, touchAction: "none" }} />
       {/* Header — compact: pill + more (close lives in the footer chevron) */}
@@ -345,7 +359,7 @@ export function PlayerPage() {
       </div>
 
       {/* Body: artwork, title, seek (stacks under 1200px — see index.css) */}
-      <div className="player-page-body" style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "minmax(280px, 1fr) minmax(300px, 420px)", gap: 24, padding: "4px 28px 20px" }}>
+      <div className="player-page-body" style={{ position: "relative", zIndex: 1, flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "minmax(280px, 1fr) minmax(300px, 420px)", gap: 24, padding: "4px 28px 20px" }}>
         {/* Left: artwork, title, seek */}
         <div className="player-page-main" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 22, minWidth: 0 }}>
           {/* Art card — compact wraps it in a blurred backdrop, radius 28 + glass sheen */}
@@ -472,7 +486,7 @@ export function PlayerPage() {
 
       {/* Footer — mobile only (hidden by index.css above the shell breakpoint):
           queue, output device, collapse. Sharing stays in track options. */}
-      <div className="player-page-foot">
+      <div className="player-page-foot" style={{ position: "relative", zIndex: 1 }}>
         <button onClick={() => setQueueOpen(v => !v)} aria-label="Queue" aria-pressed={queueOpen}
           style={{ width: 44, height: 44, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: queueOpen ? C.accent : C.muted, padding: 0 }}>
           <ListMusic size={21} />

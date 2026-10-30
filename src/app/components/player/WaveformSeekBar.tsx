@@ -120,10 +120,9 @@ export function WaveformSeekBar({
             minWidth: 0,
             height: `${Math.round(barHeight * 100)}%`,
             borderRadius: 2,
-            background: index / bars.length < value
-              ? color
-              : `color-mix(in srgb, ${color} 26%, transparent)`,
-            transition: "background .2s linear",
+            background: color,
+            opacity: index / bars.length < value ? 1 : 0.48,
+            transition: "opacity .2s linear",
           }}
         />
       ))}

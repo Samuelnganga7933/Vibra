@@ -69,6 +69,17 @@ import { loginUser, registerUser, logoutUser, passwordStrengthError } from "./se
 import { exchangeNeonSession, signOutNeon, clearOAuthQueryParams, hasOAuthVerifier } from "./services/neonAuth";
 import { resolveOnDevice } from "./services/deviceAudio";
 import { getLocalAudioUrl, getNativeLocalAudioUri, hasDownload, removeDownload, saveDownload } from "./services/localAudio";
+import {
+  cancelPlaylistDownload,
+  discardPlaylistDownloadJob,
+  readCurrentPlaylistDownloadJob,
+  retryFailedPlaylistDownloads,
+  resumePlaylistDownload,
+  startPlaylistDownload,
+  subscribePlaylistDownloadProgress,
+  type PlaylistDownloadJob,
+  type PlaylistDownloadProgress,
+} from "./services/playlistDownloadQueue";
 import { localSongUrl } from "./services/localMusic";
 import { markBundleReady, checkForOtaUpdates, reloadIntoLatestBundle, isNativeApp } from "./services/ota";
 import { trackSharePayload, parseShareUrl } from "./services/share";
@@ -1127,9 +1138,91 @@ function LibraryScreen({ tab: initTab = "playlists" }: { tab?: LibTab }) {
 
 // ─── PlaylistScreen ────────────────────────────────────────────────────────────
 function PlaylistScreen({ item }: { item: PlaylistItem }) {
-  const { C, playTrack, canGoBack, goBack, discoveryTracks, reorderPlaylist } = useApp();
+  const { C, playTrack, canGoBack, goBack, discoveryTracks, reorderPlaylist, refreshDownloads } = useApp();
   const [fullPlaylist, setFullPlaylist] = useState<PlaylistItem>(item);
   const [loading, setLoading] = useState(item.tracks.length === 0);
+  const [downloadJob, setDownloadJob] = useState<PlaylistDownloadJob | null>(() => readCurrentPlaylistDownloadJob());
+  const [downloadProgress, setDownloadProgress] = useState<PlaylistDownloadProgress | null>(null);
+  const [downloadBusy, setDownloadBusy] = useState(false);
+
+  useEffect(() => subscribePlaylistDownloadProgress(progress => {
+    setDownloadJob(progress.job);
+    setDownloadProgress(progress);
+  }), []);
+
+  const startDownloadBatch = async () => {
+    if (tracks.length === 0 || downloadBusy) return;
+    setDownloadBusy(true);
+    try {
+      const result = await startPlaylistDownload({
+        playlist: { id: fullPlaylist.id, title: fullPlaylist.name },
+        tracks: tracks.map(track => ({
+          id: track.id, videoId: track.videoId, title: track.title, artist: track.artist,
+          duration: track.duration, bg: track.bg, imageUrl: track.imageUrl,
+        })),
+      });
+      setDownloadJob(result);
+      await refreshDownloads();
+      toast.success(result.failedIds.length > 0
+        ? `Saved ${result.completedIds.length} tracks; ${result.failedIds.length} couldn't download.`
+        : `“${fullPlaylist.name}” is ready offline.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Couldn't start the playlist download.");
+    } finally {
+      setDownloadBusy(false);
+    }
+  };
+
+  const resumeDownloadBatch = async () => {
+    if (downloadBusy) return;
+    setDownloadBusy(true);
+    try {
+      setDownloadJob(await resumePlaylistDownload());
+      await refreshDownloads();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Couldn't resume the playlist download.");
+    } finally {
+      setDownloadBusy(false);
+    }
+  };
+
+  const retryFailedDownloads = async () => {
+    if (downloadBusy) return;
+    setDownloadBusy(true);
+    try {
+      setDownloadJob(await retryFailedPlaylistDownloads());
+      await refreshDownloads();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Couldn't retry failed downloads.");
+    } finally {
+      setDownloadBusy(false);
+    }
+  };
+
+  const stopDownloadBatch = async () => {
+    if (downloadBusy) return;
+    setDownloadBusy(true);
+    try {
+      setDownloadJob(await cancelPlaylistDownload());
+      await refreshDownloads();
+      toast("Playlist download paused after the current track.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Couldn't cancel the playlist download.");
+    } finally {
+      setDownloadBusy(false);
+    }
+  };
+
+  const discardSavedBatch = () => {
+    try {
+      discardPlaylistDownloadJob();
+      setDownloadJob(null);
+      setDownloadProgress(null);
+      toast("Saved playlist batch removed; downloaded tracks were kept.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Couldn't discard the saved batch.");
+    }
+  };
 
   const onTracksReorder = (next: Track[]) => {
     const move = moveFromReorder(fullPlaylist.tracks, next);
@@ -1161,6 +1254,21 @@ function PlaylistScreen({ item }: { item: PlaylistItem }) {
   const tracks = fullPlaylist.tracks || [];
   const totalSec = tracks.reduce((sum, t) => sum + (t.durationSec ?? 0), 0);
   const albumMap = useAlbums(tracks);
+  const currentBatch = downloadProgress?.job ?? downloadJob;
+  const batchMatches = currentBatch?.playlist.id === fullPlaylist.id;
+  const anotherBatchPending = !!currentBatch && !batchMatches && (
+    currentBatch.failedIds.length > 0 ||
+    (currentBatch.status !== "completed" && currentBatch.currentIndex < currentBatch.tracks.length)
+  );
+  const batchRunning = batchMatches && (currentBatch.status === "running" || currentBatch.status === "cancelling");
+  const matchingBatchPending = !!currentBatch && batchMatches && (
+    currentBatch.failedIds.length > 0 ||
+    (currentBatch.status !== "completed" && currentBatch.currentIndex < currentBatch.tracks.length)
+  );
+  const batchPct = batchMatches && currentBatch && currentBatch.tracks.length > 0
+    ? Math.round(Math.min(1, ((downloadProgress?.processed ?? (currentBatch.completedIds.length + currentBatch.failedIds.length))
+      + (downloadProgress?.activeFraction ?? 0)) / currentBatch.tracks.length) * 100)
+    : 0;
 
   return (
     <div style={{ flex: 1, overflowY: "auto", scrollbarWidth: "none", paddingBottom: 32 }}>
@@ -1203,6 +1311,12 @@ function PlaylistScreen({ item }: { item: PlaylistItem }) {
           <Shuffle size={16} /> Shuffle
         </button>
         <button
+          onClick={() => void startDownloadBatch()}
+          disabled={tracks.length === 0 || loading || downloadBusy || matchingBatchPending || anotherBatchPending}
+          style={{ display: "flex", alignItems: "center", gap: 8, height: 44, padding: "0 18px", borderRadius: 22, background: C.surf, border: `1px solid ${C.border}`, color: C.text, fontWeight: 700, fontSize: 14, cursor: tracks.length > 0 && !loading && !downloadBusy && !matchingBatchPending && !anotherBatchPending ? "pointer" : "not-allowed", opacity: tracks.length > 0 && !loading && !downloadBusy && !matchingBatchPending && !anotherBatchPending ? 1 : 0.55 }}>
+          <Download size={16} /> Download playlist
+        </button>
+        <button
           aria-label="Share playlist"
           onClick={async () => {
             try {
@@ -1218,6 +1332,53 @@ function PlaylistScreen({ item }: { item: PlaylistItem }) {
           <MoreHorizontal size={18} />
         </button>
       </div>
+
+      {(batchMatches && currentBatch || anotherBatchPending) && (
+        <div style={{ margin: "14px 28px 0", padding: "12px 14px", borderRadius: 12, border: `1px solid ${C.border}`, background: C.pane }}>
+          {anotherBatchPending ? (
+            <>
+              <div style={{ fontSize: 13, color: C.muted }}>
+                “{currentBatch?.playlist.title}” has a saved playlist batch. Resume it or discard its progress before starting another.
+              </div>
+              <div style={{ display: "flex", gap: 14, marginTop: 8 }}>
+                {(currentBatch?.status === "running" || currentBatch?.status === "cancelling")
+                  ? <button onClick={() => void stopDownloadBatch()} disabled={downloadBusy} style={{ padding: 0, border: 0, background: "none", color: C.muted, font: "inherit", fontSize: 12, cursor: "pointer" }}>Cancel batch</button>
+                  : currentBatch && currentBatch.currentIndex < currentBatch.tracks.length
+                    ? <button onClick={() => void resumeDownloadBatch()} disabled={downloadBusy} style={{ padding: 0, border: 0, background: "none", color: C.accent, font: "inherit", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Resume batch</button>
+                    : null}
+                {currentBatch && currentBatch.failedIds.length > 0 && <button onClick={() => void retryFailedDownloads()} disabled={downloadBusy} style={{ padding: 0, border: 0, background: "none", color: C.accent, font: "inherit", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Retry failed</button>}
+                {currentBatch?.status !== "running" && currentBatch?.status !== "cancelling" && <button onClick={discardSavedBatch} style={{ padding: 0, border: 0, background: "none", color: C.muted, font: "inherit", fontSize: 12, cursor: "pointer" }}>Discard saved batch</button>}
+              </div>
+            </>
+          ) : batchMatches && currentBatch ? (
+            <>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>
+                  {batchRunning ? `Downloading ${downloadProgress?.activeIndex != null ? `${downloadProgress.activeIndex + 1} of ${currentBatch.tracks.length}` : "playlist"}`
+                    : currentBatch.status === "completed" ? (currentBatch.failedIds.length > 0 ? "Playlist download finished with errors" : "Playlist download complete")
+                    : currentBatch.status === "cancelled" || currentBatch.status === "paused" ? "Playlist download paused" : "Playlist download"}
+                </div>
+                <div style={{ fontSize: 12, color: C.muted, flexShrink: 0 }}>
+                  {downloadProgress?.completed ?? currentBatch.completedIds.length}/{currentBatch.tracks.length} saved
+                  {currentBatch.failedIds.length > 0 ? ` · ${currentBatch.failedIds.length} failed` : ""}
+                </div>
+              </div>
+              <div aria-label="Playlist download progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={batchPct}
+                style={{ height: 5, borderRadius: 999, background: C.surf, overflow: "hidden", marginTop: 9 }}>
+                <div style={{ width: `${batchPct}%`, height: "100%", borderRadius: 999, background: C.accent, transition: "width .2s ease" }} />
+              </div>
+              <div style={{ display: "flex", gap: 14, marginTop: 8 }}>
+                {batchRunning && <button onClick={() => void stopDownloadBatch()} disabled={downloadBusy} style={{ padding: 0, border: 0, background: "none", color: C.muted, font: "inherit", fontSize: 12, cursor: "pointer" }}>Cancel batch</button>}
+                {!batchRunning && currentBatch.currentIndex < currentBatch.tracks.length && currentBatch.status !== "completed" && (
+                  <button onClick={() => void resumeDownloadBatch()} disabled={downloadBusy} style={{ padding: 0, border: 0, background: "none", color: C.accent, font: "inherit", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Resume</button>
+                )}
+                {currentBatch.failedIds.length > 0 && <button onClick={() => void retryFailedDownloads()} disabled={downloadBusy} style={{ padding: 0, border: 0, background: "none", color: C.accent, font: "inherit", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Retry failed</button>}
+                {!batchRunning && currentBatch.status !== "completed" && <button onClick={discardSavedBatch} style={{ padding: 0, border: 0, background: "none", color: C.muted, font: "inherit", fontSize: 12, cursor: "pointer" }}>Discard batch</button>}
+              </div>
+            </>
+          ) : null}
+        </div>
+      )}
 
       <div style={{ padding: "16px 28px 0" }}>
         {loading
@@ -3081,6 +3242,30 @@ export default function App() {
   /** Item ids dismissed via “Not interested” (also POSTed to the BFF). */
   const [hiddenIds, setHiddenIds] = useState<Record<string, boolean>>({});
 
+  // Warm a few direct audio URLs from the cached Home feed in the background.
+  // This resolves lightweight source metadata only; it never downloads audio
+  // or starts playback. A tap on one of these rows can then start immediately.
+  useEffect(() => {
+    if (!isNativeApp() || shelves.length === 0) return;
+    const ids = [...new Set(shelves.flatMap(shelf => shelf.items)
+      .map(item => String(item.videoId ?? item.id ?? ""))
+      .filter(id => /^[A-Za-z0-9_-]{10,16}$/.test(id)))].slice(0, 3);
+    if (ids.length === 0) return;
+    let cancelled = false;
+    let cursor = 0;
+    const timer = window.setTimeout(() => {
+      const worker = async () => {
+        while (!cancelled) {
+          const id = ids[cursor++];
+          if (!id) return;
+          await resolveOnDevice(id).catch(() => null);
+        }
+      };
+      void Promise.all(Array.from({ length: Math.min(2, ids.length) }, worker));
+    }, 450);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [shelves]);
+
   // ── Output devices (“Playing on”) ─────────────────────────────────────────────
   const [outputDevice, setOutputDevice] = useState<OutputDevice>(() => getActiveOutput());
   const [devices, setDevices] = useState<OutputDevice[]>([]);
@@ -3485,12 +3670,15 @@ export default function App() {
   }, []);
 
   // ── Playback engines ─────────────────────────────────────────────────────────
-  /** Report only failures from the active YouTube engine and move past dead tracks. */
+  /** Report active YouTube-engine failures; keep the selected track for retry. */
   const handleEngineFailure = useCallback((failure: PlaybackFailure) => {
     if (audioRef.current !== ytEngineRef.current) return;
+    audioRef.current?.pause();
+    audioRef.current = null;
     setIsPlaying(false);
-    toast(describePlaybackFailure(failure));
-    if (failure.kind === "track") handleTrackEndRef.current(true);
+    toast(failure.kind === "track"
+      ? `${describePlaybackFailure(failure)} Tap Play to retry.`
+      : describePlaybackFailure(failure));
   }, []);
 
   /**
@@ -3507,13 +3695,18 @@ export default function App() {
 
     const fail = (failure: PlaybackFailure) => {
       if (playSessionRef.current !== session) return;
-      setIsPlaying(false);
-      toast(describePlaybackFailure(failure));
-      if (failure.kind === "track") {
-        window.setTimeout(() => {
-          if (playSessionRef.current === session) handleTrackEndRef.current(true);
-        }, 0);
+      const active = audioRef.current;
+      if (active instanceof NativeAudioEngine) {
+        active.pause();
+        active.detach();
+      } else {
+        active?.pause();
       }
+      audioRef.current = null;
+      setIsPlaying(false);
+      toast(failure.kind === "track"
+        ? `${describePlaybackFailure(failure)} Tap Play to retry.`
+        : describePlaybackFailure(failure));
     };
 
     const startYouTube = async (videoId: string) => {
@@ -3541,6 +3734,7 @@ export default function App() {
     const previous = audioRef.current;
     previous?.pause();
     if (previous instanceof NativeAudioEngine) previous.detach();
+    audioRef.current = null;
 
     void (async () => {
       const native = isNativeApp();
@@ -3580,7 +3774,7 @@ export default function App() {
         // Resolve the device-direct URL in parallel; never wait for it before
         // starting the already-known BFF/track URL.
         const deviceSource = sourceId
-          ? resolveQuickly(resolveOnDevice(sourceId), 6_500, null)
+          ? resolveQuickly(resolveOnDevice(sourceId), 9_000, null)
           : Promise.resolve(null);
         let nativeBridgeUnavailable = false;
         let lastError: unknown;
@@ -3631,7 +3825,7 @@ export default function App() {
           } catch (error) {
             lastError = error;
             if (engine) {
-              engine.pause();
+              if (playSessionRef.current === session) engine.pause();
               engine.detach();
               if (audioRef.current === engine) audioRef.current = null;
             }
@@ -3642,17 +3836,18 @@ export default function App() {
           }
         };
 
-        // Attempt one local source (if any) and one immediately available
-        // remote URL. Do not serially try a long list of dead endpoints.
-        const nativeCandidates = [...new Set([localUrl, remoteUrl].filter((value): value is string => !!value))];
-        for (const candidate of nativeCandidates) {
-          if (await tryNative(candidate, candidate === localUrl ? 4_500 : 5_500)) return;
-          if (nativeBridgeUnavailable) break;
-        }
-        if (!nativeBridgeUnavailable && sourceId) {
-          const direct = await resolveQuickly(deviceSource, 1_500, null);
-          if (direct?.url && !attempted.has(direct.url) && await tryNative(direct.url, 6_000)) return;
-        }
+        // A local file is the fastest path. For streams, prefer the phone's
+        // direct URL when it is already cached or resolves quickly; the BFF's
+        // cold /api/audio route can spend up to 15s resolving a source, so a
+        // 5.5s client deadline guarantees false failures on cold starts.
+        if (localUrl && await tryNative(localUrl, 9_000)) return;
+        const direct = sourceId ? await resolveQuickly(deviceSource, 1_800, null) : null;
+        if (direct?.url && await tryNative(direct.url, 9_000)) return;
+        if (remoteUrl && !attempted.has(remoteUrl) && await tryNative(remoteUrl, 20_000)) return;
+        // The on-device resolver may finish while the BFF attempt is running.
+        // Give that in-flight lookup one final bounded chance before reporting.
+        const lateDirect = sourceId ? await resolveQuickly(deviceSource, 1_200, null) : null;
+        if (lateDirect?.url && !attempted.has(lateDirect.url) && await tryNative(lateDirect.url, 9_000)) return;
         if (nativeBridgeUnavailable) {
           // Keep older already-installed APKs usable during the rollout; new
           // APKs always take the foreground-service path above.
