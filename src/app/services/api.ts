@@ -218,6 +218,27 @@ export function getDownloadUrl(videoId: string): string {
   return BFF_BASE ? `${BFF_BASE}/api/audio/${id}?proxy=1` : `${API_BASE}/api/v1/tracks/download/${id}`;
 }
 
+export interface DownloadDescriptor {
+  download_url: string;
+  filename?: string;
+}
+
+/** Gets the backend's download descriptor, rather than buffering audio in JS. */
+export async function getDownloadDescriptor(videoId: string): Promise<DownloadDescriptor | null> {
+  const id = encodeURIComponent(String(videoId));
+  try {
+    const response = await fetch(`${API_BASE}/api/v1/tracks/download/${id}`, {
+      headers: { Accept: "application/json" },
+    });
+    if (!response.ok) return null;
+    const data = (await response.json()) as Partial<DownloadDescriptor>;
+    if (typeof data.download_url !== "string" || !data.download_url.trim()) return null;
+    return { download_url: data.download_url, filename: data.filename };
+  } catch {
+    return null;
+  }
+}
+
 // ─── LRC parsing ──────────────────────────────────────────────────────────────
 
 export function parseLrc(lrc: string): LyricLine[] {

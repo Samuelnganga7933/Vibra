@@ -2,9 +2,8 @@
  * localAudio — downloaded-track storage and lookup.
  *
  * Native: a real file under Downloads/Vybra (visible in the phone's Files app),
- * streamed into <audio> through a MediaStore content URI. Web: an
- * IndexedDB blob (the BFF proxies googlevideo because it sets no CORS header
- * for our origin).
+ * streamed into <audio> through a MediaStore content URI. Web: a native
+ * browser file download from the backend's returned download URL.
  *
  * Every call is failure-tolerant: blocked storage, a deleted file or a cold
  * database degrades to "no local copy" and the caller falls through to
@@ -13,7 +12,8 @@
  */
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import { Directory, Filesystem } from "@capacitor/filesystem";
-import { getDownloadUrl } from "./api";
+import { API_BASE, getDownloadDescriptor, getDownloadUrl } from "./api";
+import { BFF_BASE } from "./bff";
 import { isNativePlatform, resolveOnDevice } from "./deviceAudio";
 import {
   addOfflineTrack,
@@ -112,6 +112,16 @@ function sanitizeFileName(raw: string): string {
   return (clean || "track").slice(0, 80);
 }
 
+function absoluteDownloadUrl(raw: string): string {
+  try {
+    // The catalogue returns /api/audio/...; that route belongs to the BFF,
+    // not the catalogue host that returned the descriptor.
+    return new URL(raw, BFF_BASE || API_BASE).href;
+  } catch {
+    return raw;
+  }
+}
+
 function toMeta(track: DownloadableTrack): OfflineTrack {
   return {
     id: track.id,
@@ -165,7 +175,12 @@ async function saveNative(
   const sources: string[] = [];
   const resolved = await resolveOnDevice(videoId);
   if (resolved?.url) sources.push(resolved.url);
-  if (videoId.length > 0 && videoId.length <= 20) sources.push(getDownloadUrl(videoId));
+  if (videoId.length > 0 && videoId.length <= 20) {
+    const descriptor = await getDownloadDescriptor(videoId);
+    if (descriptor?.download_url) sources.push(absoluteDownloadUrl(descriptor.download_url));
+    // Compatibility fallback for older catalogue deployments.
+    if (!descriptor) sources.push(getDownloadUrl(videoId));
+  }
   if (sources.length === 0) return "failed";
 
   const fileName = `${sanitizeFileName(`${track.artist} - ${track.title}`)}.m4a`;
@@ -245,68 +260,25 @@ async function saveWeb(
   id: string,
   onProgress?: (fraction: number | null) => void,
 ): Promise<SaveOutcome> {
-  // Stall watchdog (not a total cap): abort only when NO byte arrives for
-  // 60s. A slow-but-flowing BFF proxy download is allowed to finish; an
-  // interrupted stream dies within a minute instead of spinning forever.
-  // Credentials ride along so a cookie-gated proxy keeps working too.
-  const controller = new AbortController();
-  let watchdog = setTimeout(() => controller.abort(), 60_000);
-  const poke = () => {
-    clearTimeout(watchdog);
-    watchdog = setTimeout(() => controller.abort(), 60_000);
-  };
+  // Desktop downloads must be real browser downloads. Buffering a multi-MB
+  // audio file into fetch/IndexedDB was slow, quota-sensitive, and produced
+  // truncated files when the proxy returned a ranged response.
   try {
-    // Do not send a Range header here. The BFF intentionally caps ranged
-    // responses at 64 KiB, which would make IndexedDB store a truncated file.
-    // A normal GET returns the complete audio object and still streams chunks
-    // through the reader below for progress updates.
     const sourceId = (track.videoId ?? id).trim();
-    const response = await fetch(getDownloadUrl(sourceId), {
-      signal: controller.signal,
-      credentials: "include",
-    });
-    const type = (response.headers.get("content-type") ?? "").toLowerCase();
-    if (!response.ok || type.startsWith("application/json") || type.startsWith("text/")) {
-      return "failed";
-    }
-    const total = Number(response.headers.get("content-length")) || 0;
-    // Stream the body so in-flight rows can show real percentages (a whole
-    // response.blob() only ever reports 0% then 100%) — and so the watchdog
-    // can be reset on every chunk.
-    let blob: Blob;
-    const reader = response.body?.getReader?.();
-    if (reader) {
-      const chunks: BlobPart[] = [];
-      let received = 0;
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (!value) continue;
-        poke();
-        chunks.push(value);
-        received += value.length;
-        if (total > 0 && onProgress) onProgress(Math.min(1, received / total));
-      }
-      blob = new Blob(chunks, { type: type || "audio/mp4" });
-    } else {
-      blob = await response.blob();
-      poke();
-    }
-    if (blob.size < 20_000) return "failed";
-    const stored = await idbRun<IDBValidKey>("readwrite", store => store.put({ id, blob }));
-    if (stored === null) return "failed";
-    // The web path owns its own metadata write — a shared putMeta in
-    // saveDownload used to run after saveNative too, wiping the filePath
-    // that native local playback depends on.
-    const meta = toMeta(track);
-    meta.sizeBytes = blob.size;
-    putMeta(meta);
+    const descriptor = await getDownloadDescriptor(sourceId);
+    if (!descriptor?.download_url) return "failed";
+    const a = document.createElement("a");
+    a.href = absoluteDownloadUrl(descriptor.download_url);
+    a.download = `${sanitizeFileName(`${track.artist} - ${track.title}`)}.m4a`;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    onProgress?.(0);
+    a.click();
+    a.remove();
     onProgress?.(1);
     return "saved";
   } catch {
     return "failed";
-  } finally {
-    clearTimeout(watchdog); // no orphaned abort timers after success/failure
   }
 }
 

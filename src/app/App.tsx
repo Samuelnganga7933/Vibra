@@ -4137,7 +4137,7 @@ export default function App() {
       setActiveDownloads(list => list.filter(d => d.id !== id));
     }
     if (outcome === "failed") {
-      toast.error("Couldn't download — check your connection and try again", { duration: 4000 });
+      toast.error("Download unavailable — the audio stream could not be prepared", { duration: 4000 });
     } else if (outcome === "saved") {
       void refreshDownloads();
     }
