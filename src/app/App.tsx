@@ -3677,9 +3677,7 @@ export default function App() {
         window.clearTimeout(watchdog);
         a.pause();
         if (playSessionRef.current !== session) return;
-        if (native) {
-          fail({ kind: "track", message: "This track can't play in the current APK. Update the app and try again." });
-        } else if (sourceId) void startYouTube(sourceId);
+        if (sourceId) void startYouTube(sourceId);
         else fail({ kind: "track", message: "This track can't play right now." });
       };
       a.addEventListener("error", fallBackToYouTube);

@@ -88,32 +88,59 @@ let nativeReady = false;
 let nativeProbed = false;
 let nativeHandles: PluginListenerHandle[] = [];
 let released = false;
+let nativeBridgeUnavailable = false;
 
 const swallow = () => { /* plugin absent or call raced a release — fine */ };
+const nativeUnavailableError = () => Object.assign(
+  new Error("Native background player is unavailable in this APK"),
+  { __kind: "network" as const },
+);
+function normalizeNativeError(error: unknown): unknown {
+  const message = typeof error === "string"
+    ? error
+    : String((error as { message?: unknown } | null)?.message ?? error);
+  if (/plugin.*not implemented|method.*not implemented|not implemented.*android/i.test(message)) {
+    nativeBridgeUnavailable = true;
+    return nativeUnavailableError();
+  }
+  return error;
+}
 
 /** Start the service-owned Android player. Missing methods indicate an older APK. */
 export async function mediaStartAudio(opts: NativeAudioStartOptions): Promise<void> {
-  if (!isNativeApp() || typeof Native.startAudio !== "function") {
-    throw Object.assign(new Error("Native background player is unavailable in this APK"), { __kind: "network" as const });
+  if (!isNativeApp() || nativeBridgeUnavailable || typeof Native.startAudio !== "function") {
+    throw nativeUnavailableError();
   }
-  await Native.startAudio(opts);
+  try {
+    await Native.startAudio(opts);
+  } catch (error) {
+    throw normalizeNativeError(error);
+  }
 }
 
 export async function mediaControlAudio(
   action: "play" | "pause" | "seek" | "volume" | "stop",
   options: { positionSec?: number; volume?: number } = {},
 ): Promise<void> {
-  if (!isNativeApp() || typeof Native.controlAudio !== "function") {
-    throw Object.assign(new Error("Native audio controls are unavailable in this APK"), { __kind: "network" as const });
+  if (!isNativeApp() || nativeBridgeUnavailable || typeof Native.controlAudio !== "function") {
+    throw nativeUnavailableError();
   }
-  await Native.controlAudio({ action, ...options });
+  try {
+    await Native.controlAudio({ action, ...options });
+  } catch (error) {
+    throw normalizeNativeError(error);
+  }
 }
 
 export async function mediaGetAudioState(): Promise<NativeAudioState> {
-  if (!isNativeApp() || typeof Native.getAudioState !== "function") {
-    throw Object.assign(new Error("Native audio state is unavailable in this APK"), { __kind: "network" as const });
+  if (!isNativeApp() || nativeBridgeUnavailable || typeof Native.getAudioState !== "function") {
+    throw nativeUnavailableError();
   }
-  return Native.getAudioState();
+  try {
+    return await Native.getAudioState();
+  } catch (error) {
+    throw normalizeNativeError(error);
+  }
 }
 
 export function mediaOnAudioState(listener: AudioStateListener): () => void {
@@ -201,8 +228,9 @@ export function mediaInit(handlers: MediaHandlers): void {
       nativeHandles = handles;
       nativeReady = true;
     })
-    .catch(() => {
+    .catch(error => {
       // Old APK without the plugin — the WebView Media Session still works.
+      normalizeNativeError(error);
       nativeReady = false;
       installWebHandlers(handlers);
     });
@@ -216,9 +244,9 @@ export function mediaSetNowPlaying(np: MediaNowPlaying | null): void {
     // freezes the WebView renderer once the app is backgrounded and audio
     // dies. The call is fire-and-forget: an old APK without the plugin
     // rejects and we swallow it.
-    if (isNativeApp()) {
-      if (np) void Native.updateNowPlaying(np).catch(swallow);
-      else void Native.release().catch(swallow);
+    if (isNativeApp() && !nativeBridgeUnavailable) {
+      if (np) void Native.updateNowPlaying(np).catch(error => { normalizeNativeError(error); });
+      else if (nativeReady) void Native.release().catch(error => { normalizeNativeError(error); });
     }
     const ms = navigator.mediaSession;
     if (!ms) return;
@@ -245,8 +273,8 @@ export function mediaSetState(st: MediaState, durationSec: number): void {
   try {
     // Same as mediaSetNowPlaying: reach the service unconditionally on native
     // so the foreground-service promotion happens on the first play tick.
-    if (isNativeApp()) {
-      void Native.setPlaybackState({ ...st, durationSec }).catch(swallow);
+    if (isNativeApp() && !nativeBridgeUnavailable) {
+      void Native.setPlaybackState({ ...st, durationSec }).catch(error => { normalizeNativeError(error); });
     }
     const ms = navigator.mediaSession;
     if (!ms) return;
@@ -266,20 +294,22 @@ export function mediaSetState(st: MediaState, durationSec: number): void {
 
 /** Android 13+: ask for notification permission once, before first play. */
 export function mediaRequestNotificationPermission(): void {
-  if (!isNativeApp()) return;
-  void Native.requestNotificationPermission().catch(swallow);
+  if (!isNativeApp() || nativeBridgeUnavailable) return;
+  void Native.requestNotificationPermission().catch(error => { normalizeNativeError(error); });
 }
 
 /** Current notification-permission state for the Settings row.
  *  Web and old APKs (no permission API) answer "unknown" — the row hides. */
 export async function mediaNotificationPermission(): Promise<"granted" | "denied" | "prompt" | "unknown"> {
-  if (!isNativeApp()) return "unknown";
+  if (!isNativeApp() || nativeBridgeUnavailable) return "unknown";
   try {
     const res = await Native.checkPermissions();
     const s = res?.notifications;
     if (s === "granted" || s === "denied" || s === "prompt") return s;
     return "unknown";
-  } catch {
+  } catch (error) {
+    // The permission API may not exist in an APK predating this plugin.
+    normalizeNativeError(error);
     return "unknown"; // plugin predates the permissions API
   }
 }
@@ -290,8 +320,9 @@ export async function mediaNotificationPermission(): Promise<"granted" | "denied
  * when a track is playing — a silent app still exits for real.
  */
 export function mediaMinimize(): void {
+  if (nativeBridgeUnavailable) return;
   try {
-    void Native.minimizeApp().catch(swallow);
+    void Native.minimizeApp().catch(error => { normalizeNativeError(error); });
   } catch { /* nothing to minimize (web) */ }
 }
 
@@ -300,7 +331,7 @@ export function mediaRelease(): void {
   if (released) return;
   released = true;
   try {
-    if (nativeReady) void Native.release().catch(swallow);
+    if (nativeReady && !nativeBridgeUnavailable) void Native.release().catch(error => { normalizeNativeError(error); });
     nativeHandles.forEach(h => { void h.remove().catch(swallow); });
     nativeHandles = [];
     nativeReady = false;
