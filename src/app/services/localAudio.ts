@@ -12,7 +12,7 @@
  */
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import { Directory, Filesystem } from "@capacitor/filesystem";
-import { API_BASE, getDownloadDescriptor, getDownloadUrl } from "./api";
+import { API_BASE, getDownloadDescriptor, getDownloadUrl, searchTracks } from "./api";
 import { BFF_BASE } from "./bff";
 import { isNativePlatform, resolveOnDevice } from "./deviceAudio";
 import {
@@ -122,6 +122,20 @@ function absoluteDownloadUrl(raw: string): string {
   }
 }
 
+function looksLikeVideoId(value: string | undefined): boolean {
+  return !!value && /^[A-Za-z0-9_-]{10,16}$/.test(value);
+}
+
+async function resolveDownloadVideoId(track: DownloadableTrack, id: string): Promise<string | null> {
+  const direct = track.videoId?.trim() || id.trim();
+  if (looksLikeVideoId(direct)) return direct;
+  const query = `${track.title} ${track.artist}`.trim();
+  if (!query) return null;
+  const hits = await searchTracks(query, 5);
+  const hit = hits.find(item => looksLikeVideoId(item.videoId ?? item.id));
+  return hit?.videoId ?? (hit && looksLikeVideoId(hit.id) ? hit.id : null);
+}
+
 /**
  * Resolve the phone-direct and backend download sources concurrently. Yield
  * each source as soon as it is ready so a slow resolver cannot hold up the
@@ -151,13 +165,11 @@ function streamCandidates(videoId: string): AsyncIterable<string> {
         });
       };
 
+      // The proxy URL is usable immediately; do not wait for descriptor JSON.
+      start(Promise.resolve(getDownloadUrl(videoId)));
       start(resolveOnDevice(videoId).then(result => result?.url ?? null));
       if (videoId.length > 0 && videoId.length <= 20) {
-        start(getDownloadDescriptor(videoId).then(descriptor =>
-          descriptor?.download_url
-            ? absoluteDownloadUrl(descriptor.download_url)
-            : getDownloadUrl(videoId),
-        ));
+        start(getDownloadDescriptor(videoId).then(descriptor => descriptor?.download_url ? absoluteDownloadUrl(descriptor.download_url) : null));
       }
 
       return (async function* () {
@@ -226,7 +238,7 @@ async function saveNative(
   id: string,
   onProgress?: (fraction: number | null) => void,
 ): Promise<SaveOutcome> {
-  const videoId = (track.videoId ?? id).trim();
+  const videoId = await resolveDownloadVideoId(track, id);
   if (!videoId) return "failed";
 
   const fileName = `${sanitizeFileName(`${track.artist} - ${track.title}`)}.m4a`;
@@ -312,11 +324,12 @@ async function saveWeb(
   // audio file into fetch/IndexedDB was slow, quota-sensitive, and produced
   // truncated files when the proxy returned a ranged response.
   try {
-    const sourceId = (track.videoId ?? id).trim();
+    const sourceId = await resolveDownloadVideoId(track, id);
+    if (!sourceId) return "failed";
     const descriptor = await getDownloadDescriptor(sourceId);
-    if (!descriptor?.download_url) return "failed";
+    const downloadUrl = descriptor?.download_url ? absoluteDownloadUrl(descriptor.download_url) : getDownloadUrl(sourceId);
     const a = document.createElement("a");
-    a.href = absoluteDownloadUrl(descriptor.download_url);
+    a.href = downloadUrl;
     a.download = `${sanitizeFileName(`${track.artist} - ${track.title}`)}.m4a`;
     a.rel = "noopener";
     document.body.appendChild(a);

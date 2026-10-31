@@ -227,7 +227,7 @@ export interface DownloadDescriptor {
 export async function getDownloadDescriptor(videoId: string): Promise<DownloadDescriptor | null> {
   const id = encodeURIComponent(String(videoId));
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 5_000);
+  const timeout = window.setTimeout(() => controller.abort(), 15_000);
   try {
     const response = await fetch(`${API_BASE}/api/v1/tracks/download/${id}`, {
       headers: { Accept: "application/json" },

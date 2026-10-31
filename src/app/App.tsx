@@ -3645,7 +3645,7 @@ export default function App() {
             });
             if (playSessionRef.current !== session) { engine.detach(); return false; }
             audioRef.current = engine;
-            await engine.load({
+            const loading = engine.load({
               url,
               title: t.title,
               artist: t.artist,
@@ -3655,6 +3655,19 @@ export default function App() {
               positionSec: resumeAt,
               volume,
             }, timeoutMs);
+            // A timeout only means this candidate is slow. Hand off to the
+            // next candidate/YouTube without converting it into a track error.
+            void loading.catch(() => {});
+            const ready = await Promise.race([
+              loading.then(() => true),
+              new Promise<boolean>(resolve => window.setTimeout(() => resolve(false), timeoutMs)),
+            ]);
+            if (!ready) {
+              engine.pause();
+              engine.detach();
+              if (audioRef.current === engine) audioRef.current = null;
+              return false;
+            }
             if (playSessionRef.current !== session) { engine.pause(); engine.detach(); return false; }
             setIsPlaying(true);
             void refreshOutput();
@@ -3691,8 +3704,16 @@ export default function App() {
         if (nativeBridgeUnavailable) {
           // Keep older already-installed APKs usable during the rollout; new
           // APKs always take the foreground-service path above.
+        } else if (sourceId) {
+          // Some tracks reject one googlevideo/BFF URL while the embedded
+          // YouTube engine can still play the same source. Try that engine
+          // before telling the listener the song is unavailable.
+          await startYouTube(sourceId);
+          return;
         } else {
-          fail(failureFromError(lastError ?? { kind: "track", message: "This track took too long to start." }));
+          // A genuine native failure with no alternate source is reported, but
+          // never advances the queue automatically.
+          fail(failureFromError(lastError ?? { kind: "track", message: "This track can't play right now." }));
           return;
         }
       }

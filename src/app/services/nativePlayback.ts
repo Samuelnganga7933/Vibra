@@ -24,7 +24,7 @@ export class NativeAudioEngine implements PlaybackHandle {
   private volumeField = 1;
   private playing = false;
   private ended = false;
-  private pendingStart: { resolve: () => void; reject: (error: unknown) => void; timer: number } | null = null;
+  private pendingStart: { resolve: () => void; reject: (error: unknown) => void; timer?: number } | null = null;
   private detachState: (() => void) | null = null;
   private detachError: (() => void) | null = null;
   private detachEnded: (() => void) | null = null;
@@ -78,11 +78,13 @@ export class NativeAudioEngine implements PlaybackHandle {
     this.clearPendingStart(Object.assign(new Error("Playback start superseded"), { __kind: "blocked" as const }));
 
     const started = new Promise<void>((resolve, reject) => {
-      const timer = window.setTimeout(() => {
-        this.pendingStart = null;
-        reject(Object.assign(new Error("This track took too long to start."), { __kind: "track" as const }));
-      }, timeoutMs);
-      this.pendingStart = { resolve, reject, timer };
+      // Startup is intentionally unbounded here. ExoPlayer can be waiting on
+      // a slow resolver or a cold foreground service; that is not a dead track
+      // and must never be converted into a queue skip/error. Real failures
+      // still reject through onPlayerError/onAudioError, and a new user action
+      // supersedes this pending start through clearPendingStart().
+      void timeoutMs;
+      this.pendingStart = { resolve, reject };
     });
     void started.catch(() => {});
 
@@ -143,7 +145,7 @@ export class NativeAudioEngine implements PlaybackHandle {
     if (state.playing) {
       const pending = this.pendingStart;
       if (pending) {
-        window.clearTimeout(pending.timer);
+        if (pending.timer !== undefined) window.clearTimeout(pending.timer);
         this.pendingStart = null;
         pending.resolve();
       }
@@ -164,7 +166,7 @@ export class NativeAudioEngine implements PlaybackHandle {
     const failure: PlaybackFailure = { kind: "track", message: message || "This track can't play right now." };
     const pending = this.pendingStart;
     if (pending) {
-      window.clearTimeout(pending.timer);
+      if (pending.timer !== undefined) window.clearTimeout(pending.timer);
       this.pendingStart = null;
       pending.reject(Object.assign(new Error(failure.message), { __kind: "track" as const }));
       return;
@@ -176,7 +178,7 @@ export class NativeAudioEngine implements PlaybackHandle {
     if (!this.pendingStart) return;
     const pending = this.pendingStart;
     this.pendingStart = null;
-    window.clearTimeout(pending.timer);
+    if (pending.timer !== undefined) window.clearTimeout(pending.timer);
     if (error !== undefined) pending.reject(error);
   }
 }

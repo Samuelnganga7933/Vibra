@@ -80,7 +80,9 @@
     padding: 4px 16px 8px !important;
     overflow-y: auto;
   }
-  .player-page-art { width: min(38vh, 100%) !important; }
+  /* The reference player gives artwork the visual priority of a Now Playing
+     screen: roughly half the phone height, with transport below it. */
+  .player-page-art { width: min(52vh, 100%) !important; max-width: 360px !important; }
   .player-page-transport { display: flex; }
   .player-page-foot { display: flex; }
   .player-page-ctx-lyrics { display: none; }
