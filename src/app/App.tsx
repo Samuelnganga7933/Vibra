@@ -70,6 +70,7 @@ import { exchangeNeonSession, signOutNeon, clearOAuthQueryParams, hasOAuthVerifi
 import { resolveOnDevice } from "./services/deviceAudio";
 import { getLocalAudioUrl, getNativeLocalAudioUri, hasDownload, removeDownload, saveDownload } from "./services/localAudio";
 import { localSongUrl } from "./services/localMusic";
+import { prefetchStreams } from "./services/streamPrefetch";
 import { markBundleReady, checkForOtaUpdates, reloadIntoLatestBundle, isNativeApp } from "./services/ota";
 import { trackSharePayload, parseShareUrl } from "./services/share";
 import {
@@ -741,7 +742,11 @@ function SearchScreen({ seed }: { seed?: string }) {
       // Music-only + variant dedupe: the engine returns slowed/cover dups.
       const tracks = await searchTracks(query, 20);
       if (tracks.length > 0) {
-        setResults(sanitizeMusicItems(tracks.map((t, i) => fromApiTrack(t, i))));
+        const mapped = sanitizeMusicItems(tracks.map((t, i) => fromApiTrack(t, i)));
+        setResults(mapped);
+        // Search is the strongest playback intent: warm the first visible rows
+        // while the listener is deciding which result to open.
+        prefetchStreams(mapped, 6);
         setSearching(false);
         pushRecentSearch(query);
         sendEvent({ type: "search" });
@@ -3101,6 +3106,9 @@ export default function App() {
           setShelves(s);
           hasShelvesRef.current = true;
           writeCachedShelves(s);
+          // Feed cards are likely next-play candidates. Warm only the first
+          // visible item from each shelf so this never becomes a bulk download.
+          prefetchStreams(s.flatMap(shelf => shelf.items.slice(0, 1).map(toTrackItem)), 6);
           if (s.some(x => shelfRank(x) === 1)) {
             homeRetryRef.current = 0;
             return;
@@ -3380,6 +3388,9 @@ export default function App() {
               year: String(new Date().getFullYear()), bg: t.bg, imageUrl: t.imageUrl, trackCount: 1,
             })));
           }
+          // Discovery shelves should already have a resolved audio source when
+          // the user reaches for a play button.
+          prefetchStreams(all, 8);
         }
         // Trending (and with it the featured hero) has its answer now — show
         // it while the new-releases shelf is still being fetched.
@@ -3550,17 +3561,15 @@ export default function App() {
 
       // Local files bypass all network resolution. Media3 receives the raw
       // content/file URI, not the WebView-only https://localhost bridge URL.
-      if (t.localPath) localUrl = native ? t.localPath : localSongUrl(t.localPath);
-      else if (native) {
-        localUrl = await resolveQuickly(getNativeLocalAudioUri(String(t.id)), 1_200, null);
-      } else {
-        localUrl = await resolveQuickly(getLocalAudioUrl(String(t.id)), 1_000, null);
-      }
-      if (playSessionRef.current !== session) return;
+      const localPromise: Promise<string | null> = t.localPath
+        ? Promise.resolve(native ? t.localPath : localSongUrl(t.localPath))
+        : native
+          ? resolveQuickly(getNativeLocalAudioUri(String(t.id)), 1_200, null)
+          : resolveQuickly(getLocalAudioUrl(String(t.id)), 1_000, null);
 
       // Old saved rows may not have a video ID. Recover once, but never let the
       // catalogue search hold up a URL that is already playable.
-      if (!looksPlayable(sourceId) && !localUrl && !t.streamUrl && !t.previewUrl && !playbackRecoveredRef.current.has(String(t.id))) {
+      if (!t.localPath && !looksPlayable(sourceId) && !t.streamUrl && !t.previewUrl && !playbackRecoveredRef.current.has(String(t.id))) {
         playbackRecoveredRef.current.add(String(t.id));
         const hits = await resolveQuickly(searchTracks(`${t.title} ${t.artist}`.trim(), 5), 4_500, []);
         if (playSessionRef.current !== session) return;
@@ -3570,6 +3579,10 @@ export default function App() {
 
       const bffUrl = sourceId ? getStreamUrl(sourceId) : undefined;
       const remoteUrl = t.streamUrl || t.previewUrl || bffUrl;
+      // A remote source is already playable from its known ID. Do not make
+      // every click wait for a local MediaStore lookup first.
+      localUrl = await (remoteUrl ? Promise.resolve(null) : localPromise);
+      if (playSessionRef.current !== session) return;
       const firstUrl = localUrl ?? remoteUrl;
       if (!firstUrl) {
         fail({ kind: "track", message: "This track can't play right now." });

@@ -13,6 +13,7 @@ import type { HomeShelf, HomeItem } from "../services/home";
 import { TrackCard } from "../components/ui/cards";
 import { CoverArt } from "../components/CoverArt";
 import { searchTracks } from "../services/api";
+import { prefetchStreams } from "../services/streamPrefetch";
 import { sanitizeMusicItems } from "../services/smartQueue";
 import { getRecentSearches, pushRecentSearch } from "../services/store";
 import { sendEvent } from "../services/events";
@@ -396,7 +397,9 @@ function MobileSearch({ seed }: { seed?: string }) {
     debounceRef.current = window.setTimeout(async () => {
       const tracks = await searchTracks(query, 20);
       if (tracks.length > 0) {
-        setResults(sanitizeMusicItems(tracks.map((t, i) => fromApiTrack(t, i))));
+        const mapped = sanitizeMusicItems(tracks.map((t, i) => fromApiTrack(t, i)));
+        setResults(mapped);
+        prefetchStreams(mapped, 6);
         setSearching(false);
         pushRecentSearch(query);
         sendEvent({ type: "search" });
