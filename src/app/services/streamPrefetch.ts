@@ -40,8 +40,9 @@ export function prefetchStream(videoId?: string, streamUrl?: string): void {
   pending.set(url, audio);
   audio.addEventListener("loadedmetadata", () => {
     warmed.set(url, Date.now());
-    pending.delete(url);
     window.setTimeout(() => {
+      if (!pending.has(url)) return;
+      pending.delete(url);
       audio.src = "";
       audio.load();
     }, CLEANUP_MS);
@@ -49,6 +50,18 @@ export function prefetchStream(videoId?: string, streamUrl?: string): void {
   audio.addEventListener("error", () => pending.delete(url), { once: true });
   audio.src = url;
   audio.load();
+}
+
+/** Claim a warmed element so playback can continue from its existing buffer. */
+export function takePrefetchedAudio(videoId?: string, streamUrl?: string): HTMLAudioElement | null {
+  const url = streamUrl || (validVideoId(videoId) ? getStreamUrl(videoId) : "");
+  if (!url) return null;
+  const audio = pending.get(url);
+  if (!audio) return null;
+  pending.delete(url);
+  warmed.set(url, Date.now());
+  audio.muted = false;
+  return audio;
 }
 
 export function prefetchStreams(tracks: Array<{ videoId?: string; streamUrl?: string }>, limit = 6): void {

@@ -11,6 +11,7 @@ import { ReorderList, ReorderRow, moveFromReorder } from "../reorder";
 import { LyricsPanel } from "./LyricsPanel";
 import { WaveformSeekBar } from "./WaveformSeekBar";
 import { removeDownload } from "../../services/localAudio";
+import { getPlayerScreensaverEnabled } from "../../services/playerPrefs";
 
 /** Green of the output-device chip — same semantic green as the Offline pills. */
 const DEVICE_GREEN = "#1ED760";
@@ -57,6 +58,26 @@ export function PlayerPage() {
   const [isCompact, setIsCompact] = useState(
     () => typeof window !== "undefined" && window.matchMedia("(max-width: 1199.98px)").matches,
   );
+  const [screensaverEnabled, setScreensaverEnabled] = useState(() => getPlayerScreensaverEnabled());
+  const [screensaver, setScreensaver] = useState(false);
+  const screensaverStartY = useRef<number | null>(null);
+  useEffect(() => {
+    const onPreference = (event: Event) => {
+      const enabled = Boolean((event as CustomEvent<boolean>).detail);
+      setScreensaverEnabled(enabled);
+      if (!enabled) setScreensaver(false);
+    };
+    window.addEventListener("vibra:player-screensaver", onPreference);
+    return () => window.removeEventListener("vibra:player-screensaver", onPreference);
+  }, []);
+  useEffect(() => {
+    if (!isCompact || !screensaverEnabled || !isPlaying || !currentTrack || mediaMode !== "song" || screensaver) {
+      setScreensaver(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setScreensaver(true), 30_000);
+    return () => window.clearTimeout(timer);
+  }, [isCompact, screensaverEnabled, isPlaying, currentTrack, mediaMode, screensaver]);
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 1199.98px)");
     const on = () => setIsCompact(mq.matches);
@@ -238,6 +259,36 @@ export function PlayerPage() {
       ))}
     </div>
   );
+
+  if (isCompact && screensaver && mediaMode === "song") {
+    return (
+      <div
+        role="button"
+        tabIndex={0}
+        aria-label="Album art screensaver. Tap to show player controls."
+        onClick={() => setScreensaver(false)}
+        onKeyDown={event => { if (event.key === "Enter" || event.key === " ") setScreensaver(false); }}
+        onPointerDown={event => { screensaverStartY.current = event.clientY; }}
+        onPointerUp={event => {
+          const start = screensaverStartY.current;
+          screensaverStartY.current = null;
+          if (start !== null && event.clientY - start > 90) closePlayer();
+        }}
+        style={{ position: "fixed", inset: 0, zIndex: 60, overflow: "hidden", background: "#050509", cursor: "pointer", paddingTop: "env(safe-area-inset-top, 0px)", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+      >
+        {currentTrack.imageUrl && (
+          <img src={currentTrack.imageUrl} alt="" aria-hidden
+            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "center", display: "block" }}
+            onError={event => { (event.currentTarget as HTMLImageElement).style.display = "none"; }} />
+        )}
+        <div aria-hidden style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(0,0,0,.18), rgba(0,0,0,.12) 45%, rgba(0,0,0,.76) 100%)" }} />
+        <div style={{ position: "absolute", left: 24, right: 24, bottom: 34, color: "#fff" }}>
+          <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentTrack.title}</div>
+          <div style={{ marginTop: 4, fontSize: 14, opacity: .78 }}>{currentTrack.artist}</div>
+        </div>
+      </div>
+    );
+  }
 
   /* ── Compact lyrics: full-bleed scroller + floating transport card ───────── */
   if (isCompact && mediaMode === "lyrics") {

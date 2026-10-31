@@ -70,7 +70,8 @@ import { exchangeNeonSession, signOutNeon, clearOAuthQueryParams, hasOAuthVerifi
 import { resolveOnDevice } from "./services/deviceAudio";
 import { getLocalAudioUrl, getNativeLocalAudioUri, hasDownload, removeDownload, saveDownload } from "./services/localAudio";
 import { localSongUrl } from "./services/localMusic";
-import { prefetchStreams } from "./services/streamPrefetch";
+import { prefetchStreams, takePrefetchedAudio } from "./services/streamPrefetch";
+import { getPlayerScreensaverEnabled, setPlayerScreensaverEnabled } from "./services/playerPrefs";
 import { markBundleReady, checkForOtaUpdates, reloadIntoLatestBundle, isNativeApp } from "./services/ota";
 import { trackSharePayload, parseShareUrl } from "./services/share";
 import {
@@ -1262,6 +1263,7 @@ function SettingsScreen() {
   // Live connection status (driven by the safeFetch connection store).
   const [conn, setConn] = useState<ConnectionStatus>(() => getConnectionStatus());
   const [cachedCount, setCachedCount] = useState(0);
+  const [playerScreensaver, setPlayerScreensaver] = useState(() => getPlayerScreensaverEnabled());
   useEffect(() => subscribeConnection(setConn), []);
   useEffect(() => { setCachedCount(readOfflineTracks().length); }, []);
   // Device labels need a user gesture — ask once when Settings opens.
@@ -1454,6 +1456,15 @@ function SettingsScreen() {
               ))}
             </div>
           </div>
+        </Section>
+
+        <Section title="Player">
+          <Row
+            label="Album-art screensaver"
+            sub="Show full-screen artwork while music plays; tap to reveal controls"
+            right={<Toggle value={playerScreensaver} onChange={value => { setPlayerScreensaver(value); setPlayerScreensaverEnabled(value); }} />}
+            last
+          />
         </Section>
 
         <Section title="Privacy">
@@ -2961,6 +2972,16 @@ export default function App() {
   useEffect(() => { queueRef.current = queue; }, [queue]);
   useEffect(() => { queueIdxRef.current = queueIdx; }, [queueIdx]);
 
+  // Keep the next few queue entries warm while the listener is hearing the
+  // current song. This is intentionally capped so background preparation never
+  // competes with the active stream.
+  useEffect(() => {
+    const upcoming = queueIdx >= 0
+      ? queue.slice(queueIdx + 1, queueIdx + 5)
+      : queue.slice(0, 4);
+    prefetchStreams(upcoming, 4);
+  }, [queue, queueIdx]);
+
   /** Write the current session (queue, index, playhead) to storage now. */
   const persistQueueSession = useCallback(() => {
     const q = queueRef.current;
@@ -3500,8 +3521,9 @@ export default function App() {
   const handleEngineFailure = useCallback((failure: PlaybackFailure) => {
     if (audioRef.current !== ytEngineRef.current) return;
     setIsPlaying(false);
-    toast(describePlaybackFailure(failure));
-    if (failure.kind === "track") handleTrackEndRef.current(true);
+    // Keep the selected track in place. Users can retry it explicitly instead
+    // of losing it because the fallback player resolved slowly.
+    toast.error(describePlaybackFailure(failure));
   }, []);
 
   /**
@@ -3519,12 +3541,12 @@ export default function App() {
     const fail = (failure: PlaybackFailure) => {
       if (playSessionRef.current !== session) return;
       setIsPlaying(false);
-      toast(describePlaybackFailure(failure));
-      if (failure.kind === "track") {
-        window.setTimeout(() => {
-          if (playSessionRef.current === session) handleTrackEndRef.current(true);
-        }, 0);
-      }
+      // A slow resolver is not a reason to skip the listener's requested song.
+      // Leave it selected and offer an explicit retry instead of silently
+      // mutating the queue and jumping to another track.
+      toast.error(describePlaybackFailure(failure), {
+        action: { label: "Retry", onClick: () => beginPlayback(t) },
+      });
     };
 
     const startYouTube = async (videoId: string) => {
@@ -3679,7 +3701,7 @@ export default function App() {
       // native ExoPlayer bridge. Android builds with the bridge never reach
       // this WebView-only path.
       const url = firstUrl;
-      const a = new Audio(url);
+      const a = takePrefetchedAudio(sourceId, t.streamUrl || t.previewUrl) ?? new Audio(url);
       a.volume = volume;
       let streamFailed = false;
       let everPlayed = false;
