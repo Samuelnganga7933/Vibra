@@ -37,7 +37,7 @@ export function PlayerPage() {
     isPlaying, togglePlay,
     lyrics, plainLyrics, lyricsLoading,
     playPrev, playNext, shuffleOn, toggleShuffle, repeatMode, cycleRepeat,
-    outputDevice,
+    outputDevice, devices, refreshDevices, selectOutput,
     downloadedTracks, downloadTrack, refreshDownloads, activeDownloads,
   } = useApp();
   /** Mobile footer's queue icon opens the TOP queue sheet (per the ask). */
@@ -63,6 +63,7 @@ export function PlayerPage() {
   );
   const [screensaverEnabled, setScreensaverEnabled] = useState(() => getPlayerScreensaverEnabled());
   const [screensaver, setScreensaver] = useState(false);
+  const [outputOpen, setOutputOpen] = useState(false);
   const screensaverStartY = useRef<number | null>(null);
   useEffect(() => {
     const onPreference = (event: Event) => {
@@ -526,18 +527,31 @@ export function PlayerPage() {
 
       {/* Footer — mobile only (hidden by index.css above the shell breakpoint):
           queue, output device, collapse. Sharing stays in track options. */}
-      <div className="player-page-foot">
+      <div className="player-page-foot" style={{ position: "relative" }}>
         <button onClick={() => setQueueOpen(v => !v)} aria-label="Queue" aria-pressed={queueOpen}
           style={{ width: 44, height: 44, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: queueOpen ? C.accent : C.muted, padding: 0 }}>
           <ListMusic size={21} />
         </button>
-        {/* Output device chip — only when a real device name is known */}
-        {outputDevice.label && (
-          <button onClick={closePlayer} aria-label={`Output: ${outputDevice.name}`}
-            style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 34, padding: "0 14px", borderRadius: 999, background: `color-mix(in srgb, ${DEVICE_GREEN} 14%, transparent)`, border: "none", cursor: "pointer", color: DEVICE_GREEN, fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", flexShrink: 0 }}>
-            <Headphones size={14} />
-            <span style={{ maxWidth: 110, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{outputDevice.name}</span>
-          </button>
+        {/* Output device chip + dropdown — available for streamed, downloaded,
+            and local tracks; source type must never remove this control. */}
+        <button onClick={() => { setOutputOpen(v => !v); refreshDevices(true); }} aria-label={`Output: ${outputDevice.name || "This device"}`} aria-expanded={outputOpen}
+          style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 34, padding: "0 12px", borderRadius: 999, background: `color-mix(in srgb, ${DEVICE_GREEN} 14%, transparent)`, border: "none", cursor: "pointer", color: DEVICE_GREEN, fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", flexShrink: 0 }}>
+          <Headphones size={14} />
+          <span style={{ maxWidth: 110, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{outputDevice.name || "This device"}</span>
+          <ChevronDown size={13} style={{ transform: outputOpen ? "rotate(180deg)" : undefined, transition: "transform .18s" }} />
+        </button>
+        {outputOpen && (
+          <div role="menu" aria-label="Audio output devices" style={{ position: "absolute", left: "50%", bottom: "calc(100% + 8px)", transform: "translateX(-50%)", minWidth: 210, maxWidth: "calc(100vw - 32px)", padding: 6, borderRadius: 14, background: C.pane, border: `1px solid ${C.border}`, boxShadow: "0 14px 40px rgba(0,0,0,.45)", zIndex: 70 }}>
+            {(devices.length > 0 ? devices : [outputDevice]).map(device => (
+              <button key={device.id} role="menuitem" onClick={() => { selectOutput(device.id); setOutputOpen(false); }}
+                style={{ width: "100%", display: "flex", alignItems: "center", gap: 9, padding: "9px 10px", border: "none", borderRadius: 9, background: device.id === outputDevice.id ? C.surf : "transparent", color: device.id === outputDevice.id ? DEVICE_GREEN : C.text, cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}>
+                <Headphones size={14} />
+                <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{device.name || "This device"}</span>
+                {device.id === outputDevice.id && <span style={{ fontSize: 11, color: C.muted }}>Active</span>}
+              </button>
+            ))}
+            <button onClick={() => refreshDevices(true)} style={{ width: "100%", marginTop: 3, padding: "7px 10px", border: "none", borderTop: `1px solid ${C.border}`, background: "transparent", color: C.muted, cursor: "pointer", fontFamily: "inherit", fontSize: 11.5 }}>Refresh devices</button>
+          </div>
         )}
         <button onClick={closePlayer} aria-label="Close full-screen player"
           style={{ width: 44, height: 44, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.muted, padding: 0 }}>

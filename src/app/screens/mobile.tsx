@@ -399,7 +399,7 @@ function MobileSearch({ seed }: { seed?: string }) {
       if (tracks.length > 0) {
         const mapped = sanitizeMusicItems(tracks.map((t, i) => fromApiTrack(t, i)));
         setResults(mapped);
-        prefetchStreams(mapped, 6);
+        prefetchStreams(mapped, mapped.length);
         setSearching(false);
         pushRecentSearch(query);
         sendEvent({ type: "search" });

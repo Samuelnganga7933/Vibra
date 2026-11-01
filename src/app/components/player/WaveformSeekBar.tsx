@@ -125,8 +125,9 @@ export function WaveformSeekBar({
               : `color-mix(in srgb, ${color} 26%, transparent)`,
             transition: "background .2s linear",
           }}
-        />
+          />
       ))}
+      <span aria-hidden="true" style={{ position: "absolute", top: 1, bottom: 1, left: `calc(${value * 100}% - 1.5px)`, width: 3, borderRadius: 2, background: "#fff", boxShadow: "0 0 8px rgba(255,255,255,.45)", pointerEvents: "none", transition: "left .12s linear" }} />
     </div>
   );
 }

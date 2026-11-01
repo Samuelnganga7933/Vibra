@@ -745,9 +745,9 @@ function SearchScreen({ seed }: { seed?: string }) {
       if (tracks.length > 0) {
         const mapped = sanitizeMusicItems(tracks.map((t, i) => fromApiTrack(t, i)));
         setResults(mapped);
-        // Search is the strongest playback intent: warm the first visible rows
+        // Search is the strongest playback intent: resolve every visible row
         // while the listener is deciding which result to open.
-        prefetchStreams(mapped, 6);
+        prefetchStreams(mapped, mapped.length);
         setSearching(false);
         pushRecentSearch(query);
         sendEvent({ type: "search" });
@@ -3127,9 +3127,11 @@ export default function App() {
           setShelves(s);
           hasShelvesRef.current = true;
           writeCachedShelves(s);
-          // Feed cards are likely next-play candidates. Warm only the first
-          // visible item from each shelf so this never becomes a bulk download.
-          prefetchStreams(s.flatMap(shelf => shelf.items.slice(0, 1).map(toTrackItem)), 6);
+          // Every visible feed card is a likely play target. This warms only
+          // metadata/resolver state, not whole song files, so tapping any card
+          // can start immediately without turning the feed into a download.
+          const visibleFeedTracks = s.flatMap(shelf => shelf.items.slice(0, 8).map(toTrackItem));
+          prefetchStreams(visibleFeedTracks, visibleFeedTracks.length);
           if (s.some(x => shelfRank(x) === 1)) {
             homeRetryRef.current = 0;
             return;
@@ -3411,7 +3413,7 @@ export default function App() {
           }
           // Discovery shelves should already have a resolved audio source when
           // the user reaches for a play button.
-          prefetchStreams(all, 8);
+          prefetchStreams(all, all.length);
         }
         // Trending (and with it the featured hero) has its answer now — show
         // it while the new-releases shelf is still being fetched.
@@ -3607,9 +3609,12 @@ export default function App() {
 
       const bffUrl = sourceId ? getStreamUrl(sourceId) : undefined;
       const remoteUrl = t.streamUrl || t.previewUrl || bffUrl;
-      // A remote source is already playable from its known ID. Do not make
-      // every click wait for a local MediaStore lookup first.
-      localUrl = await (remoteUrl ? Promise.resolve(null) : localPromise);
+      // Prefer a verified local file even when the track also has a video ID.
+      // Previously remoteUrl short-circuited this lookup, so downloaded songs
+      // tried the network first and could show “Track can't play right now”.
+      // Keep the lookup bounded for ordinary online tracks so they still start
+      // immediately when no local copy exists.
+      localUrl = await resolveQuickly(localPromise, native ? 1_500 : 700, null);
       if (playSessionRef.current !== session) return;
       const firstUrl = localUrl ?? remoteUrl;
       if (!firstUrl) {

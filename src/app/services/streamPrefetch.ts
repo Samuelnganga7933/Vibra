@@ -7,9 +7,9 @@ import { getStreamUrl } from "./api";
  */
 const warmed = new Map<string, number>();
 const pending = new Map<string, HTMLAudioElement>();
-const MAX_WARMED = 32;
+const MAX_WARMED = 96;
 const WARM_TTL_MS = 10 * 60_000;
-const CLEANUP_MS = 20_000;
+const CLEANUP_MS = 60_000;
 
 function validVideoId(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9_-]{6,20}$/.test(value);
@@ -35,7 +35,10 @@ export function prefetchStream(videoId?: string, streamUrl?: string): void {
   }
 
   const audio = new Audio();
-  audio.preload = "metadata";
+  // Ask the browser to establish the connection and buffer ahead while the
+  // listener is browsing. The pool is bounded and expires, so this is lazy
+  // intent-based warming rather than downloading the whole catalogue.
+  audio.preload = "auto";
   audio.muted = true;
   pending.set(url, audio);
   audio.addEventListener("loadedmetadata", () => {
@@ -64,7 +67,7 @@ export function takePrefetchedAudio(videoId?: string, streamUrl?: string): HTMLA
   return audio;
 }
 
-export function prefetchStreams(tracks: Array<{ videoId?: string; streamUrl?: string }>, limit = 6): void {
-  // Start only a small batch so prefetching never competes with visible data.
+export function prefetchStreams(tracks: Array<{ videoId?: string; streamUrl?: string }>, limit = tracks.length): void {
+  // Warm the visible intent set; the pool cap prevents unbounded work.
   tracks.slice(0, limit).forEach(track => prefetchStream(track.videoId, track.streamUrl));
 }
