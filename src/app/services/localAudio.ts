@@ -294,7 +294,8 @@ async function saveNative(
 
     const meta = toMeta(track);
     try {
-      const moved = await Media.saveToDownloads({ source: written.path, fileName });
+      const cacheUri = await Filesystem.getUri({ path: relativePath, directory: Directory.Cache });
+      const moved = await Media.saveToDownloads({ source: cacheUri.uri || written.path, fileName });
       try { await Filesystem.deleteFile({ path: relativePath, directory: Directory.Cache }); } catch { /* cache copy gone */ }
       meta.filePath = moved.path;
       meta.fileDir = DOWNLOADS_DIR;

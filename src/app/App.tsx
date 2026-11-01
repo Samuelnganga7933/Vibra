@@ -3471,10 +3471,16 @@ export default function App() {
     if (!currentTrack) { setLyrics([]); setPlainLyrics(""); setLyricsLoading(false); return; }
     let cancelled = false;
     setLyrics([]); setPlainLyrics(""); setLyricsLoading(true);
-    fetchLyricsFromApi(currentTrack.title, currentTrack.artist).then(r => {
-      if (cancelled) return;
-      setLyrics(r.synced); setPlainLyrics(r.plain); setLyricsLoading(false);
-    });
+    fetchLyricsFromApi(currentTrack.title, currentTrack.artist)
+      .then(r => {
+        if (cancelled) return;
+        setLyrics(r.synced); setPlainLyrics(r.plain);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setLyrics([]); setPlainLyrics("");
+      })
+      .finally(() => { if (!cancelled) setLyricsLoading(false); });
     return () => { cancelled = true; };
   }, [currentTrack]);
 
@@ -4675,12 +4681,22 @@ export default function App() {
         @keyframes scaleIn { from{transform:scale(.94);opacity:0} to{transform:scale(1);opacity:1} }
         @keyframes fadeIn  { from{opacity:0} to{opacity:1} }
         @keyframes spin    { to{transform:rotate(360deg)} }
+        @keyframes songGlowA { 0%,100%{transform:translate3d(-8%, -4%, 0) scale(1)} 50%{transform:translate3d(10%, 8%, 0) scale(1.18)} }
+        @keyframes songGlowB { 0%,100%{transform:translate3d(8%, 8%, 0) scale(1.05)} 50%{transform:translate3d(-12%, -6%, 0) scale(.9)} }
+        @media (prefers-reduced-motion: reduce) { .vibra-song-glow { animation:none !important; } }
         /* The APK must never fall back to the desktop shell — some WebViews
            report a desktop-ish width, so the breakpoint classes alone aren't
            a safe guard on native. */
         .native-app .desktop-shell { display: none !important; }
         .native-app .mobile-shell { display: block !important; }
       `}</style>
+
+      {currentTrack && (
+        <div className="vibra-song-glow" aria-hidden style={{ position: "fixed", inset: 0, overflow: "hidden", pointerEvents: "none", zIndex: 0, opacity: isPlaying ? 0.3 : 0.14, transition: "opacity .8s ease" }}>
+          <div style={{ position: "absolute", width: "72vw", height: "72vw", maxWidth: 760, maxHeight: 760, left: "-18vw", top: "-20vw", borderRadius: "50%", background: `radial-gradient(circle, ${currentTrack.bg}aa 0%, ${currentTrack.bg}28 35%, transparent 70%)`, filter: "blur(28px)", animation: "songGlowA 16s ease-in-out infinite" }} />
+          <div style={{ position: "absolute", width: "64vw", height: "64vw", maxWidth: 680, maxHeight: 680, right: "-14vw", bottom: "-18vw", borderRadius: "50%", background: `radial-gradient(circle, ${currentTrack.bg}88 0%, ${currentTrack.bg}1c 38%, transparent 72%)`, filter: "blur(34px)", animation: "songGlowB 20s ease-in-out infinite" }} />
+        </div>
+      )}
 
       {!isNativeApp() && (screen.id === "landing" || (authGate && screen.id === "home" && !entered)) ? (
         /* Public marketing page — the signed-out default on the web; no shell,

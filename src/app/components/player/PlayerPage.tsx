@@ -35,14 +35,17 @@ export function PlayerPage() {
     playerPageMode: mediaMode, setPlayerPageMode: setMediaMode,
     openTrackOptions,
     isPlaying, togglePlay,
-    lyrics, plainLyrics, lyricsLoading, uiState,
+    lyrics, plainLyrics, lyricsLoading,
     playPrev, playNext, shuffleOn, toggleShuffle, repeatMode, cycleRepeat,
     outputDevice,
     downloadedTracks, downloadTrack, refreshDownloads, activeDownloads,
   } = useApp();
   /** Mobile footer's queue icon opens the TOP queue sheet (per the ask). */
   const [queueOpen, setQueueOpen] = useState(false);
-  const hasLyricsOption = uiState.hasLyrics || lyricsLoading;
+  // Lyrics is always an available player destination. A lookup can be slow or
+  // can legitimately return no match; hiding the tab made it appear that the
+  // tap did nothing in both cases.
+  const hasLyricsOption = true;
 
   /** Pull-down to close — tracks the finger from the grabber/header zone.
       Live values go in refs: React state may lag the final pointermove, so
@@ -101,9 +104,9 @@ export function PlayerPage() {
     return () => window.removeEventListener("vibra:back", onBack);
   }, [queueOpen]);
 
-  // A track without lyrics can't keep a lyrics view open; video is desktop-only.
+  // Video is desktop-only. Lyrics stays open long enough to show loading or a
+  // clear “No lyrics” result even when the provider has no match.
   useEffect(() => {
-    if (mediaMode === "lyrics" && !hasLyricsOption) setMediaMode("song");
     if (mediaMode === "video" && isCompact) setMediaMode("song");
   }, [mediaMode, hasLyricsOption, isCompact]);
 

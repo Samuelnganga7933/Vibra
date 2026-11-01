@@ -2011,7 +2011,10 @@ def stream_audio(video_id: str, request: Request, proxy: int = 0, debug: int = 0
 
     out_headers = {}
     content_type = upstream.headers.get("content-type", "")
-    if not content_type.startswith("audio/"):
+    # YouTube/googlevideo commonly labels an audio-only MP4/M4A container as
+    # video/mp4. It is still a valid downloadable audio stream, so reject only
+    # clearly non-media/error responses rather than requiring audio/*.
+    if not (content_type.startswith("audio/") or content_type in {"video/mp4", "application/octet-stream"}):
         context.__exit__(None, None, None)
         raise HTTPException(status_code=502, detail="Upstream did not return audio")
     out_headers["Accept-Ranges"] = "bytes"

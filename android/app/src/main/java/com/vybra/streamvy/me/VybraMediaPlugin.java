@@ -361,7 +361,13 @@ public class VybraMediaPlugin extends Plugin {
             call.reject("source and fileName are required");
             return;
         }
-        File src = new File(source);
+        File src;
+        if (source.startsWith("file://")) {
+            Uri sourceUri = Uri.parse(source);
+            src = new File(sourceUri.getPath() == null ? "" : sourceUri.getPath());
+        } else {
+            src = new File(source);
+        }
         if (!src.exists()) { call.reject("temp file missing"); return; }
         try {
             String outPath;
