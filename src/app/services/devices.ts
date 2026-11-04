@@ -86,6 +86,8 @@ type RoutableMedia = HTMLMediaElement & { setSinkId?: (id: string) => Promise<vo
 export function registerSinkElement(el: HTMLMediaElement | null): void {
   if (!el) return;
   sinks.add(el);
+  const sinkId = (el as RoutableMedia & { sinkId?: string }).sinkId;
+  if (sinkId) currentSinkId = sinkId === "default" ? undefined : sinkId;
   if (currentSinkId && typeof (el as RoutableMedia).setSinkId === "function") {
     void (el as RoutableMedia).setSinkId(currentSinkId).catch(() => {});
   }
@@ -159,15 +161,20 @@ export async function refreshOutput(): Promise<OutputDevice> {
   try {
     const all = await navigator.mediaDevices.enumerateDevices();
     const outputs = all.filter(d => d.kind === "audiooutput");
-    const labelled = outputs.find(d => d.label);
-    const chosen = labelled ?? outputs[0];
+    // enumerateDevices order is not the active sink. Prefer the sinkId that
+    // was successfully applied to the registered media element; otherwise the
+    // OS default is the only truthful answer.
+    const appliedSinkId = currentSinkId ?? (sinks.values().next().value as (RoutableMedia & { sinkId?: string }) | undefined)?.sinkId;
+    const chosen = (appliedSinkId && appliedSinkId !== "default"
+      ? outputs.find(d => d.deviceId === appliedSinkId)
+      : undefined) ?? outputs.find(d => d.deviceId === "default") ?? outputs.find(d => d.label) ?? outputs[0];
     if (chosen) {
       const isDefault = !chosen.deviceId || chosen.deviceId === "default";
       const name = chosen.label || DEFAULT_DEVICE.name;
       active = isDefault
         ? { ...DEFAULT_DEVICE, label: chosen.label, name: chosen.label || DEFAULT_DEVICE.name, kind: classifyOutput(chosen.label) }
         : { id: chosen.deviceId, label: chosen.label, name, kind: classifyOutput(chosen.label) };
-      if (!isDefault) routeTo(chosen.deviceId);
+      if (!isDefault) currentSinkId = chosen.deviceId;
       emit();
     }
   } catch {

@@ -1958,7 +1958,7 @@ def set_history_pause(payload: HistoryPauseIn, user: User = Depends(get_token_us
 
 
 @app.get("/api/audio/{video_id}")
-def stream_audio(video_id: str, request: Request, proxy: int = 0, debug: int = 0):
+def stream_audio(video_id: str, request: Request, proxy: int = 0, debug: int = 0, engine: int = 0):
     """Direct audio for one track.
 
     Playback (default): 302 to a real audio URL — `<audio>` follows redirects
@@ -1980,9 +1980,18 @@ def stream_audio(video_id: str, request: Request, proxy: int = 0, debug: int = 0
         if proxy:
             # Only verified audio may be saved — never store an error body.
             raise HTTPException(status_code=502, detail="No playable audio source for this track")
-        # Playback: let <audio> follow Lenium; if it errors the player falls
-        # back to the IFrame engine exactly as before.
-        return RedirectResponse(engine_stream_url(video_id), status_code=302)
+        # The old default redirected into the Lenium engine, which repeated
+        # the same YouTube LOGIN_REQUIRED failure and eventually surfaced as a
+        # slow 502. Fail fast so the client can immediately use its native
+        # resolver or the YouTube IFrame engine. Keep the old redirect behind
+        # an explicit switch for operators that still want it.
+        if engine:
+            return RedirectResponse(engine_stream_url(video_id), status_code=302)
+        return JSONResponse(
+            {"detail": "Direct audio unavailable; use the client playback fallback.", "fallback": "youtube"},
+            status_code=503,
+            headers={"Retry-After": "0", "X-Vybra-Audio-Fallback": "youtube"},
+        )
     url, mime = resolved
     if not proxy:
         return RedirectResponse(url, status_code=302)

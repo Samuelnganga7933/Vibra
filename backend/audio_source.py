@@ -24,6 +24,7 @@ from __future__ import annotations
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import httpx
 
@@ -46,17 +47,34 @@ _CLIENTS: tuple[tuple[str, str, dict, str, str], ...] = (
 
 _ENGINE = (os.environ.get("CATALOGUE_BASE") or "https://music.vybra.streamvy.me").rstrip("/")
 
-_TTL = 15 * 60.0          # googlevideo URLs live ~6h; 15 min is plenty
+_TTL = 15 * 60.0          # googlevideo/Piped URLs live ~6h; 15 min is plenty
 _CACHE: dict[str, tuple[float, str, str]] = {}   # video_id -> (ts, url, mime)
 LAST_DIAG: dict[str, str] = {}                   # video_id -> why it failed
+_NEGATIVE_TTL = 8.0
+_NEGATIVE: dict[str, float] = {}
+
+# Piped exposes audioStreams without requiring a YouTube session. Keep this
+# list configurable because public instances can disappear; the resolver races
+# the first few hosts and uses the first valid audio URL. The official API
+# documentation defines /streams/:videoId and audioStreams.url.
+_PIPED_APIS = tuple(
+    item.strip().rstrip("/")
+    for item in (os.getenv("PIPED_API_URLS") or ",".join((
+        "https://pipedapi.kavin.rocks",
+        "https://pipedapi.leptons.xyz",
+        "https://api.piped.private.coffee",
+    ))).split(",")
+    if item.strip()
+)
 
 # Video ids carry `-` and `_` constantly (e.g. `57__wGDUzig`); an isalnum()
 # check silently rejected those and made their downloads fail outright.
 _VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{6,20}$")
 
 # Whole-resolution budget — the playback redirect waits on this.
-_BUDGET_S = 15.0
-_ATTEMPT_TIMEOUT_S = 7.0
+_BUDGET_S = 5.0
+_ATTEMPT_TIMEOUT_S = 2.0
+_PIPED_TIMEOUT_S = 2.5
 
 
 def _attempt(host: str, client: tuple[str, str, dict, str, str], video_id: str) -> tuple[str, str] | None:
@@ -131,6 +149,50 @@ def _resolve_innertube(video_id: str) -> tuple[str | None, str]:
     return None, ""
 
 
+def _piped_attempt(base: str, video_id: str) -> tuple[str, str] | None:
+    """Resolve one Piped instance; never raises into the request handler."""
+    try:
+        response = httpx.get(
+            f"{base}/streams/{video_id}",
+            headers={"Accept": "application/json", "User-Agent": "VybraAudioResolver/1.0"},
+            timeout=_PIPED_TIMEOUT_S,
+        )
+        if response.status_code != 200:
+            LAST_DIAG[video_id] = f"piped:{base}:http_{response.status_code}"
+            return None
+        streams = response.json().get("audioStreams") or []
+        usable = [
+            row for row in streams
+            if isinstance(row, dict) and isinstance(row.get("url"), str) and row.get("url")
+            and str(row.get("mimeType", "")).startswith("audio/")
+        ]
+        if not usable:
+            LAST_DIAG[video_id] = f"piped:{base}:no_audio_streams"
+            return None
+        best = max(usable, key=lambda row: int(row.get("bitrate") or 0))
+        return str(best["url"]), str(best.get("mimeType") or "audio/mp4").split(";", 1)[0]
+    except Exception as exc:
+        LAST_DIAG[video_id] = f"piped:{base}:{type(exc).__name__}"
+        return None
+
+
+def _resolve_piped(video_id: str) -> tuple[str | None, str]:
+    if not _PIPED_APIS:
+        return None, ""
+    pool = ThreadPoolExecutor(max_workers=min(3, len(_PIPED_APIS)))
+    try:
+        futures = {pool.submit(_piped_attempt, base, video_id): base for base in _PIPED_APIS}
+        for future in as_completed(futures):
+            hit = future.result()
+            if hit:
+                return hit
+        return None, ""
+    finally:
+        # Do not make a successful fast instance wait for slower/dead public
+        # instances to time out before returning to the audio route.
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
 def resolve_audio_url(video_id: str) -> tuple[str, str] | None:
     """(direct_url, mime) for a video id, or None when nothing can play."""
     vid = (video_id or "").strip()
@@ -140,14 +202,31 @@ def resolve_audio_url(video_id: str) -> tuple[str, str] | None:
     now = time.monotonic()
     if hit is not None and now - hit[0] < _TTL:
         return hit[1], hit[2]
+    negative_at = _NEGATIVE.get(vid)
+    if negative_at is not None and now - negative_at < _NEGATIVE_TTL:
+        return None
 
-    url, mime = _resolve_innertube(vid)
+    # LOGIN_REQUIRED is common on serverless YouTube egress. Race the direct
+    # resolver and the alternate proxy path so either one can win quickly.
+    race = ThreadPoolExecutor(max_workers=2)
+    try:
+        futures = [race.submit(_resolve_innertube, vid), race.submit(_resolve_piped, vid)]
+        url, mime = None, ""
+        for future in as_completed(futures):
+            candidate_url, candidate_mime = future.result()
+            if candidate_url:
+                url, mime = candidate_url, candidate_mime
+                break
+    finally:
+        race.shutdown(wait=False, cancel_futures=True)
     if not url:
+        _NEGATIVE[vid] = time.monotonic()
         return None
 
     if len(_CACHE) > 512:
         _CACHE.clear()
     _CACHE[vid] = (time.monotonic(), url, mime)
+    _NEGATIVE.pop(vid, None)
     return url, mime
 
 

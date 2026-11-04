@@ -299,7 +299,7 @@ export function PlayerPage() {
     return (
       <div className="player-page"
         style={{
-        position: "fixed", left: 0, right: 0, top: 0, bottom: 0,
+        position: "fixed", inset: 0, boxSizing: "border-box",
         zIndex: 40, background: C.bg,
         display: "flex", flexDirection: "column", overflow: "hidden",
         animation: "fadeIn .18s ease",
@@ -368,7 +368,7 @@ export function PlayerPage() {
       // The player is a true lock-screen-style surface, not a desktop card.
       // Keep it edge-to-edge on every viewport so the artwork and controls
       // remain full-screen on desktop, mobile, and embedded WebViews.
-      position: "fixed", inset: 0,
+      position: "fixed", inset: 0, boxSizing: "border-box",
       zIndex: 40, borderRadius: 0, border: "none",
       background: `linear-gradient(180deg, ${C.pane} 0%, ${C.bg} 130%)`,
       display: "flex", flexDirection: "column", overflow: "hidden",

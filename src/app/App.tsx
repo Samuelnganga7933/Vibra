@@ -62,7 +62,7 @@ import { localeParam, marketChartQuery, marketLabel } from "./services/locale";
 import { fetchAlbums } from "./services/metadata";
 import {
   listOutputDevices, refreshOutput, switchOutput, primeOutput,
-  getActiveOutput, subscribeOutput, registerSinkElement,
+  getActiveOutput, subscribeOutput, registerSinkElement, unregisterSinkElement,
   type OutputDevice,
 } from "./services/devices";
 import { loginUser, registerUser, logoutUser, passwordStrengthError } from "./services/auth";
@@ -3570,7 +3570,9 @@ export default function App() {
         if (playSessionRef.current !== session) return;
         ytEngineRef.current = engine;
         engine.volume = volume;
-        audioRef.current?.pause();
+        const current = audioRef.current;
+        current?.pause();
+        if (current instanceof HTMLMediaElement) unregisterSinkElement(current);
         audioRef.current = engine;
         await engine.load(videoId, volume);
         if (playSessionRef.current !== session) { engine.pause(); return; }
@@ -3581,9 +3583,10 @@ export default function App() {
       }
     };
 
-    const previous = audioRef.current;
-    previous?.pause();
-    if (previous instanceof NativeAudioEngine) previous.detach();
+        const previous = audioRef.current;
+        previous?.pause();
+        if (previous instanceof HTMLMediaElement) unregisterSinkElement(previous);
+        if (previous instanceof NativeAudioEngine) previous.detach();
 
     void (async () => {
       const native = isNativeApp();
