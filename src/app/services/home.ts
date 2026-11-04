@@ -173,7 +173,9 @@ async function synthesizeShelves(): Promise<HomeShelf[]> {
  */
 async function fetchEngineShelves(): Promise<HomeShelf[]> {
   const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), 20_000);
+  // The BFF is the primary feed. The engine is only an enrichment source and
+  // must never keep the first Home paint behind a cold 20s request.
+  const timer = window.setTimeout(() => controller.abort(), 7_000);
   try {
     const res = await fetch(`${API_BASE}/discover/home-shelves`, { signal: controller.signal });
     if (!res.ok) return [];
@@ -225,11 +227,15 @@ export const shelfRank = (s: HomeShelf): number => {
  * here so new music is on Home every single time.
  */
 export async function fetchHome(): Promise<HomeShelf[]> {
-  // Both sources in parallel — the build already takes ~15s server-side;
-  // no reason to stack the engine's 20s window behind it.
-  const [bff, engine] = await Promise.all([
-    fetchBffShelves().catch(() => [] as HomeShelf[]),
-    fetchEngineShelves().catch(() => [] as HomeShelf[]),
+  // Start both sources together, but cap the enrichment wait. A healthy BFF
+  // response should paint shelves immediately even if the catalogue engine is
+  // cold or unavailable.
+  const bffPromise = fetchBffShelves().catch(() => [] as HomeShelf[]);
+  const enginePromise = fetchEngineShelves().catch(() => [] as HomeShelf[]);
+  const bff = await bffPromise;
+  const engine = await Promise.race([
+    enginePromise,
+    new Promise<HomeShelf[]>(resolve => window.setTimeout(() => resolve([]), 1_500)),
   ]);
 
   // Engine extras: skip its generic recommendation rows (the BFF owns those)

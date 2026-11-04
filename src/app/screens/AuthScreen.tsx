@@ -147,29 +147,6 @@ export function AuthScreen({ mode: initialMode }: { mode: "login" | "signup" }) 
             </p>
           </div>
 
-          {/* Sign-up is email + password only (per product decision); the SSO
-              button lives on Log in, where it belongs: "Continue with
-              Streamvy" for accounts that were created through SSO. */}
-          {!isSignup && (
-            <>
-              <button type="button" onClick={google} disabled={busy}
-                style={{
-                  display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-                  border: "1px solid var(--google-border)", background: "none", color: C.text,
-                  borderRadius: 999, height: 52, fontWeight: 600, fontSize: 15, fontFamily: "inherit",
-                  cursor: busy ? "default" : "pointer", opacity: busy ? 0.7 : 1, transition: "opacity .15s",
-                }}>
-                Continue with Streamvy
-              </button>
-
-              <div style={{ display: "flex", alignItems: "center", gap: 14, color: "var(--faint)", fontSize: 12 }}>
-                <span style={{ flex: 1, height: 1, background: "var(--hairline)" }} />
-                or
-                <span style={{ flex: 1, height: 1, background: "var(--hairline)" }} />
-              </div>
-            </>
-          )}
-
           <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 18 }}>
             {isSignup && (
               <label style={labelStyle}>
@@ -255,6 +232,29 @@ export function AuthScreen({ mode: initialMode }: { mode: "login" | "signup" }) 
               </p>
             )}
           </form>
+
+          {/* Streamvy SSO is intentionally secondary: password sign-in is the
+              primary action, while existing Streamvy accounts can continue
+              below it without competing with the main button. */}
+          {!isSignup && (
+            <>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, color: "var(--faint)", fontSize: 11 }}>
+                <span style={{ flex: 1, height: 1, background: "var(--hairline)" }} />
+                or
+                <span style={{ flex: 1, height: 1, background: "var(--hairline)" }} />
+              </div>
+              <button type="button" onClick={google} disabled={busy}
+                style={{
+                  alignSelf: "center", minWidth: 190, height: 38, padding: "0 16px",
+                  display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8,
+                  border: `1px solid ${C.border}`, background: "transparent", color: C.muted,
+                  borderRadius: 999, fontWeight: 700, fontSize: 12.5, fontFamily: "inherit",
+                  cursor: busy ? "default" : "pointer", opacity: busy ? 0.7 : 1, transition: "opacity .15s",
+                }}>
+                Continue with Streamvy
+              </button>
+            </>
+          )}
 
           <div style={{ textAlign: "center", fontSize: 14, color: C.muted }}>
             {isSignup ? "Already have an account? " : "New to Vybra? "}

@@ -365,11 +365,14 @@ export function PlayerPage() {
   return (
     <div className={`player-page${queueOpen ? " show-queue" : ""}`}
       style={{
-      position: "fixed", left: 12, right: 12, top: 12, bottom: 112,
-      zIndex: 40, borderRadius: 18, border: `1px solid ${C.border}`,
+      // The player is a true lock-screen-style surface, not a desktop card.
+      // Keep it edge-to-edge on every viewport so the artwork and controls
+      // remain full-screen on desktop, mobile, and embedded WebViews.
+      position: "fixed", inset: 0,
+      zIndex: 40, borderRadius: 0, border: "none",
       background: `linear-gradient(180deg, ${C.pane} 0%, ${C.bg} 130%)`,
       display: "flex", flexDirection: "column", overflow: "hidden",
-      boxShadow: "0 24px 80px rgba(0,0,0,0.55)",
+      boxShadow: "none",
       animation: "fadeIn .18s ease",
       transform: drag.y ? `translateY(${drag.y}px)` : undefined,
       opacity: drag.y ? Math.max(0.6, 1 - drag.y / 520) : 1,

@@ -3278,32 +3278,26 @@ export default function App() {
   // ── Bootstrap user ────────────────────────────────────────────────────────────
   useEffect(() => {
     const bootstrap = async () => {
-      // The verifier is live evidence of the OAuth return leg — always
-      // exchange it, even when a stale stored token still claims we're signed
-      // in (that shadowing is what used to destroy the verifier and bounce
-      // sign-ins back to the gate). The exchange reads the verifier from the
-      // URL, so only strip it after.
-      //
-      // Without a verifier, the silent exchange is skipped right after an
-      // explicit sign-out: the WebView's Neon Auth cookie survives logout and
-      // would re-mint a Vibra token — the "signed out, but it stays forever"
-      // bug on the APK. Any real sign-in clears that marker.
-      if (hasOAuthVerifier() || (!isSignedIn() && !hasSignedOutMarker())) {
-        await exchangeNeonSession();
-      }
-      clearOAuthQueryParams();
-      const u = await api<User>("/auth/me");
-      if (u) {
-        setUser(u);
-        updateUserProfile({
-          name: u.name,
-          username: u.username,
-          initials: u.initials,
-          email: u.email,
-          avatarUrl: u.avatarUrl,
-          subscription: u.subscription === "premium" ? "premium" : "free",
-        });
-      } else if (isSignedIn()) {
+      try {
+        // The verifier is live evidence of the OAuth return leg — always
+        // exchange it, even when a stale stored token still claims we're signed
+        // in. Without a verifier, skip the silent exchange after explicit sign-out.
+        if (hasOAuthVerifier() || (!isSignedIn() && !hasSignedOutMarker())) {
+          await exchangeNeonSession();
+        }
+        clearOAuthQueryParams();
+        const u = await api<User>("/auth/me");
+        if (u) {
+          setUser(u);
+          updateUserProfile({
+            name: u.name,
+            username: u.username,
+            initials: u.initials,
+            email: u.email,
+            avatarUrl: u.avatarUrl,
+            subscription: u.subscription === "premium" ? "premium" : "free",
+          });
+        } else if (isSignedIn()) {
         // Token present but the server wouldn't confirm it — offline, a flaky
         // network, or the token really died. Never bounce a cached listener
         // to the login gate over a network blip: hydrate from the persisted
@@ -3324,14 +3318,21 @@ export default function App() {
         } else {
           clearUserProfile();
         }
-      } else {
-        // No token at all — signed out. Drop any cached profile so the gate,
-        // not a half-state, owns this screen.
+        } else {
+          // No token at all — signed out. Drop any cached profile so the gate,
+          // not a half-state, owns this screen.
+          clearUserProfile();
+        }
+      } catch {
+        // A malformed OAuth return or an unexpected auth response must still
+        // resolve the gate to a usable signed-out screen.
         clearUserProfile();
+        setUser(null);
+      } finally {
+        setUserLoading(false);
       }
-      setUserLoading(false);
     };
-    bootstrap();
+    void bootstrap();
   }, []);
 
   // ── Bootstrap library ─────────────────────────────────────────────────────────
@@ -3363,8 +3364,9 @@ export default function App() {
       if (arts)          setArtists(arts.map(mapAPIArtist));
       if (dl)            setDownloadedTracks(dl.map(mapAPITrack));
       if (followingData) setFollowing(new Set(followingData.ids));
-      setPlaylistsLoading(false);
-    });
+    }).catch(() => {
+      // Keep cached/local library data usable when one backend request fails.
+    }).finally(() => setPlaylistsLoading(false));
     // Re-runs on login/logout so the library always reflects the active session.
   }, [authVersion]);
 
@@ -3614,7 +3616,13 @@ export default function App() {
       // tried the network first and could show “Track can't play right now”.
       // Keep the lookup bounded for ordinary online tracks so they still start
       // immediately when no local copy exists.
-      localUrl = await resolveQuickly(localPromise, native ? 1_500 : 700, null);
+      // A known stream URL should win the race immediately. The previous
+      // bounded IndexedDB lookup still delayed every first play by up to 700ms
+      // on web, even when the BFF URL was already playable. Only wait for the
+      // local source when the track explicitly carries a local path.
+      localUrl = t.localPath
+        ? await resolveQuickly(localPromise, native ? 1_500 : 700, null)
+        : null;
       if (playSessionRef.current !== session) return;
       const firstUrl = localUrl ?? remoteUrl;
       if (!firstUrl) {
@@ -3770,9 +3778,12 @@ export default function App() {
           try { a.currentTime = a.duration > 0 ? Math.min(resumeAt, a.duration - 0.5) : resumeAt; } catch { /* ignore */ }
         }, { once: true });
       }
+      // The BFF resolver can be slow when YouTube rate-limits a serverless
+      // edge. Fail over quickly to the already-known YouTube id instead of
+      // making the listener wait through a dead five-second stream attempt.
       watchdog = window.setTimeout(() => {
         if (!streamFailed && !everPlayed) fallBackToYouTube();
-      }, 5_000);
+      }, 1_800);
       a.play().catch((err: unknown) => {
         const failure = failureFromError(err);
         if (failure.kind === "blocked") { fail(failure); return; }
