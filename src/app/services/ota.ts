@@ -16,6 +16,7 @@ import { LiveUpdate } from "@capawesome/capacitor-live-update";
 const RELEASE_API = "https://api.github.com/repos/Samuelnganga7933/Vibra/releases/tags/nightly";
 const BUNDLE_ASSET_NAME = "vybra-bundle.zip";
 const CHECK_TIMEOUT_MS = 10_000;
+const MANIFEST_RETRIES = 2;
 
 interface NightlyRelease {
   body?: string | null;
@@ -34,23 +35,34 @@ export const isNativeApp = (): boolean => Capacitor.isNativePlatform();
 
 /** Pulls the nightly release and decodes the bundle id + zip URL from it. */
 async function fetchNightlyManifest(): Promise<OtaManifest | null> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), CHECK_TIMEOUT_MS);
-  try {
-    // api.github.com sends Access-Control-Allow-Origin: * — the release asset
-    // host does not, so the WebView can only reach the metadata this way.
-    const res = await fetch(RELEASE_API, { signal: ctrl.signal, cache: "no-store" });
-    if (!res.ok) return null;
-    const data = (await res.json()) as NightlyRelease;
-    const bundleId = /^Bundle:\s*(\S+)/m.exec(data.body ?? "")?.[1];
-    const url = data.assets?.find(a => a.name === BUNDLE_ASSET_NAME)?.browser_download_url;
-    if (!bundleId || !url) return null;
-    return { bundleId, url };
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
+  for (let attempt = 0; attempt <= MANIFEST_RETRIES; attempt += 1) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), CHECK_TIMEOUT_MS);
+    try {
+      // api.github.com sends Access-Control-Allow-Origin: * — the release asset
+      // host does not, so the WebView can only reach the metadata this way.
+      // A cache-busting query avoids seeing the old release body while CI is
+      // replacing the rolling nightly asset.
+      const url = `${RELEASE_API}?v=${Date.now()}`;
+      const res = await fetch(url, {
+        signal: ctrl.signal,
+        cache: "no-store",
+        headers: { Accept: "application/vnd.github+json" },
+      });
+      if (res.ok) {
+        const data = (await res.json()) as NightlyRelease;
+        const bundleId = /^Bundle:\s*(\S+)/m.exec(data.body ?? "")?.[1];
+        const assetUrl = data.assets?.find(a => a.name === BUNDLE_ASSET_NAME)?.browser_download_url;
+        if (bundleId && assetUrl) return { bundleId, url: assetUrl };
+      }
+    } catch {
+      // Retry once for a short-lived network, rate-limit, or release-update gap.
+    } finally {
+      clearTimeout(timer);
+    }
+    if (attempt < MANIFEST_RETRIES) await new Promise(resolve => setTimeout(resolve, 400 * (attempt + 1)));
   }
+  return null;
 }
 
 /**
@@ -75,10 +87,10 @@ export async function markBundleReady(): Promise<void> {
 export async function checkForOtaUpdates(): Promise<OtaCheckResult> {
   if (!isNativeApp()) return "skipped";
   try {
-    const [current, manifest] = await Promise.all([
-      LiveUpdate.getCurrentBundle(),
-      fetchNightlyManifest(),
-    ]);
+    // The plugin docs require ready() before inspecting or changing bundles.
+    await LiveUpdate.ready();
+    const current = await LiveUpdate.getCurrentBundle();
+    const manifest = await fetchNightlyManifest();
     if (!manifest) return "error";
     // bundleId null = the app exactly as installed from the APK.
     if (current?.bundleId === manifest.bundleId) return "up-to-date";

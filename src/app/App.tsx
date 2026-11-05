@@ -1312,6 +1312,7 @@ function SettingsScreen() {
   const checkUpdates = async () => {
     if (otaBusy) return;
     setOtaBusy(true);
+    await markBundleReady();
     const result = await checkForOtaUpdates();
     setOtaBusy(false);
     if (result === "update-installed") {
@@ -2910,18 +2911,21 @@ export default function App() {
   // the app alike (localStorage survives the WebView reload).
   useEffect(() => {
     let cancelled = false;
-    void markBundleReady();
-    void checkForOtaUpdates().then(result => {
+    void (async () => {
+      // LiveUpdate requires ready() to complete before bundle inspection or
+      // download; running these in parallel intermittently reports a failure.
+      await markBundleReady();
+      const result = await checkForOtaUpdates();
       if (cancelled || result !== "update-installed") return;
       toast("New version available!", {
-        description: "A fresh build is ready — reload to get it.",
-        duration: 60_000,
-        action: {
-          label: "Reload App",
-          onClick: () => { void reloadIntoLatestBundle(); },
-        },
-      });
-    });
+          description: "A fresh build is ready — reload to get it.",
+          duration: 60_000,
+          action: {
+            label: "Reload App",
+            onClick: () => { void reloadIntoLatestBundle(); },
+          },
+        });
+    })();
     return () => { cancelled = true; };
   }, []);
 
