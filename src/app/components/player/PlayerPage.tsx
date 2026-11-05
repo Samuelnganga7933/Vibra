@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   ChevronDown, Heart, Headphones, ListMusic, Mic2, MoreHorizontal,
   Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward,
-  Download, Check,
+  Download, Check, Share2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useApp, fmtSec } from "../../context";
@@ -12,6 +12,7 @@ import { LyricsPanel } from "./LyricsPanel";
 import { WaveformSeekBar } from "./WaveformSeekBar";
 import { removeDownload } from "../../services/localAudio";
 import { getPlayerScreensaverEnabled } from "../../services/playerPrefs";
+import { trackSharePayload } from "../../services/share";
 
 /** Green of the output-device chip — same semantic green as the Offline pills. */
 const DEVICE_GREEN = "#1ED760";
@@ -177,6 +178,20 @@ export function PlayerPage() {
     }
   };
 
+  const shareLyrics = () => {
+    const payload = trackSharePayload(currentTrack, { lyrics: true });
+    const shareText = `${payload.text} · Lyrics`;
+    if (navigator.share) {
+      void navigator.share({ ...payload, title: `${payload.title} lyrics`, text: shareText }).catch(() => {
+        /* The native share sheet was dismissed. */
+      });
+      return;
+    }
+    void navigator.clipboard?.writeText(`${shareText}\n${payload.url}`)
+      .then(() => toast("Lyrics link copied"))
+      .catch(() => toast.error("Couldn't share lyrics"));
+  };
+
   /**
    * Single source of truth for the playhead — derived from the clock, so the
    * dragger can never drift away from the elapsed time (the "halfway at 0:02"
@@ -314,7 +329,10 @@ export function PlayerPage() {
           style={{ flexShrink: 0, touchAction: "none", cursor: "grab" }}>
         <div aria-hidden style={{ width: 46, height: 5, borderRadius: 3, background: C.border, margin: "9px auto 0", flexShrink: 0, touchAction: "none" }} />
         <div className="player-page-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", flexShrink: 0, touchAction: "none" }}>
-          <div style={{ width: 36 }} />
+          <button onClick={shareLyrics} aria-label="Share lyrics"
+            style={{ width: 36, height: 36, borderRadius: "50%", background: C.surf, border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.text }}>
+            <Share2 size={17} />
+          </button>
           {modePill}
           <button onClick={() => openTrackOptions(currentTrack)} aria-label="Track options"
             style={{ width: 36, height: 36, borderRadius: "50%", background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.muted }}>
@@ -387,7 +405,10 @@ export function PlayerPage() {
       {/* Header — compact: pill + more (close lives in the footer chevron) */}
       <div className="player-page-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", flexShrink: 0, touchAction: "none" }}>
         {isCompact ? (
-          <div style={{ width: 36 }} />
+          <button onClick={shareLyrics} aria-label="Share lyrics"
+            style={{ width: 36, height: 36, borderRadius: "50%", background: C.surf, border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.text }}>
+            <Share2 size={17} />
+          </button>
         ) : (
           <button onClick={closePlayer} aria-label="Close full-screen player"
             style={{ width: 36, height: 36, borderRadius: "50%", background: C.surf, border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.text }}>
@@ -488,6 +509,23 @@ export function PlayerPage() {
               <span style={{ fontSize: 11.5, color: C.muted, width: 38, flexShrink: 0 }}>{total > 0 ? fmtSec(total) : "--:--"}</span>
             )}
           </div>
+
+          {isCompact && mediaMode === "song" && (
+            <div style={{ width: "100%", maxWidth: 560, borderRadius: 18, background: C.surf, border: `1px solid ${C.border}`, padding: "14px 15px 13px", boxSizing: "border-box", textAlign: "left" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: C.text }}>Lyrics preview</div>
+                <button onClick={() => setMediaMode("lyrics")} aria-label="Show lyrics"
+                  style={{ height: 28, padding: "0 11px", borderRadius: 999, border: `1px solid ${C.border}`, background: C.pane, color: C.text, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                  Show lyrics
+                </button>
+              </div>
+              <div style={{ color: C.muted, fontSize: 13, lineHeight: 1.45, whiteSpace: "pre-line", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden", minHeight: 19 * 1.45 }}>
+                {lyrics.length > 0
+                  ? lyrics.slice(0, 3).map(line => line.text).join("\n")
+                  : plainLyrics.split("\n").map(line => line.trim()).filter(Boolean).slice(0, 3).join("\n") || "Lyrics are ready when you are."}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Transport — rendered for the mobile overlay (the dock underneath is
@@ -529,7 +567,7 @@ export function PlayerPage() {
       </div>
 
       {/* Footer — mobile only (hidden by index.css above the shell breakpoint):
-          queue, output device, collapse. Sharing stays in track options. */}
+          queue, output device, collapse. Lyrics sharing lives in the header. */}
       <div className="player-page-foot" style={{ position: "relative" }}>
         <button onClick={() => setQueueOpen(v => !v)} aria-label="Queue" aria-pressed={queueOpen}
           style={{ width: 44, height: 44, background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: queueOpen ? C.accent : C.muted, padding: 0 }}>
