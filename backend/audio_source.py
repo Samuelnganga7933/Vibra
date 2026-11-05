@@ -21,6 +21,7 @@ YouTube's player endpoint.
 
 from __future__ import annotations
 
+import base64
 import os
 import re
 import time
@@ -44,6 +45,25 @@ _CLIENTS: tuple[tuple[str, str, dict, str, str], ...] = (
       "osName": "iPhone", "osVersion": "17.5.1.21F90"},
      _IOS_UA, "5"),
 )
+
+# Optional operator-managed cookie, never taken from an incoming browser
+# request. YOUTUBE_COOKIE_B64 is preferred so deployment configuration does
+# not need shell quoting; YOUTUBE_COOKIE_HEADER is retained for secret stores
+# that expose a plain value. Values are never logged or returned in diagnostics.
+def _load_cookie_header() -> str:
+    raw = os.getenv("YOUTUBE_COOKIE_HEADER", "").strip()
+    encoded = os.getenv("YOUTUBE_COOKIE_B64", "").strip()
+    if encoded:
+        try:
+            raw = base64.b64decode(encoded, validate=True).decode("utf-8").strip()
+        except Exception:
+            raw = ""
+    if not raw or len(raw) > 8192 or "\r" in raw or "\n" in raw or ";" not in raw:
+        return ""
+    return raw
+
+
+_YOUTUBE_COOKIE_HEADER = _load_cookie_header()
 
 _ENGINE = (os.environ.get("CATALOGUE_BASE") or "https://music.vybra.streamvy.me").rstrip("/")
 
@@ -95,6 +115,8 @@ def _attempt(host: str, client: tuple[str, str, dict, str, str], video_id: str) 
         "Origin": "https://www.youtube.com",
         "Referer": "https://www.youtube.com/",
     }
+    if _YOUTUBE_COOKIE_HEADER:
+        headers["Cookie"] = _YOUTUBE_COOKIE_HEADER
     label = f"{host.split('/')[2]}/{name}"
     try:
         response = httpx.post(

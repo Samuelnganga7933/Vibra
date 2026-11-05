@@ -37,7 +37,8 @@ const CSS = `
   color:var(--text);scrollbar-width:none;
 }
 .vy-root::-webkit-scrollbar{display:none}
-.vy-wrap{max-width:1200px;margin:0 auto;padding:0 24px}
+.vy-wrap{max-width:1200px;width:100%;box-sizing:border-box;margin:0 auto;padding:0 24px}
+.vy-hero> *{min-width:0}
 .vy-root a{color:inherit;text-decoration:none}
 .vy-root a:focus-visible,.vy-root button:focus-visible{outline:2px solid #fff;outline-offset:3px;border-radius:8px}
 
@@ -62,7 +63,7 @@ const CSS = `
 
 .vy-hero{display:grid;grid-template-columns:1.1fr .9fr;gap:48px;align-items:center;padding:32px 0;position:relative}
 .vy-eyebrow{font-size:12px;letter-spacing:.14em;font-weight:800;color:color-mix(in srgb,var(--brand) 72%,#fff)}
-.vy-h1{margin:14px 0 18px;font-size:clamp(40px,6.2vw,76px);line-height:1.02;font-weight:800;letter-spacing:-1.5px}
+.vy-h1{margin:14px 0 18px;font-size:clamp(40px,6.2vw,76px);line-height:1.02;font-weight:800;letter-spacing:-1.5px;overflow-wrap:anywhere}
 .vy-lead{font-size:18px;color:color-mix(in srgb,var(--text) 80%,var(--muted));max-width:520px;margin:0 0 28px;line-height:1.55}
 .vy-cta{display:flex;flex-wrap:wrap;gap:12px}
 .vy-fine{margin-top:16px;font-size:13px;color:var(--dim)}
@@ -144,6 +145,9 @@ const CSS = `
   .vy-navlink{display:none}
 }
 @media (max-width:560px){
+  .vy-wrap{padding-left:24px;padding-right:24px}
+  .vy-h1{font-size:clamp(38px,11vw,54px);letter-spacing:-1.1px}
+  .vy-lead{font-size:16px}
   .vy-plats{grid-template-columns:1fr}
   .vy-cta{flex-direction:column}
   .vy-cta .vy-btn{width:100%}
