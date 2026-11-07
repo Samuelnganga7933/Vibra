@@ -270,7 +270,7 @@ export interface AppCtxType {
 // Spec tokens (src/styles/theme.css): --bg --panel --raised --hover --border
 // --text --muted --dim --accent --accent2 --online.
 export const BASE_COLORS: Record<string, Omit<Colors, "accent">> = {
-  dark:  { bg: "#0b0a10", pane: "#14131c", surf: "#1f1e2b", surfDark: "#1d1c29", text: "#f4f3f8", muted: "#a9a7bd", dim: "#8886a0", border: "#2c2a3e" },
+  dark:  { bg: "#0A0A10", pane: "#0A0A10", surf: "#1A1A26", surfDark: "#14141E", text: "#FFFFFF", muted: "#9A9AAE", dim: "#77778B", border: "#2A2A3E" },
   oled:  { bg: "#000000", pane: "#0c0c0c", surf: "#161616", surfDark: "#0f0f0f", text: "#f5f2ff", muted: "#9896b2", dim: "#7d7b94", border: "#1c1c1c" },
   light: { bg: "#f2f0fa", pane: "#ffffff", surf: "#e8e5f4", surfDark: "#eeeaf8", text: "#1a1628", muted: "#5e5a7a", dim: "#7a7594", border: "#ddd8f0" },
 };

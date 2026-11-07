@@ -2627,7 +2627,7 @@ function MobileLayout() {
   // Profile/downloads inherit no tab — only the four tabs light themselves.
   const activeTab = (["home", "search", "discover", "library"] as const).find(id => id === screen.id) ?? null;
   /** Screens the mobile boards define; everything else falls back to desktop. */
-  const MOBILE_SCREENS = new Set(["home", "search", "discover", "library", "profile", "downloads"]);
+  const MOBILE_SCREENS = new Set(["home", "search", "discover", "library", "profile", "downloads", "playlist"]);
 
   /** Dock playhead — derived from the clock so it can never drift from the
       elapsed time (buffering used to leave a phantom halfway bar at 0:02). */

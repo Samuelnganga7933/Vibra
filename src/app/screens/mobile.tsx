@@ -2,12 +2,12 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Search as SearchIcon, Heart, Play, Pause, Plus, Settings,
   ChevronLeft, ChevronRight, Clock, Download, Music2, X,
-  Check, MoreVertical, Trash2,
+  Check, MoreVertical, Trash2, Shuffle, MoreHorizontal,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
   useApp, toTrackItem, fromApiTrack, BROWSE_CATEGORIES,
-  type Screen, type Track, type LibTab, type ArtistItem,
+  type Screen, type Track, type LibTab, type ArtistItem, type PlaylistItem,
 } from "../context";
 import type { HomeShelf, HomeItem } from "../services/home";
 import { TrackCard } from "../components/ui/cards";
@@ -34,7 +34,7 @@ import { bffJson } from "../services/bff";
    ──────────────────────────────────────────────────────────────────────────── */
 
 /** Fallback clearance while MobileLayout measures the real dock height. */
-const DOCK_PAD = "var(--vibra-dock-h, 176px)";
+const DOCK_PAD = "var(--vibra-dock-h, 148px)";
 const OFFLINE_GREEN = "#1ED760";
 
 const pad = (px: number): React.CSSProperties => ({ paddingLeft: px, paddingRight: px });
@@ -946,6 +946,28 @@ function MobileDownloads() {
   );
 }
 
+/* ─── Playlist detail ─────────────────────────────────────────────────────── */
+function MobilePlaylist({ item }: { item: PlaylistItem }) {
+  const { C, goBack, canGoBack, playTrack } = useApp();
+  const tracks = item.tracks ?? [];
+  return (
+    <MPage>
+      <div style={{ padding: "16px 24px 0" }}>
+        {canGoBack && <button onClick={goBack} aria-label="Back" style={{ width: 40, height: 40, marginLeft: -8, border: "none", background: "none", color: C.text, display: "grid", placeItems: "center", cursor: "pointer" }}><ChevronLeft size={22} /></button>}
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 16, marginTop: 8 }}>
+          <CoverArt bg={item.bg} imageUrl={item.imageUrl} size={128} radius={12} />
+          <div style={{ minWidth: 0, paddingBottom: 2 }}><h1 style={{ fontSize: 27, lineHeight: 1.08, fontWeight: 800, color: C.text, margin: 0 }}>{item.name}</h1><div style={{ fontSize: 12, color: C.muted, marginTop: 6 }}>{item.creator ?? "Samuel Nganga"} · {tracks.length || item.trackCount} songs</div></div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "18px 0 8px" }}>
+          <button onClick={() => tracks[0] && playTrack(tracks[0], tracks)} disabled={!tracks.length} style={{ height: 44, border: "none", borderRadius: 22, background: C.accent, color: "#fff", padding: "0 20px 0 16px", display: "inline-flex", alignItems: "center", gap: 7, font: "700 15px inherit", cursor: tracks.length ? "pointer" : "not-allowed", opacity: tracks.length ? 1 : .55 }}><Play size={17} fill="currentColor" /> Play all</button>
+          <button onClick={() => { const shuffled = [...tracks].sort(() => Math.random() - .5); if (shuffled[0]) playTrack(shuffled[0], shuffled); }} disabled={!tracks.length} style={{ height: 44, border: "none", background: "none", color: C.text, padding: "0 12px", display: "inline-flex", alignItems: "center", gap: 7, font: "700 15px inherit", cursor: tracks.length ? "pointer" : "not-allowed" }}><Shuffle size={18} /> Shuffle</button>
+        </div>
+        <div style={{ height: 1, background: C.border, marginBottom: 8 }} />
+        {tracks.length ? tracks.map((track, i) => <MRow key={`${track.id}-${i}`} track={track} queue={tracks.slice(i + 1)} trailing={<div style={{ display: "flex", alignItems: "center", gap: 12, color: C.muted }}><Heart size={17} /><MoreHorizontal size={18} /></div>} />) : <MEmpty title="No tracks yet" sub="Add songs to this playlist to start listening." />}
+      </div>
+    </MPage>
+  );
+}
 /* ─── Dispatcher ───────────────────────────────────────────────────────────── */
 
 /** The mobile counterpart of ScreenView — only screens the boards define. */
@@ -957,6 +979,7 @@ export function MobileScreenView({ s }: { s: Screen }) {
     case "library":   return s.tab === "downloaded" ? <MobileDownloads /> : <MobileLibrary tab={s.tab} />;
     case "profile":   return <MobileProfile />;
     case "downloads": return <MobileDownloads />;
+    case "playlist":  return <MobilePlaylist item={s.item} />;
     default:          return null;
   }
 }
