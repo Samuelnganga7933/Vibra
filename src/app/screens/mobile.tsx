@@ -219,7 +219,7 @@ function MobileHome() {
 
   return (
     <MPage>
-      <div style={{ padding: "20px 24px 0", display: "flex", alignItems: "flex-start", gap: 14 }}>
+      <div style={{ padding: "56px 20px 0", display: "flex", alignItems: "flex-start", gap: 14 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 12, fontWeight: 500, color: C.muted, marginBottom: 4 }}>{dayStr}</div>
           <h1 style={{ fontSize: 30, fontWeight: 800, color: C.text, margin: 0, lineHeight: 1.2, letterSpacing: -0.6 }}>
@@ -234,7 +234,7 @@ function MobileHome() {
         )}
       </div>
 
-      <div style={{ display: "flex", gap: 8, overflowX: "auto", scrollbarWidth: "none", padding: "18px 24px 2px" }}>
+      <div style={{ display: "flex", gap: 8, overflowX: "auto", scrollbarWidth: "none", padding: "16px 20px 2px" }}>
         {CHIPS.map(l => <MChip key={l} label={l} active={chip === l} onClick={() => setChip(l)} />)}
       </div>
 
@@ -257,12 +257,12 @@ function MobileHome() {
 
       {chip === "All" && playlists.length > 0 && (
         <section style={{ marginTop: 24 }}>
-          <div style={pad(24)}>
+          <div style={pad(20)}>
             <MSectionTitle right={
               <button onClick={() => navigate({ id: "library" })} style={{ fontSize: 13, fontWeight: 600, color: C.muted, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit" }}>See all</button>
             }>From your library</MSectionTitle>
           </div>
-          <div style={{ display: "flex", gap: 12, overflowX: "auto", scrollbarWidth: "none", padding: "0 24px 4px" }}>
+          <div style={{ display: "flex", gap: 12, overflowX: "auto", scrollbarWidth: "none", padding: "0 20px 4px" }}>
             {playlists.slice(0, 8).map(pl => (
               <div key={pl.id} style={{ width: 148, flexShrink: 0 }}>
                 <MBareCard bg={pl.bg} imageUrl={pl.imageUrl} title={pl.name} subtitle={pl.creator}
@@ -302,7 +302,7 @@ function MobileDiscover() {
 
   return (
     <MPage>
-      <div style={{ padding: "20px 24px 0" }}>
+      <div style={{ padding: "56px 20px 0" }}>
         <h1 style={{ fontSize: 30, fontWeight: 800, color: C.text, margin: 0, letterSpacing: -0.6 }}>Discover</h1>
       </div>
 
@@ -331,7 +331,7 @@ function MobileDiscover() {
         <div style={{ margin: "20px 24px 0", borderRadius: 16, height: 196, background: C.surf, opacity: 0.7 }} />
       ) : null}
 
-      <div style={{ padding: "24px 24px 0" }}>
+      <div style={{ padding: "24px 20px 0" }}>
         <MSectionTitle>Trending now</MSectionTitle>
         {discoveryLoading
           ? [...Array(6)].map((_, i) => <MSkelRow key={i} />)
@@ -419,7 +419,7 @@ function MobileSearch({ seed }: { seed?: string }) {
 
   return (
     <MPage>
-      <div style={{ padding: "16px 24px 0" }}>
+      <div style={{ padding: "56px 20px 0" }}>
         {/* Board header: avatar chip + page title */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18 }}>
           <button onClick={() => navigate({ id: "profile" })} aria-label="Your profile"
@@ -432,12 +432,12 @@ function MobileSearch({ seed }: { seed?: string }) {
         </div>
 
         <div style={{ position: "relative", marginBottom: 22 }}>
-          <div style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)", color: C.muted, pointerEvents: "none", display: "grid", placeItems: "center" }}>
+          <div style={{ position: "absolute", left: 0, top: "50%", transform: "translateY(-50%)", color: C.muted, pointerEvents: "none", display: "grid", placeItems: "center" }}>
             <SearchIcon size={20} />
           </div>
           <input ref={inputRef} value={query} onChange={e => setQuery(e.target.value)}
             placeholder="Songs, artists, albums…" className="vibra-search-input"
-            style={{ width: "100%", height: 50, borderRadius: 999, border: "none", background: C.surf, color: C.text, fontSize: 15, padding: "0 48px 0 50px", outline: "none", boxSizing: "border-box", fontFamily: "inherit" }} />
+            style={{ width: "100%", height: 52, borderRadius: 0, border: "none", borderBottom: `1.5px solid ${C.border}`, background: "transparent", color: C.text, fontSize: 16, padding: "0 32px 0 36px", outline: "none", boxSizing: "border-box", fontFamily: "inherit" }} />
           {query && (
             <button onClick={() => setQuery("")} aria-label="Clear search"
               style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: C.muted, display: "grid", placeItems: "center", padding: 4 }}>
@@ -465,7 +465,7 @@ function MobileSearch({ seed }: { seed?: string }) {
               <section style={{ marginBottom: 26 }}>
                 <MSectionTitle>Recent searches</MSectionTitle>
                 {/* Horizontal scroll row — one line, edge-to-edge bleed */}
-                <div style={{ display: "flex", flexWrap: "nowrap", gap: 8, overflowX: "auto", scrollbarWidth: "none", margin: "0 -24px", padding: "2px 24px" }}>
+              <div style={{ display: "flex", flexWrap: "nowrap", gap: 8, overflowX: "auto", scrollbarWidth: "none", margin: "0 -20px", padding: "2px 20px" }}>
                   {recentSeeds.map(q => (
                     <button key={q} onClick={() => setQuery(q)}
                       style={{ display: "inline-flex", alignItems: "center", gap: 8, height: 38, padding: "0 15px", borderRadius: 19, border: `1px solid ${C.border}`, background: C.surf, color: C.text, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", flexShrink: 0 }}>
@@ -477,13 +477,12 @@ function MobileSearch({ seed }: { seed?: string }) {
             )}
 
             <MSectionTitle>Browse all</MSectionTitle>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
               {browseTiles.map(tile => (
                 <button key={tile.id} onClick={() => setQuery(tile.query)}
-                  style={{ position: "relative", height: 88, borderRadius: 10, border: "none", cursor: "pointer", overflow: "hidden", background: `linear-gradient(135deg, ${tile.bg}, color-mix(in srgb, ${tile.bg} 55%, #000))`, padding: "12px 14px", display: "flex", alignItems: "flex-start", textAlign: "left", transition: "transform .15s", fontFamily: "inherit" }}
-                  onMouseEnter={e => (e.currentTarget.style.transform = "scale(1.02)")}
-                  onMouseLeave={e => (e.currentTarget.style.transform = "scale(1)")}>
-                  <span style={{ fontWeight: 800, fontSize: 15, color: "#fff", lineHeight: 1.2 }}>{tile.label}</span>
+                  style={{ height: 52, border: "none", borderBottom: `1px solid ${C.border}`, cursor: "pointer", overflow: "hidden", background: "none", padding: 0, display: "flex", alignItems: "center", gap: 14, textAlign: "left", fontFamily: "inherit" }}>
+                  <span style={{ width: 40, height: 40, borderRadius: 8, background: tile.bg, flexShrink: 0 }} />
+                  <span style={{ fontWeight: 600, fontSize: 15, color: C.text, lineHeight: 1.2 }}>{tile.label}</span>
                 </button>
               ))}
             </div>
@@ -514,7 +513,7 @@ function MobileLibrary({ tab: initTab = "playlists" }: { tab?: LibTab }) {
 
   return (
     <MPage>
-      <div style={{ padding: "20px 24px 0" }}>
+      <div style={{ padding: "56px 20px 0" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
           <h1 style={{ fontSize: 26, fontWeight: 800, color: C.text, margin: 0, flex: 1, letterSpacing: -0.4 }}>Your Library</h1>
           <button onClick={() => navigate({ id: "downloads" })} aria-label="Downloads"

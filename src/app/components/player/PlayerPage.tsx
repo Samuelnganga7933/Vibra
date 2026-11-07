@@ -325,7 +325,7 @@ export function PlayerPage() {
         paddingBottom: "env(safe-area-inset-bottom, 0px)",
       }}>
         {/* Drag zone — grabber + header only; the lyrics scroller below never starts a drag. */}
-        <div onPointerDown={startDrag} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={cancelDrag}
+        <div className="player-page-drag-zone" onPointerDown={startDrag} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={cancelDrag}
           style={{ flexShrink: 0, touchAction: "none", cursor: "grab" }}>
         <div aria-hidden style={{ width: 46, height: 5, borderRadius: 3, background: C.border, margin: "9px auto 0", flexShrink: 0, touchAction: "none" }} />
         <div className="player-page-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", flexShrink: 0, touchAction: "none" }}>
@@ -398,7 +398,7 @@ export function PlayerPage() {
     }}>
       {/* Drag zone — grabber + header only; artwork, seek and queue below
           keep their own gestures and never start a dismiss. */}
-      <div onPointerDown={startDrag} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={cancelDrag}
+      <div className="player-page-drag-zone" onPointerDown={startDrag} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={cancelDrag}
         style={{ flexShrink: 0, touchAction: "none", cursor: "grab" }}>
       {/* Grabber — the boards' drag handle; pulling it (or the header) down closes */}
       <div aria-hidden style={{ width: 46, height: 5, borderRadius: 3, background: C.border, margin: "9px auto 0", flexShrink: 0, touchAction: "none" }} />

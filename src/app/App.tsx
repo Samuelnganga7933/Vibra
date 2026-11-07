@@ -2663,7 +2663,7 @@ function MobileLayout() {
       <div aria-hidden style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 230, background: `linear-gradient(to bottom, ${C.bg}00, ${C.bg} 72%)`, pointerEvents: "none", zIndex: 2 }} />
 
       {/* Floating dock — mini player over nav, the boards' single cluster. */}
-      <div ref={dockRef} style={{ position: "absolute", left: 12, right: 12, bottom: "calc(24px + env(safe-area-inset-bottom, 0px))", zIndex: 3, borderRadius: 30, background: `color-mix(in srgb, ${C.pane} 74%, transparent)`, backdropFilter: "blur(26px) saturate(1.4)", WebkitBackdropFilter: "blur(26px) saturate(1.4)", border: `1px solid color-mix(in srgb, ${C.text} 9%, transparent)`, boxShadow: "0 18px 44px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.06)", overflow: "hidden" }}>
+      <div ref={dockRef} style={{ position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 3, borderRadius: 0, background: C.bg, backdropFilter: "none", WebkitBackdropFilter: "none", borderTop: `1px solid ${C.border}`, boxShadow: "none", overflow: "hidden" }}>
         {currentTrack && (
           <>
             <div style={{ position: "absolute", left: 10, right: 10, top: 0, height: 10, zIndex: 1, display: "flex" }}>
@@ -2671,12 +2671,12 @@ function MobileLayout() {
             </div>
             {/* Sheet-style grabber: the mini-player reads as a header you can
                 pull up into the full-screen player. */}
-            <div style={{ display: "flex", justifyContent: "center", paddingTop: 7 }}>
+            <div style={{ display: "flex", justifyContent: "center", paddingTop: 0 }}>
               <button onClick={() => setPlayerPageOpen(true)} aria-label="Open full-screen player"
                 style={{ width: 36, height: 4, borderRadius: 999, border: "none", padding: 0, cursor: "pointer",
                   background: `color-mix(in srgb, ${C.text} 24%, transparent)` }} />
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "8px 14px 12px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "8px 20px 12px" }}>
               {/* Details → the full-screen player (the sheet's Now playing tab
                   was the old half-screen path; the boards show the player) */}
               <button onClick={() => setPlayerPageOpen(true)} aria-label="Now playing details"
@@ -2708,12 +2708,12 @@ function MobileLayout() {
             <div style={{ height: 1, background: `color-mix(in srgb, ${C.text} 10%, transparent)`, margin: "0 14px" }} />
           </>
         )}
-        <nav style={{ display: "flex", alignItems: "center", justifyContent: "space-around", padding: "10px 10px 12px" }}>
+        <nav style={{ display: "flex", alignItems: "center", justifyContent: "space-around", padding: "4px 20px 14px" }}>
           {TABS.map(({ id, label, Icon }) => {
             const active = activeTab === id;
             return (
               <button key={id} onClick={() => navigate({ id } as Screen)} aria-label={label}
-                style={{ display: "inline-flex", alignItems: "center", gap: 7, border: "none", cursor: "pointer", fontFamily: "inherit", transition: "all .15s", background: active ? `color-mix(in srgb, ${C.accent} 17%, transparent)` : "none", color: active ? `color-mix(in srgb, ${C.accent} 72%, #ffffff)` : C.dim, borderRadius: 999, padding: active ? "11px 18px" : "11px 14px", fontWeight: active ? 800 : 500, fontSize: 13, flexShrink: 0 }}>
+                style={{ display: "inline-flex", alignItems: "center", gap: 7, border: "none", cursor: "pointer", fontFamily: "inherit", transition: "all .15s", background: "none", color: active ? C.text : C.muted, borderRadius: 0, padding: "8px 4px 4px", fontWeight: active ? 700 : 700, fontSize: 13, flex: active ? 1.7 : 1, justifyContent: "center", flexShrink: 0 }}>
                 <Icon size={active ? 18 : 22} />
                 {active && <span>{label}</span>}
               </button>
