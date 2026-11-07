@@ -10,7 +10,6 @@ import {
   type Screen, type Track, type LibTab, type ArtistItem, type PlaylistItem,
 } from "../context";
 import type { HomeShelf, HomeItem } from "../services/home";
-import { TrackCard } from "../components/ui/cards";
 import { CoverArt } from "../components/CoverArt";
 import { searchTracks } from "../services/api";
 import { prefetchStreams } from "../services/streamPrefetch";
@@ -53,8 +52,8 @@ function MEmpty({ icon: Icon = Music2, title, sub, action }: {
 }) {
   const { C } = useApp();
   return (
-    <div style={{ margin: "28px 24px 0", borderRadius: 18, border: `1px dashed ${C.border}`, background: C.surf, padding: "36px 22px", display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: 12 }}>
-      <div style={{ width: 56, height: 56, borderRadius: "50%", background: C.bg, border: `1px solid ${C.border}`, display: "grid", placeItems: "center" }}>
+    <div style={{ margin: "28px 24px 0", padding: "28px 0", display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: 12 }}>
+      <div style={{ width: 48, height: 48, display: "grid", placeItems: "center" }}>
         <Icon size={22} color={C.accent} />
       </div>
       <div style={{ fontWeight: 800, fontSize: 16, color: C.text }}>{title}</div>
@@ -114,7 +113,7 @@ function MRow({ track, queue, trailing, onClick, sub }: {
   const play = () => { if (onClick) { onClick(); return; } playTrack(track, queue); };
   return (
     <div role="button" tabIndex={0} onClick={play} onKeyDown={e => e.key === "Enter" && play()}
-      style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 8px", margin: "0 -8px", borderRadius: 12, background: active ? C.surf : "transparent", cursor: "pointer", minWidth: 0 }}>
+      style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0", borderBottom: `1px solid ${C.border}`, cursor: "pointer", minWidth: 0 }}>
       <CoverArt bg={track.bg} imageUrl={track.imageUrl} size={52} radius={12} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontWeight: 700, fontSize: 14, color: active ? C.accent : C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{track.title}</div>
@@ -134,7 +133,7 @@ function MChip({ label, active, onClick }: { label: string; active?: boolean; on
   const { C } = useApp();
   return (
     <button onClick={onClick}
-      style={{ border: "none", borderRadius: 999, padding: "10px 18px", fontSize: 13.5, fontWeight: 700, fontFamily: "inherit", cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0, transition: "all .15s", background: active ? C.text : C.surf, color: active ? C.pane : C.text }}>
+      style={{ border: "none", borderRadius: 999, padding: "10px 16px", fontSize: 14, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0, transition: "all .15s", background: active ? C.text : "transparent", color: active ? C.pane : C.muted }}>
       {label}
     </button>
   );
@@ -148,7 +147,7 @@ function MBareCard({ bg, imageUrl, title, subtitle, onClick, dashed, children }:
   return (
     <button onClick={onClick} disabled={!onClick}
       style={{ background: "none", border: "none", padding: 0, cursor: onClick ? "pointer" : "default", textAlign: "left", minWidth: 0, fontFamily: "inherit" }}>
-      <div style={{ width: "100%", aspectRatio: "1 / 1", borderRadius: 16, background: dashed ? "transparent" : bg ?? C.surf, border: dashed ? `1.5px dashed ${C.border}` : "none", overflow: "hidden", display: "grid", placeItems: "center", position: "relative" }}>
+      <div style={{ width: "100%", aspectRatio: "1 / 1", borderRadius: 12, background: dashed ? "transparent" : bg ?? C.surf, border: dashed ? `1.5px dashed ${C.border}` : "none", overflow: "hidden", display: "grid", placeItems: "center", position: "relative" }}>
         {imageUrl && !dashed && <img src={imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
         {children}
       </div>
@@ -195,20 +194,21 @@ function MobileHome() {
     const rows = shelf.type === "recent" || shelf.type === "mix_row";
     return (
       <section key={shelf.id} style={{ marginTop: 24 }}>
-        <div style={pad(24)}>
+        <div style={pad(20)}>
           <MSectionTitle>{shelf.title}</MSectionTitle>
         </div>
         {rows ? (
-          <div style={pad(24)}>
+          <div style={pad(20)}>
             {items.slice(0, 8).map(item => (
               <MRow key={item.id} track={toTrackItem(item)} onClick={() => void openItem(item)} />
             ))}
           </div>
         ) : (
-          <div style={{ display: "flex", gap: 12, overflowX: "auto", scrollbarWidth: "none", padding: "0 24px 4px" }}>
+          <div style={{ display: "flex", gap: 12, overflowX: "auto", scrollbarWidth: "none", padding: "0 20px 4px" }}>
             {items.map(item => (
-              <div key={item.id} style={{ position: "relative", flexShrink: 0 }}>
-                <TrackCard track={toTrackItem(item)} size={148} radius={16} onPlay={() => void openItem(item)} />
+              <div key={item.id} style={{ width: 140, flexShrink: 0 }}>
+                <MBareCard bg={item.bg} imageUrl={item.imageUrl} title={item.title} subtitle={item.artist}
+                  onClick={() => void openItem(item)} />
               </div>
             ))}
           </div>
@@ -307,28 +307,19 @@ function MobileDiscover() {
       </div>
 
       {featured ? (
-        <div style={{ margin: "20px 24px 0", borderRadius: 16, overflow: "hidden", position: "relative", height: 196, background: featured.bg }}>
-          {featured.imageUrl && (
-            <img src={featured.imageUrl} alt="" style={{ position: "absolute", right: -16, top: 30, width: 140, height: 140, borderRadius: 12, objectFit: "cover", transform: "rotate(14deg)", opacity: 0.92, boxShadow: "0 18px 40px rgba(0,0,0,0.5)" }} />
-          )}
-          <div style={{ position: "absolute", inset: 0, background: "linear-gradient(100deg, rgba(8,6,14,0.88) 34%, rgba(8,6,14,0.25) 78%)", display: "flex", flexDirection: "column", justifyContent: "flex-end", padding: 18 }}>
-            <div style={{ fontSize: 10.5, fontWeight: 800, color: C.accent, textTransform: "uppercase", letterSpacing: 1.2, marginBottom: 6 }}>Featured</div>
-            <h2 style={{ fontSize: 21, fontWeight: 800, color: "#fff", margin: "0 0 4px", maxWidth: "70%", lineHeight: 1.15 }}>{featured.title}</h2>
-            <div style={{ fontSize: 12.5, color: "rgba(255,255,255,0.72)", margin: "0 0 12px" }}>{featured.meta}</div>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 18, margin: "22px 20px 0" }}>
+          {featured.imageUrl && <img src={featured.imageUrl} alt="" style={{ width: 150, height: 150, borderRadius: 12, objectFit: "cover", flexShrink: 0 }} />}
+          <div style={{ minWidth: 0, paddingBottom: 2 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: C.accent, letterSpacing: 1.5 }}>FEATURED</div>
+            <h2 style={{ fontSize: 26, fontWeight: 800, color: C.text, margin: "4px 0 14px", lineHeight: 1.05, letterSpacing: -0.4 }}>{featured.title}</h2>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <button onClick={featuredPlay}
-                style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 40, padding: "0 20px", borderRadius: 20, background: C.accent, border: "none", color: "#fff", fontSize: 13.5, fontWeight: 800, cursor: "pointer" }}>
-                <Play size={15} fill="currentColor" /> Play
-              </button>
-              <button onClick={featuredQueue} aria-label="Add to queue"
-                style={{ width: 42, height: 42, borderRadius: "50%", background: "rgba(10,9,16,0.4)", border: "1px solid rgba(255,255,255,0.35)", color: "#fff", display: "grid", placeItems: "center", cursor: "pointer", padding: 0 }}>
-                <Plus size={19} />
-              </button>
+              <button onClick={featuredPlay} style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 44, padding: "0 20px 0 14px", borderRadius: 22, background: C.accent, border: "none", color: "#fff", fontSize: 15, fontWeight: 700, cursor: "pointer" }}><Play size={16} fill="currentColor" /> Play</button>
+              <button onClick={featuredQueue} aria-label="Add to library" style={{ width: 44, height: 44, border: "none", background: "none", color: C.text, display: "grid", placeItems: "center", cursor: "pointer", padding: 0 }}><Plus size={22} /></button>
             </div>
           </div>
         </div>
       ) : discoveryLoading ? (
-        <div style={{ margin: "20px 24px 0", borderRadius: 16, height: 196, background: C.surf, opacity: 0.7 }} />
+        <div style={{ margin: "22px 20px 0", height: 150, background: C.bg, opacity: 0.7 }} />
       ) : null}
 
       <div style={{ padding: "24px 20px 0" }}>
@@ -348,7 +339,7 @@ function MobileDiscover() {
 function EmptyDiscover({ onSearch }: { onSearch: () => void }) {
   const { C } = useApp();
   return (
-    <div style={{ borderRadius: 16, border: `1px dashed ${C.border}`, background: C.surf, padding: "30px 20px", textAlign: "center" }}>
+    <div style={{ padding: "24px 0", textAlign: "center" }}>
       <div style={{ fontWeight: 800, fontSize: 15, color: C.text }}>Nothing trending yet</div>
       <div style={{ fontSize: 13, color: C.muted, marginTop: 6, lineHeight: 1.5 }}>Search for a song and press play — it shows up here.</div>
       <button onClick={onSearch} style={{ marginTop: 14, height: 36, padding: "0 16px", borderRadius: 18, border: `1px solid ${C.border}`, background: "transparent", color: C.text, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Search music</button>
@@ -463,13 +454,12 @@ function MobileSearch({ seed }: { seed?: string }) {
           <>
             {recentSeeds.length > 0 && (
               <section style={{ marginBottom: 26 }}>
-                <MSectionTitle>Recent searches</MSectionTitle>
-                {/* Horizontal scroll row — one line, edge-to-edge bleed */}
-              <div style={{ display: "flex", flexWrap: "nowrap", gap: 8, overflowX: "auto", scrollbarWidth: "none", margin: "0 -20px", padding: "2px 20px" }}>
+                <MSectionTitle>Recent</MSectionTitle>
+              <div style={{ display: "flex", flexDirection: "column", margin: "0 -20px" }}>
                   {recentSeeds.map(q => (
                     <button key={q} onClick={() => setQuery(q)}
-                      style={{ display: "inline-flex", alignItems: "center", gap: 8, height: 38, padding: "0 15px", borderRadius: 19, border: `1px solid ${C.border}`, background: C.surf, color: C.text, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", flexShrink: 0 }}>
-                      <Clock size={13} color={C.muted} /> {q}
+                      style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", height: 48, padding: "0 20px", border: "none", borderBottom: `1px solid ${C.border}`, background: "none", color: C.text, fontSize: 15, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+                      <span>{q}</span><X size={17} color={C.muted} />
                     </button>
                   ))}
                 </div>
@@ -682,8 +672,8 @@ function MobileProfile() {
             </button>
           </div>
 
-          <div style={{ padding: "26px 24px 0" }}>
-            <div style={{ background: C.pane, border: `1px solid ${C.border}`, borderRadius: 20, padding: 18 }}>
+          <div style={{ padding: "26px 20px 0" }}>
+            <div style={{ borderTop: `1px solid ${C.border}`, borderBottom: `1px solid ${C.border}`, padding: "16px 0" }}>
               <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
                 <div>
                   <div style={{ fontSize: 11.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 1 }}>Listened this week</div>
@@ -928,10 +918,10 @@ function MobileDownloads() {
           <button onClick={() => void grantLocal()}
             style={{
               width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "14px 16px",
-              background: C.pane, border: `1px dashed ${C.border}`, borderRadius: 14,
+              background: "transparent", border: "none", borderBottom: `1px solid ${C.border}`,
               cursor: "pointer", fontFamily: "inherit", textAlign: "left",
             }}>
-            <span style={{ width: 40, height: 40, borderRadius: 12, background: C.surf, display: "grid", placeItems: "center", flexShrink: 0 }}>
+            <span style={{ width: 40, height: 40, display: "grid", placeItems: "center", flexShrink: 0 }}>
               <Music2 size={18} color={C.accent} />
             </span>
             <span style={{ minWidth: 0 }}>
