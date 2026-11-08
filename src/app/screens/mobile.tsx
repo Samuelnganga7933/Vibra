@@ -113,8 +113,8 @@ function MRow({ track, queue, trailing, onClick, sub }: {
   const play = () => { if (onClick) { onClick(); return; } playTrack(track, queue); };
   return (
     <div role="button" tabIndex={0} onClick={play} onKeyDown={e => e.key === "Enter" && play()}
-      style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0", borderBottom: `1px solid ${C.border}`, cursor: "pointer", minWidth: 0 }}>
-      <CoverArt bg={track.bg} imageUrl={track.imageUrl} size={52} radius={12} />
+      style={{ display: "flex", alignItems: "center", gap: 12, padding: "4px 0", cursor: "pointer", minWidth: 0 }}>
+      <CoverArt bg={track.bg} imageUrl={track.imageUrl} size={52} radius={8} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontWeight: 700, fontSize: 14, color: active ? C.accent : C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{track.title}</div>
         <div style={{ fontSize: 12, color: C.dim, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sub ?? track.artist}</div>
@@ -133,7 +133,7 @@ function MChip({ label, active, onClick }: { label: string; active?: boolean; on
   const { C } = useApp();
   return (
     <button onClick={onClick}
-      style={{ border: "none", borderRadius: 999, padding: "10px 16px", fontSize: 14, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0, transition: "all .15s", background: active ? C.text : "transparent", color: active ? C.pane : C.muted }}>
+      style={{ border: "none", borderRadius: 18, height: 36, padding: "0 16px", fontSize: 14, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0, transition: "all .15s", background: active ? C.text : "transparent", color: active ? C.pane : C.muted }}>
       {label}
     </button>
   );
@@ -222,19 +222,19 @@ function MobileHome() {
       <div style={{ padding: "56px 20px 0", display: "flex", alignItems: "flex-start", gap: 14 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 12, fontWeight: 500, color: C.muted, marginBottom: 4 }}>{dayStr}</div>
-          <h1 style={{ fontSize: 30, fontWeight: 800, color: C.text, margin: 0, lineHeight: 1.2, letterSpacing: -0.6 }}>
+          <h1 style={{ fontSize: 30, fontWeight: 800, color: C.text, margin: "6px 0 0", lineHeight: "36px", letterSpacing: -0.5 }}>
             {greeting}{user ? <><br />{user.name.split(" ")[0]}</> : ""}
           </h1>
         </div>
         {user && (
           <button onClick={() => navigate({ id: "profile" })} aria-label="Open profile"
-            style={{ width: 40, height: 40, borderRadius: "50%", display: "grid", placeItems: "center", background: C.accent, color: "#fff", fontSize: 13, fontWeight: 800, overflow: "hidden", flexShrink: 0, border: "none", cursor: "pointer", boxShadow: `0 0 0 2px ${C.bg}, 0 0 0 4px ${C.accent}59`, padding: 0 }}>
+            style={{ width: 48, height: 48, borderRadius: "50%", display: "grid", placeItems: "center", background: C.accent, color: "#fff", fontSize: 15, fontWeight: 800, overflow: "hidden", flexShrink: 0, border: "none", cursor: "pointer", padding: 0 }}>
             {user.avatarUrl ? <img src={user.avatarUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : user.initials}
           </button>
         )}
       </div>
 
-      <div style={{ display: "flex", gap: 8, overflowX: "auto", scrollbarWidth: "none", padding: "16px 20px 2px" }}>
+      <div style={{ display: "flex", gap: 0, overflowX: "auto", scrollbarWidth: "none", padding: "16px 4px 0", marginLeft: 16 }}>
         {CHIPS.map(l => <MChip key={l} label={l} active={chip === l} onClick={() => setChip(l)} />)}
       </div>
 
@@ -414,12 +414,12 @@ function MobileSearch({ seed }: { seed?: string }) {
         {/* Board header: avatar chip + page title */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18 }}>
           <button onClick={() => navigate({ id: "profile" })} aria-label="Your profile"
-            style={{ width: 40, height: 40, borderRadius: "50%", border: "none", cursor: "pointer", padding: 0, overflow: "hidden", flexShrink: 0, background: C.accent, display: "grid", placeItems: "center" }}>
+            style={{ width: 44, height: 44, borderRadius: "50%", border: "none", cursor: "pointer", padding: 0, overflow: "hidden", flexShrink: 0, background: C.accent, display: "grid", placeItems: "center" }}>
             {user?.avatarUrl
               ? <img src={user.avatarUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
               : <span style={{ color: "#fff", fontWeight: 800, fontSize: 15 }}>{user?.initials ?? "?"}</span>}
           </button>
-          <h1 style={{ fontSize: 24, fontWeight: 800, color: C.text, margin: 0, letterSpacing: -0.4 }}>Search</h1>
+          <h1 style={{ fontSize: 30, fontWeight: 800, color: C.text, margin: 0, letterSpacing: -0.5 }}>Search</h1>
         </div>
 
         <div style={{ position: "relative", marginBottom: 22 }}>
@@ -505,7 +505,7 @@ function MobileLibrary({ tab: initTab = "playlists" }: { tab?: LibTab }) {
     <MPage>
       <div style={{ padding: "56px 20px 0" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-          <h1 style={{ fontSize: 26, fontWeight: 800, color: C.text, margin: 0, flex: 1, letterSpacing: -0.4 }}>Your Library</h1>
+          <h1 style={{ fontSize: 30, fontWeight: 800, color: C.text, margin: 0, flex: 1, letterSpacing: -0.5 }}>Your Library</h1>
           <button onClick={() => navigate({ id: "downloads" })} aria-label="Downloads"
             style={{ width: 40, height: 40, borderRadius: "50%", background: C.surf, border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.muted, padding: 0 }}>
             <Download size={18} />
@@ -517,19 +517,19 @@ function MobileLibrary({ tab: initTab = "playlists" }: { tab?: LibTab }) {
             </button>
           )}
         </div>
-        <div style={{ display: "flex", gap: 8, overflowX: "auto", scrollbarWidth: "none", paddingBottom: 16 }}>
+        <div style={{ display: "flex", gap: 0, overflowX: "auto", scrollbarWidth: "none", padding: "14px 0 20px" }}>
           {TABS.map(t => <MChip key={t.id} label={t.label} active={tab === t.id} onClick={() => setTab(t.id)} />)}
         </div>
       </div>
 
-      <div style={pad(24)}>
+      <div style={pad(20)}>
         {tab === "playlists" && (
           playlistsLoading ? (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px 16px" }}>
               {[...Array(6)].map((_, i) => <div key={i} style={{ aspectRatio: "1 / 1", borderRadius: 16, background: C.surf, opacity: 0.7 }} />)}
             </div>
           ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, paddingBottom: 6 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px 16px", paddingBottom: 6 }}>
               <MBareCard title="Liked songs" subtitle={`${likedTracks.length} songs`}
                 bg="linear-gradient(135deg,#7a4ae8,#e8334f)" onClick={() => setTab("liked")}>
                 <Heart size={40} color="#fff" fill="#fff" />
