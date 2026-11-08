@@ -388,7 +388,7 @@ export function PlayerPage() {
       // remain full-screen on desktop, mobile, and embedded WebViews.
       position: "fixed", inset: 0, boxSizing: "border-box",
       zIndex: 40, borderRadius: 0, border: "none",
-      background: `linear-gradient(180deg, ${C.pane} 0%, ${C.bg} 130%)`,
+      background: C.bg,
       display: "flex", flexDirection: "column", overflow: "hidden",
       boxShadow: "none",
       animation: "fadeIn .18s ease",
@@ -429,18 +429,13 @@ export function PlayerPage() {
         <div className="player-page-main" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 22, minWidth: 0 }}>
           {/* Art card — compact wraps it in a blurred backdrop, radius 28 + glass sheen */}
           <div className="player-page-art-wrap" style={{ position: "relative", width: "min(46vh, 100%)", maxWidth: isCompact ? 340 : 440, display: "flex", justifyContent: "center", flexShrink: 0 }}>
-            {isCompact && currentTrack.imageUrl && mediaMode === "song" && (
-              <img src={currentTrack.imageUrl} alt="" aria-hidden
-                style={{ position: "absolute", inset: -28, width: "calc(100% + 56px)", height: "calc(100% + 56px)", objectFit: "cover", filter: "blur(48px) saturate(1.3)", opacity: 0.55, borderRadius: 40, pointerEvents: "none" }}
-                onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
-            )}
             <div className="player-page-art" style={{
               position: "relative",
               width: mediaMode === "lyrics" ? "100%" : undefined,
               ...(mediaMode === "lyrics"
                 ? { height: "min(42vh, 440px)" }
                 : { aspectRatio: "1 / 1" }),
-              borderRadius: isCompact && mediaMode === "song" ? 28 : 16,
+              borderRadius: 16,
               background: mediaMode === "lyrics" ? `${C.pane}cc` : currentTrack.bg,
               overflow: "hidden", flexShrink: 0,
               boxShadow: mediaMode === "lyrics" ? "none" : `0 28px 80px ${currentTrack.bg}66`,
@@ -464,10 +459,6 @@ export function PlayerPage() {
                     <img src={currentTrack.imageUrl} alt="" loading="lazy"
                       style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", aspectRatio: "1 / 1" }}
                       onError={e => { (e.currentTarget as HTMLImageElement).style.visibility = "hidden"; }} />
-                  )}
-                  {/* Glass sheen over the art (compact song mode) */}
-                  {isCompact && (
-                    <div aria-hidden style={{ position: "absolute", inset: 0, background: "linear-gradient(135deg, rgba(255,255,255,0.14), transparent 42%)", pointerEvents: "none" }} />
                   )}
                 </>
               )}
@@ -511,20 +502,9 @@ export function PlayerPage() {
           </div>
 
           {isCompact && mediaMode === "song" && (
-            <div style={{ width: "100%", maxWidth: 560, borderRadius: 18, background: C.surf, border: `1px solid ${C.border}`, padding: "14px 15px 13px", boxSizing: "border-box", textAlign: "left" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
-                <div style={{ fontSize: 12, fontWeight: 800, color: C.text }}>Lyrics preview</div>
-                <button onClick={() => setMediaMode("lyrics")} aria-label="Show lyrics"
-                  style={{ height: 28, padding: "0 11px", borderRadius: 999, border: `1px solid ${C.border}`, background: C.pane, color: C.text, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
-                  Show lyrics
-                </button>
-              </div>
-              <div style={{ color: C.muted, fontSize: 13, lineHeight: 1.45, whiteSpace: "pre-line", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden", minHeight: 19 * 1.45 }}>
-                {lyrics.length > 0
-                  ? lyrics.slice(0, 3).map(line => line.text).join("\n")
-                  : plainLyrics.split("\n").map(line => line.trim()).filter(Boolean).slice(0, 3).join("\n") || "Lyrics are ready when you are."}
-              </div>
-            </div>
+            <button className="player-page-lyrics-button" onClick={() => setMediaMode("lyrics")} aria-label="Show lyrics">
+              <Mic2 size={18} /> Show lyrics
+            </button>
           )}
         </div>
 
