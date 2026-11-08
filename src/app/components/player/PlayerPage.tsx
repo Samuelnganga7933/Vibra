@@ -9,13 +9,41 @@ import { useApp, fmtSec } from "../../context";
 import { CoverArt } from "../CoverArt";
 import { ReorderList, ReorderRow, moveFromReorder } from "../reorder";
 import { LyricsPanel } from "./LyricsPanel";
-import { WaveformSeekBar } from "./WaveformSeekBar";
 import { removeDownload } from "../../services/localAudio";
 import { getPlayerScreensaverEnabled } from "../../services/playerPrefs";
 import { trackSharePayload } from "../../services/share";
 
 /** Green of the output-device chip — same semantic green as the Offline pills. */
 const DEVICE_GREEN = "#1ED760";
+
+export function SimpleSeekBar({ progress, onSeek, color, ariaLabel }: {
+  progress: number;
+  onSeek: (fraction: number) => void;
+  color: string;
+  ariaLabel: string;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const seek = (clientX: number) => {
+    const rect = ref.current?.getBoundingClientRect();
+    if (!rect || rect.width <= 0) return;
+    onSeek(Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)));
+  };
+  const value = Math.max(0, Math.min(1, Number.isFinite(progress) ? progress : 0));
+  return (
+    <div ref={ref} className="vibra-simple-seek" role="slider" tabIndex={0}
+      aria-label={ariaLabel} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(value * 100)}
+      onPointerDown={e => { if (e.button !== 0) return; e.currentTarget.setPointerCapture(e.pointerId); seek(e.clientX); }}
+      onPointerMove={e => { if (e.currentTarget.hasPointerCapture(e.pointerId)) seek(e.clientX); }}
+      onPointerUp={e => { if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId); }}
+      onKeyDown={e => {
+        const delta = e.key === "ArrowRight" || e.key === "ArrowUp" ? 0.02 : e.key === "ArrowLeft" || e.key === "ArrowDown" ? -0.02 : 0;
+        if (delta) { e.preventDefault(); onSeek(Math.max(0, Math.min(1, value + delta))); }
+      }}>
+      <span style={{ width: `${value * 100}%`, background: color }} />
+      <i style={{ left: `${value * 100}%` }} />
+    </div>
+  );
+}
 
 /**
  * Full-screen player — artwork, metadata, seek and queue context.
@@ -200,8 +228,7 @@ export function PlayerPage() {
   const seekPct = total > 0 ? Math.max(0, Math.min(elapsed / total, 1)) : Math.min(progress, 1);
 
   const seekLine = (
-    <WaveformSeekBar
-      trackKey={currentTrack.id}
+    <SimpleSeekBar
       progress={seekPct}
       onSeek={handleSeek}
       color={C.accent}

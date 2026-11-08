@@ -58,6 +58,32 @@
    until the footer's queue icon adds .show-queue (the boards' behavior). */
 .player-page-context { display: flex; }
 
+.vibra-simple-seek {
+  position: relative;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: #2A2A3E;
+  cursor: pointer;
+  touch-action: none;
+}
+.vibra-simple-seek > span {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: inherit;
+}
+.vibra-simple-seek > i {
+  position: absolute;
+  top: -5px;
+  width: 14px;
+  height: 14px;
+  margin-left: -7px;
+  border-radius: 50%;
+  background: #fff;
+}
+
 @media (max-width: 1199.98px) {
   /* Full screen, edge to edge — not a card floating over the dock. */
   .player-page {
@@ -72,7 +98,7 @@
     padding-bottom: env(safe-area-inset-bottom, 0px);
   }
   .player-page-drag-zone > div:first-child { display: none !important; }
-  .player-page-header { padding: 0 !important; }
+  .player-page-header { padding: 0 !important; margin: 0 12px !important; }
   .player-page-header > button { width: 44px !important; height: 44px !important; }
   .player-page-modes { padding: 0 !important; background: transparent !important; border-radius: 0 !important; }
   .player-page-modes button { height: 36px !important; padding: 0 20px !important; border-radius: 18px !important; font-size: 14px !important; }
@@ -89,8 +115,10 @@
   .player-page-main > div:nth-child(2) { margin-top: 16px !important; }
   .player-page-main > div:nth-child(3) { margin-top: 6px !important; }
   .player-page-main > div:nth-child(4) { display: none !important; }
-  .player-page-transport { display: flex; order: 1; gap: 8px !important; justify-content: space-between !important; padding: 20px 0 0 !important; }
+  .player-page-transport { display: flex; order: 1; gap: 8px !important; justify-content: space-between !important; padding: 20px 0 0 !important; margin-left: -10px !important; margin-right: -10px !important; }
   .player-page-foot { display: flex; position: absolute !important; left: 24px; right: 24px; bottom: 14px; padding: 0 !important; }
+  .player-page-foot > button:first-child { margin-left: -12px !important; }
+  .player-page-foot > button:last-child { margin-right: -12px !important; }
   .player-page-ctx-lyrics { display: none; }
 
   /* Queue (foot icon): the queue list takes the body while transport + foot

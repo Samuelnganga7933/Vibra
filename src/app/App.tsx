@@ -94,7 +94,7 @@ import { TrackCard, AlbumCard, PlaylistItemCard } from "./components/ui/cards";
 import { DownloadsView } from "./components/vibra/DownloadsView";
 import { CoverArt, PlaylistCover } from "./components/CoverArt";
 import { ReorderList, ReorderRow, moveFromReorder } from "./components/reorder";
-import { PlayerPage } from "./components/player/PlayerPage";
+import { PlayerPage, SimpleSeekBar } from "./components/player/PlayerPage";
 import { WaveformSeekBar } from "./components/player/WaveformSeekBar";
 import { LyricsPanel } from "./components/player/LyricsPanel";
 import { ErrorScreen } from "./screens/ErrorScreen";
@@ -2659,22 +2659,13 @@ function MobileLayout() {
         )}
       </div>
 
-      {/* Quiet fade so content dissolves behind the dock instead of clipping. */}
-      <div aria-hidden style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 230, background: `linear-gradient(to bottom, ${C.bg}00, ${C.bg} 72%)`, pointerEvents: "none", zIndex: 2 }} />
 
-      {/* Floating dock — mini player over nav, the boards' single cluster. */}
+      {/* Reference navigation dock — fixed mini-player and bottom navigation. */}
       <div ref={dockRef} style={{ position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 3, borderRadius: 0, background: C.bg, backdropFilter: "none", WebkitBackdropFilter: "none", borderTop: `1px solid ${C.border}`, boxShadow: "none", overflow: "hidden" }}>
         {currentTrack && (
           <>
-            <div style={{ position: "absolute", left: 10, right: 10, top: 0, height: 10, zIndex: 1, display: "flex" }}>
-              <WaveformSeekBar trackKey={currentTrack.id} progress={dockPct} onSeek={handleSeek} color={C.accent} height={10} ariaLabel={`Seek ${currentTrack.title}`} />
-            </div>
-            {/* Sheet-style grabber: the mini-player reads as a header you can
-                pull up into the full-screen player. */}
-            <div style={{ display: "flex", justifyContent: "center", paddingTop: 0 }}>
-              <button onClick={() => setPlayerPageOpen(true)} aria-label="Open full-screen player"
-                style={{ width: 36, height: 4, borderRadius: 999, border: "none", padding: 0, cursor: "pointer",
-                  background: `color-mix(in srgb, ${C.text} 24%, transparent)` }} />
+            <div style={{ position: "absolute", left: 0, right: 0, top: 0, height: 4, zIndex: 1, display: "flex" }}>
+              <SimpleSeekBar progress={dockPct} onSeek={handleSeek} color={C.accent} ariaLabel={`Seek ${currentTrack.title}`} />
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "8px 20px 12px" }}>
               {/* Details → the full-screen player (the sheet's Now playing tab
