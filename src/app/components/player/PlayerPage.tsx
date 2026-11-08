@@ -347,7 +347,7 @@ export function PlayerPage() {
         </div>
 
         {/* Floating transport card */}
-        <div style={{ margin: "10px 14px 8px", borderRadius: 26, background: `color-mix(in srgb, ${C.pane} 74%, transparent)`, backdropFilter: "blur(26px) saturate(1.4)", WebkitBackdropFilter: "blur(26px) saturate(1.4)", border: `1px solid color-mix(in srgb, ${C.text} 10%, transparent)`, padding: "12px 16px", flexShrink: 0, boxShadow: "0 14px 44px rgba(0,0,0,0.5)" }}>
+        <div style={{ margin: "10px 0 8px", background: "transparent", border: "none", padding: "12px 0", flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <CoverArt bg={currentTrack.bg} imageUrl={currentTrack.imageUrl} size={44} radius={12} />
             <div style={{ flex: 1, minWidth: 0 }}>

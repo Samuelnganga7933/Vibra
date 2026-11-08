@@ -507,12 +507,12 @@ function MobileLibrary({ tab: initTab = "playlists" }: { tab?: LibTab }) {
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
           <h1 style={{ fontSize: 30, fontWeight: 800, color: C.text, margin: 0, flex: 1, letterSpacing: -0.5 }}>Your Library</h1>
           <button onClick={() => navigate({ id: "downloads" })} aria-label="Downloads"
-            style={{ width: 40, height: 40, borderRadius: "50%", background: C.surf, border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.muted, padding: 0 }}>
+            style={{ width: 40, height: 40, borderRadius: "50%", background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.muted, padding: 0 }}>
             <Download size={18} />
           </button>
           {uiState.signedIn && (
             <button onClick={() => openCreatePlaylist()} aria-label="Create playlist"
-              style={{ width: 40, height: 40, borderRadius: "50%", background: C.surf, border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.text, padding: 0 }}>
+              style={{ width: 40, height: 40, borderRadius: "50%", background: "none", border: "none", cursor: "pointer", display: "grid", placeItems: "center", color: C.text, padding: 0 }}>
               <Plus size={19} />
             </button>
           )}
